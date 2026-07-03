@@ -31,7 +31,8 @@ Puntos de diseño:
 ## Comandos
 
 ```bash
-uvicorn app.main:app --reload --port 8000   # correr
+uvicorn app.main:app --port 8000   # correr (sin --reload: el source Playwright
+                                   # maneja un Chrome; --reload lo dejaría huérfano)
 
 pytest            # tests
 ruff check .      # lint
