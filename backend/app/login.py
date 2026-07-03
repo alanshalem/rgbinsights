@@ -11,6 +11,7 @@ Usage:
 
 from __future__ import annotations
 
+import json
 import logging
 import sys
 from typing import Any
@@ -25,6 +26,25 @@ def _interactive_challenge(username: str, choice: Any) -> str:
     print(f"\nInstagram pidió verificación para @{username}.")
     print("Te tiene que haber llegado un código por email o SMS.")
     return input("Ingresá el código de verificación: ").strip()
+
+
+def _dump_challenge(client: Any) -> None:
+    """Print the raw challenge payload so we can see WHAT Instagram is asking."""
+    detail = getattr(client, "last_json", None)
+    if not detail:
+        return
+    print("\n--- detalle del challenge (copiámelo si necesitás ayuda) ---", file=sys.stderr)
+    try:
+        print(json.dumps(detail, indent=2, ensure_ascii=False)[:2000], file=sys.stderr)
+    except (TypeError, ValueError):
+        print(str(detail)[:2000], file=sys.stderr)
+    url = ""
+    if isinstance(detail, dict):
+        challenge = detail.get("challenge")
+        if isinstance(challenge, dict):
+            url = str(challenge.get("url", ""))
+    if url:
+        print(f"\nAbrí este link en el navegador (logueado con la cuenta): {url}", file=sys.stderr)
 
 
 def main() -> int:
@@ -55,17 +75,21 @@ def main() -> int:
         code = input("Código 2FA de tu app de autenticación (6 dígitos): ").strip()
         client.login(settings.ig_username, settings.ig_password, verification_code=code)
     except ChallengeRequired:
+        _dump_challenge(client)
         print(
-            "\nInstagram sigue pidiendo verificación y no se pudo resolver.\n"
-            "Entrá a Instagram desde la app oficial (misma red/wifi), aprobá el\n"
-            '"¿Fuiste vos?" y volvé a correr:  python -m app.login',
+            "\nInstagram pidió verificación y no llegó al paso de código.\n"
+            "1) Abrí Instagram en la app/navegador con la cuenta (misma red).\n"
+            '2) Aprobá el "¿Fuiste vos?" / resolvé el checkpoint que aparezca.\n'
+            "3) Volvé a correr:  .venv\\Scripts\\python.exe -m app.login",
             file=sys.stderr,
         )
         return 2
     except LoginRequired as exc:
+        _dump_challenge(client)
         print(f"\nLogin rechazado: {exc}", file=sys.stderr)
         return 2
     except Exception as exc:
+        _dump_challenge(client)
         print(f"\nFalló el login: {exc}", file=sys.stderr)
         return 2
 
