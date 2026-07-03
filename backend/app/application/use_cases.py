@@ -1,0 +1,273 @@
+"""Use cases — orchestrate the source, repos, and domain rules.
+
+Expected failures (post not found, challenge) are returned as Result.Err,
+never raised, so the API can map them to clean HTTP responses.
+"""
+
+from __future__ import annotations
+
+import logging
+from datetime import UTC, datetime
+
+from sqlmodel import Session, select
+
+from app.application.dto import (
+    ScanBatchResult,
+    ScannedPost,
+    ScanResult,
+    SyncResult,
+    UserEngagement,
+    UserView,
+)
+from app.domain.entities import EngagementType, Post
+from app.domain.result import Err, ErrorCode, Ok, Result
+from app.domain.traffic_light import TrafficLight, classify
+from app.infrastructure.instagram.base import InstagramSource
+from app.infrastructure.instagram.errors import (
+    ChallengeRequiredError,
+    InstagramError,
+    LoginRequiredError,
+    PostNotFoundError,
+    RateLimitedError,
+)
+from app.infrastructure.persistence import models
+from app.infrastructure.persistence.repositories import (
+    DmThreadRepository,
+    EngagementRepository,
+    PostRepository,
+    UserRepository,
+)
+
+logger = logging.getLogger(__name__)
+
+
+def _now() -> datetime:
+    return datetime.now(UTC)
+
+
+def _map_error(exc: InstagramError) -> Err:
+    if isinstance(exc, PostNotFoundError):
+        return Err(ErrorCode.POST_NOT_FOUND, "post not found")
+    if isinstance(exc, ChallengeRequiredError):
+        return Err(ErrorCode.CHALLENGE_REQUIRED, str(exc))
+    if isinstance(exc, LoginRequiredError):
+        return Err(ErrorCode.LOGIN_REQUIRED, str(exc))
+    if isinstance(exc, RateLimitedError):
+        return Err(ErrorCode.RATE_LIMITED, str(exc))
+    return Err(ErrorCode.UNKNOWN, str(exc))
+
+
+def _to_scanned(post: Post) -> ScannedPost:
+    return ScannedPost(
+        media_pk=post.media_pk,
+        shortcode=post.shortcode,
+        url=post.url,
+        caption=post.caption,
+        taken_at=post.taken_at,
+    )
+
+
+class ScanPostUseCase:
+    def __init__(self, source: InstagramSource, session: Session) -> None:
+        self._source = source
+        self._session = session
+        self._users = UserRepository(session)
+        self._posts = PostRepository(session)
+        self._engagements = EngagementRepository(session)
+
+    def execute(self, url: str) -> Result[ScanResult]:
+        try:
+            post = self._source.get_post(url)
+            comments = self._source.get_comments(post.media_pk)
+            likers = self._source.get_likers(post.media_pk)
+        except InstagramError as exc:
+            logger.warning("scan failed for %s: %s", url, exc)
+            return _map_error(exc)
+
+        now = _now()
+        self._posts.upsert(post, scanned_at=now)
+
+        seen: set[str] = set()
+        new_users = 0
+
+        for comment in comments:
+            new_users += self._record(comment.user, now, seen)
+            self._engagements.upsert(
+                comment.user.pk,
+                post.media_pk,
+                EngagementType.COMMENT,
+                comment.text,
+                comment.created_at,
+            )
+        for liker in likers:
+            new_users += self._record(liker, now, seen)
+            self._engagements.upsert(liker.pk, post.media_pk, EngagementType.LIKE, None, None)
+
+        self._session.commit()
+        logger.info("scanned %s: %d users, %d new", url, len(seen), new_users)
+        return Ok(ScanResult(_to_scanned(post), users_found=len(seen), new_users=new_users))
+
+    def _record(self, user: object, now: datetime, seen: set[str]) -> int:
+        from app.domain.entities import IgUser
+
+        assert isinstance(user, IgUser)
+        is_new = self._users.upsert(user, now)
+        first_time_this_scan = user.pk not in seen
+        seen.add(user.pk)
+        return 1 if (is_new and first_time_this_scan) else 0
+
+
+class ScanPostsUseCase:
+    """Scan several posts by URL list, or by date range over recent posts."""
+
+    def __init__(self, source: InstagramSource, session: Session, recent_limit: int) -> None:
+        self._source = source
+        self._session = session
+        self._recent_limit = recent_limit
+        self._single = ScanPostUseCase(source, session)
+
+    def by_urls(self, urls: list[str]) -> Result[ScanBatchResult]:
+        return self._run([self._single.execute(u) for u in urls])
+
+    def by_date_range(self, date_from: datetime, date_to: datetime) -> Result[ScanBatchResult]:
+        try:
+            recent = self._source.get_recent_posts(self._recent_limit)
+        except InstagramError as exc:
+            return _map_error(exc)
+        in_range = [
+            p for p in recent if p.taken_at is not None and date_from <= p.taken_at <= date_to
+        ]
+        return self._run([self._single.execute(p.url) for p in in_range])
+
+    @staticmethod
+    def _run(results: list[Result[ScanResult]]) -> Result[ScanBatchResult]:
+        oks: list[ScanResult] = []
+        for r in results:
+            if isinstance(r, Ok):
+                oks.append(r.value)
+            elif r.code is ErrorCode.CHALLENGE_REQUIRED:
+                # A challenge blocks everything — surface it rather than partial data.
+                return r
+        return Ok(
+            ScanBatchResult(
+                results=oks,
+                total_users_found=sum(r.users_found for r in oks),
+                total_new_users=sum(r.new_users for r in oks),
+            )
+        )
+
+
+class SyncDmsUseCase:
+    def __init__(self, source: InstagramSource, session: Session) -> None:
+        self._source = source
+        self._session = session
+        self._users = UserRepository(session)
+        self._threads = DmThreadRepository(session)
+
+    def execute(self) -> Result[SyncResult]:
+        try:
+            our_pk = self._source.current_user_pk()
+            threads = self._source.get_dm_threads()
+        except InstagramError as exc:
+            logger.warning("dm sync failed: %s", exc)
+            return _map_error(exc)
+
+        now = _now()
+        for thread in threads:
+            has_outgoing = any(m.user_pk == our_pk for m in thread.messages)
+            has_incoming = any(m.user_pk != our_pk for m in thread.messages)
+            self._users.upsert(thread.user, now)
+            self._threads.upsert(
+                thread_id=thread.thread_id,
+                user_pk=thread.user.pk,
+                has_outgoing=has_outgoing,
+                has_incoming=has_incoming,
+                last_message_at=thread.last_message_at,
+                synced_at=now,
+            )
+
+        self._session.commit()
+        logger.info("synced %d DM threads", len(threads))
+        return Ok(SyncResult(threads_synced=len(threads), users_touched=len(threads)))
+
+
+class ListUsersUseCase:
+    """Read-side: assemble user views with derived traffic light + action link."""
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def execute(
+        self,
+        post: str | None = None,
+        status: TrafficLight | None = None,
+        search: str | None = None,
+        order: str = "username",
+    ) -> list[UserView]:
+        threads_by_user = DmThreadRepository(self._session).by_user_pk()
+
+        engagements = self._load_engagements(post)
+        if not engagements:
+            return []
+
+        views: list[UserView] = []
+        for user_pk, rows in engagements.items():
+            user = self._session.get(models.User, user_pk)
+            if user is None:
+                continue
+            if search and search.lower() not in user.username.lower():
+                continue
+
+            thread = threads_by_user.get(user_pk)
+            light = (
+                classify(thread.has_outgoing, thread.has_incoming)
+                if thread is not None
+                else TrafficLight.RED
+            )
+            if status is not None and light != status:
+                continue
+
+            action_url = (
+                f"https://instagram.com/direct/t/{thread.thread_id}/"
+                if thread is not None
+                else f"https://instagram.com/{user.username}/"
+            )
+            views.append(
+                UserView(
+                    pk=user.pk,
+                    username=user.username,
+                    full_name=user.full_name,
+                    profile_pic_url=user.profile_pic_url,
+                    is_private=user.is_private,
+                    traffic_light=light,
+                    thread_id=thread.thread_id if thread is not None else None,
+                    action_url=action_url,
+                    last_message_at=thread.last_message_at if thread is not None else None,
+                    engagements=[
+                        UserEngagement(
+                            post_media_pk=e.post_media_pk,
+                            type=EngagementType(e.type),
+                            comment_text=e.comment_text,
+                        )
+                        for e in rows
+                    ],
+                )
+            )
+
+        return self._sort(views, order)
+
+    def _load_engagements(self, post: str | None) -> dict[str, list[models.Engagement]]:
+        stmt = select(models.Engagement)
+        if post is not None:
+            stmt = stmt.where(models.Engagement.post_media_pk == post)
+        grouped: dict[str, list[models.Engagement]] = {}
+        for row in self._session.exec(stmt):
+            grouped.setdefault(row.user_pk, []).append(row)
+        return grouped
+
+    @staticmethod
+    def _sort(views: list[UserView], order: str) -> list[UserView]:
+        _light_rank = {TrafficLight.RED: 0, TrafficLight.YELLOW: 1, TrafficLight.GREEN: 2}
+        if order == "status":
+            return sorted(views, key=lambda v: (_light_rank[v.traffic_light], v.username.lower()))
+        return sorted(views, key=lambda v: v.username.lower())

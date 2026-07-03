@@ -1,0 +1,29 @@
+# Secrets / session
+.env
+session.json
+
+# Database
+*.db
+*.db-journal
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Node / frontend
+node_modules/
+dist/
+frontend/src/api/generated.ts
+
+# Generated OpenAPI dump + tooling artifacts
+backend/openapi.json
+.playwright-mcp/
+
+# Editor / OS
+.DS_Store
+.vscode/
+.idea/

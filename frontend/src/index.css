@@ -1,0 +1,45 @@
+@import 'tailwindcss';
+
+/* Design tokens. Semáforo colors double as the RGB brand identity. */
+@theme {
+  --color-bg: #0d0e12;
+  --color-panel: #16181f;
+  --color-panel-2: #1c1f28;
+  --color-border: #262a35;
+  --color-ink: #e7e9ee;
+  --color-muted: #8a90a0;
+
+  --color-red: #f2555a;
+  --color-yellow: #f5c451;
+  --color-green: #45d483;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-bg);
+  color: var(--color-ink);
+  font-family:
+    'Inter',
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    Roboto,
+    Helvetica,
+    Arial,
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* The RGB wordmark gradient — the one flourish that carries the brand. */
+.rgb-gradient {
+  background: linear-gradient(90deg, var(--color-red), var(--color-green), #5b8bff);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}

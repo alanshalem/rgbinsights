@@ -1,0 +1,11 @@
+# Runtime
+fastapi>=0.115
+uvicorn[standard]>=0.30
+sqlmodel>=0.0.22
+pydantic-settings>=2.5
+instagrapi>=2.1
+
+# Dev tooling
+ruff>=0.6
+mypy>=1.11
+pytest>=8.3
