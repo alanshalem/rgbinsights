@@ -125,6 +125,34 @@ def test_rescan_event(session: Session) -> None:
     assert len(result.value.results) == 1  # the one post assigned to the fiesta
 
 
+def test_semaforo_per_fiesta_cutoff(session: Session) -> None:
+    from app.infrastructure.persistence import models
+    from app.infrastructure.persistence.repositories import EventRepository
+
+    # lucia replied on Jun 13 (fake data). Fiesta campaign starts Jun 20 -> her
+    # old reply must NOT count for this fiesta.
+    event = EventRepository(session).create(
+        models.Event(
+            name="Fiesta nueva",
+            promo_start=datetime(2026, 6, 20, tzinfo=UTC),
+            event_date=datetime(2026, 6, 25, tzinfo=UTC),
+            created_at=datetime(2026, 6, 20, tzinfo=UTC),
+        )
+    )
+    source = FakeInstagramSource()
+    ScanPostUseCase(source, session).execute(POST_A_URL, event_id=event.id)
+    SyncDmsUseCase(source, session).execute()
+
+    global_views = {v.username: v for v in ListUsersUseCase(session).execute()}
+    assert global_views["lucia.dj"].traffic_light is TrafficLight.GREEN  # ever talked
+
+    fiesta_views = {v.username: v for v in ListUsersUseCase(session).execute(event=event.id)}
+    assert fiesta_views["lucia.dj"].traffic_light is TrafficLight.RED  # not since Jun 20
+
+    counts = ListUsersUseCase(session).counts(event=event.id)
+    assert counts.total == len(fiesta_views)
+
+
 def test_scan_by_date_range(session: Session) -> None:
     source = FakeInstagramSource()
     use_case = ScanPostsUseCase(source, session, recent_limit=50)

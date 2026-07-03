@@ -56,4 +56,13 @@ class UserView:
     thread_id: str | None
     action_url: str
     last_message_at: datetime | None
+    engagement_count: int = 0  # distinct posts engaged (fan-score)
     engagements: list[UserEngagement] = field(default_factory=list)
+
+
+@dataclass(frozen=True, slots=True)
+class StatusCounts:
+    red: int
+    yellow: int
+    green: int
+    total: int

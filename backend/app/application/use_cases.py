@@ -9,12 +9,13 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime
 
-from sqlmodel import Session, select
+from sqlmodel import Session, col, select
 
 from app.application.dto import (
     ScanBatchResult,
     ScannedPost,
     ScanResult,
+    StatusCounts,
     SyncResult,
     UserEngagement,
     UserView,
@@ -225,39 +226,81 @@ class SyncDmsUseCase:
         return Ok(SyncResult(threads_synced=len(threads), users_touched=len(threads)))
 
 
+def _naive(dt: datetime | None) -> datetime | None:
+    """Drop tzinfo so DB-read (naive) and API (maybe aware) datetimes compare."""
+    return dt.replace(tzinfo=None) if dt is not None and dt.tzinfo is not None else dt
+
+
 class ListUsersUseCase:
-    """Read-side: assemble user views with derived traffic light + action link."""
+    """Read-side: assemble user views with derived traffic light + action link.
+
+    When an `event` is given, the semáforo uses that fiesta's `promo_start` as a
+    cutoff (DMs before the campaign don't count). Without it, the global state is
+    used (the boolean flags, so it works even before DMs are re-synced).
+    """
 
     def __init__(self, session: Session) -> None:
         self._session = session
 
     def execute(
         self,
+        event: int | None = None,
         post: str | None = None,
         status: TrafficLight | None = None,
         search: str | None = None,
-        order: str = "username",
+        order: str = "status",
+        limit: int | None = None,
+        offset: int = 0,
     ) -> list[UserView]:
-        threads_by_user = DmThreadRepository(self._session).by_user_pk()
+        views = self._sort(self._build(event, post, status, search), order)
+        views = views[offset:]
+        if limit is not None:
+            views = views[:limit]
+        return views
 
-        engagements = self._load_engagements(post)
+    def counts(
+        self,
+        event: int | None = None,
+        post: str | None = None,
+        search: str | None = None,
+    ) -> StatusCounts:
+        views = self._build(event, post, None, search)
+        by = {"red": 0, "yellow": 0, "green": 0}
+        for v in views:
+            by[v.traffic_light.value] += 1
+        return StatusCounts(red=by["red"], yellow=by["yellow"], green=by["green"], total=len(views))
+
+    # -- internals -------------------------------------------------------
+
+    def _build(
+        self,
+        event: int | None,
+        post: str | None,
+        status: TrafficLight | None,
+        search: str | None,
+    ) -> list[UserView]:
+        cutoff = self._cutoff(event)
+        post_filter = self._post_filter(event, post)
+        engagements = self._load_engagements(post_filter)
         if not engagements:
             return []
+
+        fan = self._fan_scores()
+        threads = DmThreadRepository(self._session).by_user_pk()
+        needle = search.lower() if search else None
 
         views: list[UserView] = []
         for user_pk, rows in engagements.items():
             user = self._session.get(models.User, user_pk)
             if user is None:
                 continue
-            if search and search.lower() not in user.username.lower():
+            if needle and needle not in user.username.lower() and needle not in (
+                user.full_name or ""
+            ).lower():
                 continue
 
-            thread = threads_by_user.get(user_pk)
-            light = (
-                classify(thread.has_outgoing, thread.has_incoming)
-                if thread is not None
-                else TrafficLight.RED
-            )
+            thread = threads.get(user_pk)
+            light = _thread_light(thread, cutoff)
             if status is not None and light != status:
                 continue
 
@@ -277,6 +320,7 @@ class ListUsersUseCase:
                     thread_id=thread.thread_id if thread is not None else None,
                     action_url=action_url,
                     last_message_at=thread.last_message_at if thread is not None else None,
+                    engagement_count=fan.get(user_pk, 0),
                     engagements=[
                         UserEngagement(
                             post_media_pk=e.post_media_pk,
@@ -287,21 +331,63 @@ class ListUsersUseCase:
                     ],
                 )
             )
+        return views
 
-        return self._sort(views, order)
+    def _cutoff(self, event: int | None) -> datetime | None:
+        if event is None:
+            return None
+        row = self._session.get(models.Event, event)
+        return _naive(row.promo_start) if row is not None else None
 
-    def _load_engagements(self, post: str | None) -> dict[str, list[models.Engagement]]:
-        stmt = select(models.Engagement)
+    def _post_filter(self, event: int | None, post: str | None) -> set[str] | None:
         if post is not None:
-            stmt = stmt.where(models.Engagement.post_media_pk == post)
+            return {post}
+        if event is not None:
+            pks = self._session.exec(
+                select(models.Post.media_pk).where(models.Post.event_id == event)
+            )
+            return set(pks)
+        return None
+
+    def _load_engagements(self, post_filter: set[str] | None) -> dict[str, list[models.Engagement]]:
+        stmt = select(models.Engagement)
+        if post_filter is not None:
+            stmt = stmt.where(col(models.Engagement.post_media_pk).in_(post_filter))
         grouped: dict[str, list[models.Engagement]] = {}
         for row in self._session.exec(stmt):
             grouped.setdefault(row.user_pk, []).append(row)
         return grouped
 
+    def _fan_scores(self) -> dict[str, int]:
+        """user_pk -> distinct posts engaged (global loyalty signal)."""
+        by_user: dict[str, set[str]] = {}
+        for user_pk, post_pk in self._session.exec(
+            select(models.Engagement.user_pk, models.Engagement.post_media_pk)
+        ):
+            by_user.setdefault(user_pk, set()).add(post_pk)
+        return {k: len(v) for k, v in by_user.items()}
+
     @staticmethod
     def _sort(views: list[UserView], order: str) -> list[UserView]:
-        _light_rank = {TrafficLight.RED: 0, TrafficLight.YELLOW: 1, TrafficLight.GREEN: 2}
-        if order == "status":
-            return sorted(views, key=lambda v: (_light_rank[v.traffic_light], v.username.lower()))
-        return sorted(views, key=lambda v: v.username.lower())
+        rank = {TrafficLight.RED: 0, TrafficLight.YELLOW: 1, TrafficLight.GREEN: 2}
+        if order == "fans":
+            return sorted(views, key=lambda v: (-v.engagement_count, v.username.lower()))
+        if order == "username":
+            return sorted(views, key=lambda v: v.username.lower())
+        return sorted(views, key=lambda v: (rank[v.traffic_light], v.username.lower()))
+
+
+def _thread_light(thread: models.DmThread | None, cutoff: datetime | None) -> TrafficLight:
+    if thread is None:
+        return TrafficLight.RED
+    if cutoff is None:
+        # Global: booleans work even before timestamps are back-filled by a sync.
+        return classify(thread.has_outgoing, thread.has_incoming)
+    incoming = thread.last_incoming_at is not None and _after(thread.last_incoming_at, cutoff)
+    outgoing = thread.last_outgoing_at is not None and _after(thread.last_outgoing_at, cutoff)
+    return classify(outgoing, incoming)
+
+
+def _after(dt: datetime, cutoff: datetime) -> bool:
+    naive = _naive(dt)
+    return naive is not None and naive >= cutoff

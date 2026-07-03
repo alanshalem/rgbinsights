@@ -93,7 +93,15 @@ class UserOut(BaseModel):
     thread_id: str | None
     action_url: str
     last_message_at: datetime | None
+    engagement_count: int
     engagements: list[UserEngagementOut]
+
+
+class StatusCountsOut(BaseModel):
+    red: int
+    yellow: int
+    green: int
+    total: int
 
 
 class PostOut(BaseModel):
