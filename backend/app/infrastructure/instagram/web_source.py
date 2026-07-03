@@ -204,18 +204,27 @@ class WebInstagramSource:
             {
                 "User-Agent": _UA,
                 "X-IG-App-ID": _WEB_APP_ID,
+                "X-IG-WWW-Claim": "0",
                 "X-Requested-With": "XMLHttpRequest",
                 "Referer": "https://www.instagram.com/",
                 "Accept": "*/*",
             }
         )
-        s.cookies.set("sessionid", sessionid, domain=".instagram.com")
-        # Prime csrftoken (the web API needs the X-CSRFToken header).
+        # The web API authenticates on sessionid + ds_user_id (the account pk).
+        for name, value in {
+            "sessionid": sessionid,
+            "ds_user_id": pk_from_sessionid(sessionid),
+        }.items():
+            s.cookies.set(name, value, domain=".instagram.com")
+        # Prime csrftoken/mid/rur cookies (the web API needs X-CSRFToken).
         with contextlib.suppress(requests.RequestException):
             s.get("https://www.instagram.com/", timeout=15)
         csrf = s.cookies.get("csrftoken")
         if csrf:
             s.headers["X-CSRFToken"] = csrf
+        logger.info(
+            "web session cookies: %s", sorted(c.name for c in s.cookies)
+        )
         self._session = s
         return s
 
@@ -240,7 +249,12 @@ class WebInstagramSource:
         try:
             data: dict[str, Any] = resp.json()
         except ValueError as exc:
-            raise LoginRequiredError("respuesta no-JSON (probable pantalla de login)") from exc
+            snippet = " ".join(resp.text[:200].split())
+            raise LoginRequiredError(
+                f"respuesta no-JSON en {path} "
+                f"(status {resp.status_code}, content-type "
+                f"{resp.headers.get('content-type', '?')}): {snippet}"
+            ) from exc
 
         if data.get("message") == "checkpoint_required" or data.get("require_login"):
             raise ChallengeRequiredError("Instagram pidió verificación (checkpoint).")

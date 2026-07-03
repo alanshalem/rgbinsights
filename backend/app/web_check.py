@@ -10,6 +10,7 @@ running the full app.
 
 from __future__ import annotations
 
+import logging
 import sys
 
 from app.infrastructure.config.settings import get_settings
@@ -18,6 +19,7 @@ from app.infrastructure.instagram.web_source import WebInstagramSource
 
 
 def main() -> int:
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     settings = get_settings()
     if not settings.ig_sessionid.strip():
         print("Falta IG_SESSIONID en backend/.env", file=sys.stderr)
