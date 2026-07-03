@@ -1,17 +1,22 @@
 @import 'tailwindcss';
 
-/* Design tokens. Semáforo colors double as the RGB brand identity. */
+/* RGB Collective identity: dark rave field, chromatic RGB accents, technical
+   grid. Semáforo colors double as the brand's red/green channels. */
 @theme {
-  --color-bg: #0d0e12;
-  --color-panel: #16181f;
-  --color-panel-2: #1c1f28;
-  --color-border: #262a35;
-  --color-ink: #e7e9ee;
-  --color-muted: #8a90a0;
+  --color-bg: #06070c;
+  --color-panel: #0c0e18;
+  --color-panel-2: #151a29;
+  --color-border: #242c40;
+  --color-ink: #eef1f8;
+  --color-muted: #838da8;
 
-  --color-red: #f2555a;
-  --color-yellow: #f5c451;
-  --color-green: #45d483;
+  --color-red: #ff4d6d;
+  --color-yellow: #ffd23f;
+  --color-green: #35e08a;
+  --color-blue: #4d7bff;
+
+  --font-display: 'Arial Black', 'Helvetica Neue', system-ui, sans-serif;
+  --font-mono: ui-monospace, 'Cascadia Code', 'Consolas', monospace;
 }
 
 html,
@@ -22,24 +27,85 @@ body,
 
 body {
   margin: 0;
-  background: var(--color-bg);
   color: var(--color-ink);
+  background-color: var(--color-bg);
+  /* Chromatic blobs in the three channels + a magenta, like the flyers. */
+  background-image:
+    radial-gradient(55vw 55vw at 10% -8%, rgba(77, 123, 255, 0.2), transparent 62%),
+    radial-gradient(50vw 50vw at 98% 4%, rgba(53, 224, 138, 0.15), transparent 62%),
+    radial-gradient(60vw 60vw at 85% 106%, rgba(255, 77, 109, 0.16), transparent 62%),
+    radial-gradient(46vw 46vw at -6% 96%, rgba(150, 90, 255, 0.14), transparent 60%);
+  background-attachment: fixed;
   font-family:
     'Inter',
     system-ui,
     -apple-system,
     'Segoe UI',
     Roboto,
-    Helvetica,
-    Arial,
     sans-serif;
   -webkit-font-smoothing: antialiased;
 }
 
-/* The RGB wordmark gradient — the one flourish that carries the brand. */
+/* Technical grid overlay, faded toward the edges (flyer motif). */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.035) 1px, transparent 1px);
+  background-size: 46px 46px;
+  -webkit-mask-image: radial-gradient(circle at 50% 22%, #000 52%, transparent 92%);
+  mask-image: radial-gradient(circle at 50% 22%, #000 52%, transparent 92%);
+}
+
+#root {
+  position: relative;
+  z-index: 1;
+}
+
+/* The signature: RGB wordmark with chromatic aberration (name = the 3 channels).
+   Used only on the big mark so legibility elsewhere is untouched. */
 .rgb-gradient {
-  background: linear-gradient(90deg, var(--color-red), var(--color-green), #5b8bff);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
+  font-family: var(--font-display);
+  font-weight: 900;
+  letter-spacing: -0.03em;
+  color: var(--color-ink);
+  text-shadow:
+    -0.025em 0 0 rgba(255, 60, 100, 0.85),
+    0.025em 0 0 rgba(70, 150, 255, 0.85);
+}
+
+.display {
+  font-family: var(--font-display);
+  letter-spacing: -0.01em;
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Neon status dot: pass the color via inline style/bg; glow matches it. */
+.dot-glow {
+  box-shadow: 0 0 9px 0 currentColor;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-blue);
+  outline-offset: 2px;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
 }

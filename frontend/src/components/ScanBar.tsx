@@ -48,7 +48,7 @@ export function ScanBar({
         <button
           onClick={handleScan}
           disabled={busy || parseUrls(raw).length === 0}
-          className="rounded-lg bg-[var(--color-green)] px-4 py-2 text-sm font-semibold text-[var(--color-bg)] transition-opacity hover:opacity-90 disabled:opacity-40"
+          className="rounded-lg bg-[var(--color-green)] px-4 py-2 text-sm font-semibold text-[var(--color-bg)] shadow-[0_0_24px_-6px_var(--color-green)] transition-opacity hover:opacity-90 disabled:opacity-40"
         >
           {scan.isPending ? 'Escaneando…' : 'Escanear'}
         </button>

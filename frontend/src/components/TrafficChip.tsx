@@ -2,13 +2,13 @@ import type { TrafficLight } from '../api/client';
 import { LIGHT_LABEL } from '../lib/user';
 
 const DOT: Record<TrafficLight, string> = {
-  red: 'bg-[var(--color-red)]',
-  yellow: 'bg-[var(--color-yellow)]',
-  green: 'bg-[var(--color-green)]',
+  red: 'bg-[var(--color-red)] text-[var(--color-red)]',
+  yellow: 'bg-[var(--color-yellow)] text-[var(--color-yellow)]',
+  green: 'bg-[var(--color-green)] text-[var(--color-green)]',
 };
 
 export function TrafficDot({ light }: { light: TrafficLight }) {
-  return <span className={`inline-block h-2.5 w-2.5 rounded-full ${DOT[light]}`} />;
+  return <span className={`dot-glow inline-block h-2.5 w-2.5 rounded-full ${DOT[light]}`} />;
 }
 
 export function TrafficChip({ light }: { light: TrafficLight }) {
