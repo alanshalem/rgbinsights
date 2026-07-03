@@ -70,6 +70,17 @@ def launch_chrome(
     return subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
+def is_cdp_up(port: int) -> bool:
+    """True if a Chrome with a DevTools endpoint is already listening."""
+    try:
+        with urllib.request.urlopen(  # noqa: S310 — localhost only
+            f"http://127.0.0.1:{port}/json/version", timeout=1
+        ):
+            return True
+    except OSError:
+        return False
+
+
 def wait_for_cdp(port: int, timeout: float = 30.0) -> None:
     """Block until Chrome's DevTools endpoint answers."""
     url = f"http://127.0.0.1:{port}/json/version"

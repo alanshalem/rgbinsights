@@ -13,10 +13,14 @@ API is thread-affine), so this is safe under FastAPI's threadpool.
 
 from __future__ import annotations
 
+import atexit
+import contextlib
 import json
 import logging
 import queue
+import random
 import threading
+import time
 from collections.abc import Callable
 from concurrent.futures import Future
 from typing import TYPE_CHECKING, Any
@@ -27,6 +31,7 @@ from app.infrastructure.config.settings import Settings
 from app.infrastructure.instagram.chrome_cdp import (
     cdp_url,
     find_chrome,
+    is_cdp_up,
     launch_chrome,
     wait_for_cdp,
 )
@@ -34,6 +39,7 @@ from app.infrastructure.instagram.errors import (
     ChallengeRequiredError,
     LoginRequiredError,
     PostNotFoundError,
+    RateLimitedError,
 )
 from app.infrastructure.instagram.web_source import (
     extract_shortcode,
@@ -54,6 +60,11 @@ _HOME = "https://www.instagram.com/"
 
 # Job = a function to run on the browser thread with the live Page.
 _Job = Callable[["Page"], Any]
+
+
+def _safe_terminate(proc: Any) -> None:
+    with contextlib.suppress(Exception):  # best-effort cleanup
+        proc.terminate()
 
 
 class _BrowserWorker:
@@ -84,16 +95,21 @@ class _BrowserWorker:
     def _run(self) -> None:
         from playwright.sync_api import sync_playwright
 
-        chrome = find_chrome(self._settings.ig_chrome_path)
         port = self._settings.ig_cdp_port
-        proc = launch_chrome(
-            chrome,
-            self._settings.ig_browser_dir,
-            port,
-            headless=self._settings.ig_browser_headless,
-        )
-        try:
+        proc = None
+        # Reuse a Chrome already listening (e.g. from --reload or a prior run)
+        # instead of launching a second one on the same locked profile.
+        if not is_cdp_up(port):
+            chrome = find_chrome(self._settings.ig_chrome_path)
+            proc = launch_chrome(
+                chrome,
+                self._settings.ig_browser_dir,
+                port,
+                headless=self._settings.ig_browser_headless,
+            )
+            atexit.register(_safe_terminate, proc)
             wait_for_cdp(port)
+        try:
             with sync_playwright() as p:
                 browser = p.chromium.connect_over_cdp(cdp_url(port))
                 context = browser.contexts[0] if browser.contexts else browser.new_context()
@@ -110,7 +126,8 @@ class _BrowserWorker:
                         fut.set_exception(exc)
                 browser.close()
         finally:
-            proc.terminate()
+            if proc is not None:
+                _safe_terminate(proc)
 
 
 def _fetch_json(page: Page, path: str) -> dict[str, Any]:
@@ -158,8 +175,24 @@ class PlaywrightInstagramSource:
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
         self._worker = _BrowserWorker(settings)
+        self._request_count = 0
+
+    def _throttle(self) -> None:
+        """Randomized pause + hard cap per run — be a good citizen."""
+        self._request_count += 1
+        if self._request_count > self._settings.scan_max_requests:
+            raise RateLimitedError(
+                f"request cap reached ({self._settings.scan_max_requests}); stopping to stay safe"
+            )
+        time.sleep(
+            random.uniform(
+                self._settings.scan_min_delay_seconds,
+                self._settings.scan_max_delay_seconds,
+            )
+        )
 
     def _get(self, base: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        self._throttle()
         data: dict[str, Any] = self._worker.submit(
             lambda page: _fetch_json(page, _path(base, params))
         )
