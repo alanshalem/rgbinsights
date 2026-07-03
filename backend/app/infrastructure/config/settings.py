@@ -16,6 +16,11 @@ class Settings(BaseSettings):
     ig_2fa_secret: str = ""  # optional TOTP seed
     ig_session_file: str = "session.json"
 
+    # Preferred auth: reuse the `sessionid` cookie from a browser where you are
+    # already logged in. Skips the API login flow entirely, so it dodges the
+    # login checkpoint that user/password triggers. If set, it takes priority.
+    ig_sessionid: str = ""
+
     # Anti-block hygiene (all optional). A stable proxy + consistent
     # country/locale make the account look far less suspicious to Instagram.
     ig_proxy: str = ""  # e.g. http://user:pass@host:port

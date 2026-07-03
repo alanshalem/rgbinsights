@@ -50,10 +50,6 @@ def _dump_challenge(client: Any) -> None:
 def main() -> int:
     settings = get_settings()
 
-    if not settings.ig_username or not settings.ig_password:
-        print("Faltan IG_USERNAME / IG_PASSWORD en backend/.env", file=sys.stderr)
-        return 1
-
     # Lazy import so this module loads even without instagrapi installed.
     from instagrapi.exceptions import (
         ChallengeRequired,
@@ -62,6 +58,27 @@ def main() -> int:
     )
 
     client = build_client(settings, _interactive_challenge)
+    sessionid = settings.ig_sessionid.strip()
+
+    if sessionid:
+        # Preferred path: reuse a real browser session. No login, no challenge.
+        print("Usando IG_SESSIONID (sesión del navegador) …")
+        try:
+            client.login_by_sessionid(sessionid)
+        except Exception as exc:
+            print(
+                f"\nEl sessionid no funcionó ({exc}).\n"
+                "Sacá uno nuevo: logueate en instagram.com en el navegador, "
+                "DevTools (F12) -> Application -> Cookies -> copiá el valor de "
+                "'sessionid' y pegalo en IG_SESSIONID en backend/.env",
+                file=sys.stderr,
+            )
+            return 2
+        return _finish(client, settings)
+
+    if not settings.ig_username or not settings.ig_password:
+        print("Faltan IG_USERNAME / IG_PASSWORD en backend/.env", file=sys.stderr)
+        return 1
 
     print(f"Logueando como @{settings.ig_username} …")
     try:
@@ -93,7 +110,11 @@ def main() -> int:
         print(f"\nFalló el login: {exc}", file=sys.stderr)
         return 2
 
-    # Validate the session with a lightweight call before trusting it.
+    return _finish(client, settings)
+
+
+def _finish(client: Any, settings: Any) -> int:
+    """Validate the session with a lightweight call, then persist it."""
     try:
         client.get_timeline_feed()
     except Exception as exc:

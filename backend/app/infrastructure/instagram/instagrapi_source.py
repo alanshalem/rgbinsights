@@ -81,13 +81,18 @@ class InstagrapiInstagramSource:
         client = build_client(self._settings, self._challenge_code_handler)
         session_path = Path(self._settings.ig_session_file)
 
-        verification_code = self._totp_code(client)
+        sessionid = self._settings.ig_sessionid.strip()
         try:
-            client.login(
-                self._settings.ig_username,
-                self._settings.ig_password,
-                verification_code=verification_code,
-            )
+            if sessionid:
+                # Reuse an existing browser session: no login flow, no challenge.
+                client.login_by_sessionid(sessionid)
+            else:
+                verification_code = self._totp_code(client)
+                client.login(
+                    self._settings.ig_username,
+                    self._settings.ig_password,
+                    verification_code=verification_code,
+                )
         except TwoFactorRequired as exc:
             raise ChallengeRequiredError(
                 "2FA required. Set IG_2FA_SECRET in .env to resolve it automatically."

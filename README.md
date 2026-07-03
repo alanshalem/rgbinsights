@@ -101,6 +101,28 @@ Re-escanear un post no duplica nada: podés hacerlo las veces que quieras.
 
 ## Usar Instagram real
 
+### Opción recomendada: reusar la sesión del navegador (evita el checkpoint)
+
+Instagram suele frenar el login por API con un *checkpoint*. La forma más
+confiable de evitarlo es **reusar la cookie de un navegador donde ya estás
+logueado** (no hay login por API, así que no hay challenge):
+
+1. Entrá a **instagram.com** en tu navegador, logueado con la cuenta.
+2. Abrí DevTools (**F12**) → pestaña **Application** → **Cookies** →
+   `https://www.instagram.com` → copiá el **valor** de la cookie `sessionid`.
+3. En `backend/.env`: `USE_FAKE_INSTAGRAM=false` y pegá `IG_SESSIONID=<ese valor>`.
+4. Validá y guardá la sesión:
+   ```bash
+   cd backend
+   .venv\Scripts\python.exe -m app.login     # Mac/Linux: .venv/bin/python -m app.login
+   ```
+5. Levantá la app normal. La API reusa `session.json`.
+
+> El `sessionid` es como una contraseña temporal: no lo compartas. Vive en
+> `.env` (git-ignored). Si expira, sacá uno nuevo con los mismos pasos.
+
+### Alternativa: login con usuario y contraseña
+
 1. Editá `backend/.env`:
    - `USE_FAKE_INSTAGRAM=false`
    - `IG_USERNAME=` y `IG_PASSWORD=` con la cuenta.
