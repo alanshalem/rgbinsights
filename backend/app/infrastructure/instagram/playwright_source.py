@@ -117,10 +117,11 @@ def _fetch_json(page: Page, path: str) -> dict[str, Any]:
     """Run fetch() inside the page (same-origin, fully authed) and return JSON."""
     result = page.evaluate(
         """async ({ path, appId }) => {
-            const r = await fetch(path, {
-                headers: { 'X-IG-App-ID': appId },
-                credentials: 'include',
-            });
+            const headers = { 'X-IG-App-ID': appId };
+            // Some endpoints (e.g. likers) require the CSRF token from the cookie.
+            const m = document.cookie.match(/csrftoken=([^;]+)/);
+            if (m) headers['X-CSRFToken'] = m[1];
+            const r = await fetch(path, { headers, credentials: 'include' });
             const body = await r.text();
             return { status: r.status, ct: r.headers.get('content-type') || '', body };
         }""",
