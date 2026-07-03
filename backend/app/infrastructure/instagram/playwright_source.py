@@ -127,20 +127,23 @@ def _fetch_json(page: Page, path: str) -> dict[str, Any]:
         {"path": path, "appId": _WEB_APP_ID},
     )
     status = int(result["status"])
-    if status in (401, 403):
-        raise LoginRequiredError("browser session not logged in — run: python -m app.login_browser")
-    if status == 404:
-        raise PostNotFoundError(path)
     ctype = str(result["ct"])
     body = str(result["body"])
+    snippet = " ".join(body[:200].split())
+
+    if status == 404:
+        raise PostNotFoundError(path)
     if "json" not in ctype:
         raise LoginRequiredError(
-            f"non-JSON from {path} (status {status}); browser likely logged out — "
-            "run: python -m app.login_browser"
+            f"non-JSON from {path} (status {status}, ct {ctype}): {snippet}"
         )
+
     data: dict[str, Any] = json.loads(body)
-    if data.get("message") == "checkpoint_required" or data.get("require_login"):
+    message = str(data.get("message", ""))
+    if message == "checkpoint_required" or data.get("require_login"):
         raise ChallengeRequiredError("Instagram requested verification (checkpoint).")
+    if status in (401, 403) or data.get("status") == "fail":
+        raise LoginRequiredError(f"{path} -> status {status}: {snippet}")
     return data
 
 
