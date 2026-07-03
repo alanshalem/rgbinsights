@@ -38,6 +38,18 @@ class Settings(BaseSettings):
     # Instagram. Set to false once credentials are filled in .env.
     use_fake_instagram: bool = True
 
+    # Which data source to use: "fake" | "web" | "instagrapi".
+    #   web        -> browser web API via IG_SESSIONID (recommended for real use)
+    #   instagrapi -> mobile private API via user/password (needs a mobile login)
+    # Empty falls back to use_fake_instagram for backward compat.
+    ig_source: str = ""
+
+    def resolved_source(self) -> str:
+        src = self.ig_source.strip().lower()
+        if src:
+            return src
+        return "fake" if self.use_fake_instagram else "instagrapi"
+
     # How many recent posts to pull when scanning by date range.
     recent_posts_limit: int = 50
 

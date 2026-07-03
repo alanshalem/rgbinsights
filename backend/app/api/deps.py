@@ -29,17 +29,23 @@ def session_dep() -> Iterator[Session]:
 
 
 @lru_cache
-def _real_source(settings_id: int) -> InstagramSource:
-    # Cache the real client per settings object so login/session is reused.
+def _real_source(source: str) -> InstagramSource:
+    # Cache the client so its HTTP session / login is reused across requests.
+    settings = get_settings()
+    if source == "web":
+        from app.infrastructure.instagram.web_source import WebInstagramSource
+
+        return WebInstagramSource(settings)
     from app.infrastructure.instagram.instagrapi_source import InstagrapiInstagramSource
 
-    return InstagrapiInstagramSource(get_settings())
+    return InstagrapiInstagramSource(settings)
 
 
 def source_dep(settings: Settings = Depends(get_settings)) -> InstagramSource:
-    if settings.use_fake_instagram:
+    source = settings.resolved_source()
+    if source == "fake":
         return FakeInstagramSource()
-    return _real_source(id(settings))
+    return _real_source(source)
 
 
 def raise_for_err(err: Err) -> NoReturn:
