@@ -53,6 +53,12 @@ _POST_B = Post(
 class FakeInstagramSource:
     """Deterministic in-memory source implementing the InstagramSource port."""
 
+    def __init__(self) -> None:
+        self.sent: list[tuple[str, str]] = []  # (user_pk, text) for tests
+
+    def send_dm(self, user_pk: str, text: str) -> None:
+        self.sent.append((user_pk, text))
+
     def current_user_pk(self) -> str:
         return _OUR_PK
 

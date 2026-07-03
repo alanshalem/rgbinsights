@@ -25,6 +25,7 @@ from app.infrastructure.instagram.errors import (
     LoginRequiredError,
     PostNotFoundError,
     RateLimitedError,
+    SendBlockedError,
 )
 from app.infrastructure.instagram.session import build_client
 
@@ -139,6 +140,14 @@ class InstagrapiInstagramSource:
         )
 
     # -- port methods ----------------------------------------------------
+
+    def send_dm(self, user_pk: str, text: str) -> None:
+        client = self._login()
+        self._budget.spend()
+        try:
+            client.direct_send(text, user_ids=[int(user_pk)])
+        except Exception as exc:
+            raise SendBlockedError(f"envío rechazado: {exc}") from exc
 
     def current_user_pk(self) -> str:
         client = self._login()

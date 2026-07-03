@@ -127,3 +127,62 @@ class HealthOut(BaseModel):
 class ErrorOut(BaseModel):
     code: str
     message: str
+
+
+# -- campaigns (bulk DM) ------------------------------------------------
+
+
+class SendParamsIn(BaseModel):
+    delay_min: int = Field(ge=10, le=3600)
+    delay_max: int = Field(ge=10, le=3600)
+    daily_cap: int = Field(ge=1, le=200)
+    hour_start: int = Field(ge=0, le=23)
+    hour_end: int = Field(ge=1, le=24)
+
+
+class CampaignCreate(SendParamsIn):
+    templates: list[str]
+
+
+class EstimateOut(BaseModel):
+    per_day: int
+    days: int
+    avg_delay_seconds: float
+
+
+class MessageSample(BaseModel):
+    username: str
+    message: str
+
+
+class CampaignPreviewOut(BaseModel):
+    targets_count: int
+    estimate: EstimateOut
+    samples: list[MessageSample]
+
+
+class PresetOut(BaseModel):
+    name: str
+    delay_min: int
+    delay_max: int
+    daily_cap: int
+    hour_start: int
+    hour_end: int
+
+
+class CampaignOut(BaseModel):
+    id: int
+    event_id: int
+    status: str  # running | paused | blocked | done
+    total: int
+    sent: int
+    pending: int
+    failed: int
+    sent_today: int
+    daily_cap: int
+    delay_min: int
+    delay_max: int
+    hour_start: int
+    hour_end: int
+    last_sent_at: datetime | None
+    error: str | None

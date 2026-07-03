@@ -9,7 +9,8 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routers import events, health, posts, scan, sync, users
+from app.api.routers import campaigns, events, health, posts, scan, sync, users
+from app.application import campaign_sender
 from app.infrastructure.persistence.db import create_db_and_tables
 
 logging.basicConfig(
@@ -21,6 +22,7 @@ logging.basicConfig(
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     create_db_and_tables()
+    campaign_sender.resume_all()  # resume any campaign left running
     yield
 
 
@@ -40,6 +42,7 @@ app.add_middleware(
 
 app.include_router(health.router)
 app.include_router(events.router)
+app.include_router(campaigns.router)
 app.include_router(scan.router)
 app.include_router(sync.router)
 app.include_router(users.router)

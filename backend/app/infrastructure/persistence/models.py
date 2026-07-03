@@ -78,3 +78,37 @@ class DmThread(SQLModel, table=True):
     last_incoming_at: datetime | None = None
     last_message_at: datetime | None = None
     last_synced_at: datetime
+
+
+class Campaign(SQLModel, table=True):
+    """A throttled bulk-DM run over a fiesta's red users."""
+
+    __tablename__ = "campaigns"
+
+    id: int | None = Field(default=None, primary_key=True)
+    event_id: int = Field(foreign_key="events.id", index=True)
+    status: str = "running"  # running | paused | blocked | done
+    templates: str  # JSON list of message variants
+    delay_min: int
+    delay_max: int
+    daily_cap: int
+    hour_start: int
+    hour_end: int
+    sent_today: int = 0
+    sent_today_date: str = ""  # ISO date the counter belongs to
+    last_sent_at: datetime | None = None
+    error: str | None = None  # why it got blocked, if any
+    created_at: datetime
+
+
+class CampaignTarget(SQLModel, table=True):
+    __tablename__ = "campaign_targets"
+
+    id: int | None = Field(default=None, primary_key=True)
+    campaign_id: int = Field(foreign_key="campaigns.id", index=True)
+    user_pk: str = Field(foreign_key="users.pk", index=True)
+    username: str
+    status: str = "pending"  # pending | sent | failed
+    message: str | None = None
+    sent_at: datetime | None = None
+    error: str | None = None

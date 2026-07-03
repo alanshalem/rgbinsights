@@ -25,3 +25,14 @@ class LoginRequiredError(InstagramError):
 
 class RateLimitedError(InstagramError):
     pass
+
+
+class SendBlockedError(InstagramError):
+    """Instagram refused a DM send (feedback_required / spam / action block).
+
+    Signals the campaign sender to stop immediately instead of hammering.
+    """
+
+
+class SendNotSupportedError(InstagramError):
+    """This data source can't send DMs (use the Playwright source)."""

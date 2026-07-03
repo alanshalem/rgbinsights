@@ -30,6 +30,7 @@ from app.infrastructure.instagram.errors import (
     LoginRequiredError,
     PostNotFoundError,
     RateLimitedError,
+    SendNotSupportedError,
 )
 
 logger = logging.getLogger(__name__)
@@ -277,6 +278,9 @@ class WebInstagramSource:
         return resp.status_code, ctype, " ".join(resp.text[:160].split())
 
     # -- port methods ----------------------------------------------------
+
+    def send_dm(self, user_pk: str, text: str) -> None:
+        raise SendNotSupportedError("La fuente 'web' no envía DMs; usá IG_SOURCE=playwright.")
 
     def current_user_pk(self) -> str:
         return pk_from_sessionid(self._settings.ig_sessionid)

@@ -40,6 +40,7 @@ from app.infrastructure.instagram.errors import (
     LoginRequiredError,
     PostNotFoundError,
     RateLimitedError,
+    SendBlockedError,
 )
 from app.infrastructure.instagram.web_source import (
     extract_shortcode,
@@ -169,6 +170,42 @@ def _path(base: str, params: dict[str, Any] | None = None) -> str:
     return f"{base}?{urlencode(params)}" if params else base
 
 
+def _send_dm(page: Page, user_pk: str, text: str) -> None:
+    """POST the DM from inside the page (the web app's broadcast endpoint)."""
+    result = page.evaluate(
+        """async ({ userPk, text, appId }) => {
+            const headers = {
+                'X-IG-App-ID': appId,
+                'content-type': 'application/x-www-form-urlencoded',
+            };
+            const m = document.cookie.match(/csrftoken=([^;]+)/);
+            if (m) headers['X-CSRFToken'] = m[1];
+            const ctx = (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()));
+            const params = new URLSearchParams();
+            params.set('action', 'send_item');
+            params.set('client_context', ctx);
+            params.set('mutation_token', ctx);
+            params.set('offline_threading_id', ctx);
+            params.set('recipient_users', JSON.stringify([[userPk]]));
+            params.set('text', text);
+            const r = await fetch('/api/v1/direct_v2/threads/broadcast/text/', {
+                method: 'POST', headers, credentials: 'include', body: params.toString(),
+            });
+            const body = await r.text();
+            return { status: r.status, ct: r.headers.get('content-type') || '', body };
+        }""",
+        {"userPk": user_pk, "text": text, "appId": _WEB_APP_ID},
+    )
+    status = int(result["status"])
+    body = str(result["body"])
+    if "json" not in str(result["ct"]):
+        raise SendBlockedError(f"respuesta no-JSON al enviar (status {status})")
+    data = json.loads(body)
+    if data.get("status") == "ok":
+        return
+    raise SendBlockedError(str(data.get("message") or f"status {status}"))
+
+
 class PlaywrightInstagramSource:
     """InstagramSource backed by a logged-in headless browser."""
 
@@ -197,6 +234,9 @@ class PlaywrightInstagramSource:
             lambda page: _fetch_json(page, _path(base, params))
         )
         return data
+
+    def send_dm(self, user_pk: str, text: str) -> None:
+        self._worker.submit(lambda page: _send_dm(page, user_pk, text))
 
     def current_user_pk(self) -> str:
         def read_pk(page: Page) -> str:
