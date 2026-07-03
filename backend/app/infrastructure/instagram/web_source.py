@@ -205,7 +205,14 @@ class WebInstagramSource:
                 "User-Agent": _UA,
                 "X-IG-App-ID": _WEB_APP_ID,
                 "X-IG-WWW-Claim": "0",
+                "X-ASBD-ID": "129477",
                 "X-Requested-With": "XMLHttpRequest",
+                # Mark the request as a real in-app fetch(); without these,
+                # Instagram serves the HTML app shell instead of API JSON.
+                "Sec-Fetch-Site": "same-origin",
+                "Sec-Fetch-Mode": "cors",
+                "Sec-Fetch-Dest": "empty",
+                "Origin": "https://www.instagram.com",
                 "Referer": "https://www.instagram.com/",
                 "Accept": "*/*",
             }
@@ -259,6 +266,12 @@ class WebInstagramSource:
         if data.get("message") == "checkpoint_required" or data.get("require_login"):
             raise ChallengeRequiredError("Instagram pidió verificación (checkpoint).")
         return data
+
+    def probe(self, url: str, params: dict[str, Any] | None = None) -> tuple[int, str, str]:
+        """Diagnostic: raw GET returning (status, content-type, body snippet)."""
+        resp = self._http().get(url, params=params, timeout=20)
+        ctype = resp.headers.get("content-type", "?")
+        return resp.status_code, ctype, " ".join(resp.text[:160].split())
 
     # -- port methods ----------------------------------------------------
 
