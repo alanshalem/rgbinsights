@@ -24,6 +24,12 @@ from urllib.parse import urlencode
 
 from app.domain.entities import Comment, DmThread, IgUser, Post
 from app.infrastructure.config.settings import Settings
+from app.infrastructure.instagram.chrome_cdp import (
+    cdp_url,
+    find_chrome,
+    launch_chrome,
+    wait_for_cdp,
+)
 from app.infrastructure.instagram.errors import (
     ChallengeRequiredError,
     LoginRequiredError,
@@ -45,51 +51,17 @@ logger = logging.getLogger(__name__)
 
 _WEB_APP_ID = "936619743392459"
 _HOME = "https://www.instagram.com/"
-_UA = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"
-)
-# Hide the automation fingerprint Instagram uses to gate logins behind a
-# never-completing reCAPTCHA.
-_STEALTH_JS = "Object.defineProperty(navigator, 'webdriver', {get: () => undefined});"
 
 # Job = a function to run on the browser thread with the live Page.
 _Job = Callable[["Page"], Any]
 
 
-def launch_stealth_context(playwright: Any, settings: Settings, headless: bool) -> Any:
-    """Launch a persistent context that looks like a normal browser.
-
-    Uses the real Chrome channel when available and strips the automation
-    flags, so Instagram doesn't wall the login behind an endless reCAPTCHA.
-    """
-    kwargs: dict[str, Any] = {
-        "user_data_dir": settings.ig_browser_dir,
-        "headless": headless,
-        "args": [
-            "--disable-blink-features=AutomationControlled",
-            "--no-first-run",
-            "--no-default-browser-check",
-        ],
-        "ignore_default_args": ["--enable-automation"],
-        "viewport": {"width": 1280, "height": 800},
-        "user_agent": _UA,
-    }
-    channel = settings.ig_browser_channel.strip()
-    context = None
-    if channel:
-        try:
-            context = playwright.chromium.launch_persistent_context(channel=channel, **kwargs)
-        except Exception as exc:  # noqa: BLE001 — fall back to bundled Chromium
-            logger.warning("channel %r unavailable (%s); using bundled Chromium", channel, exc)
-    if context is None:
-        context = playwright.chromium.launch_persistent_context(**kwargs)
-    context.add_init_script(_STEALTH_JS)
-    return context
-
-
 class _BrowserWorker:
-    """Owns the browser on one thread; other threads submit jobs and wait."""
+    """Owns the browser on one thread; other threads submit jobs and wait.
+
+    Starts a plain Chrome (the login profile) and *attaches* over CDP — never
+    launching through Playwright, so the session stays undetectable.
+    """
 
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
@@ -112,13 +84,21 @@ class _BrowserWorker:
     def _run(self) -> None:
         from playwright.sync_api import sync_playwright
 
-        with sync_playwright() as p:
-            context = launch_stealth_context(
-                p, self._settings, self._settings.ig_browser_headless
-            )
-            page = context.pages[0] if context.pages else context.new_page()
-            page.goto(_HOME, wait_until="domcontentloaded")
-            try:
+        chrome = find_chrome(self._settings.ig_chrome_path)
+        port = self._settings.ig_cdp_port
+        proc = launch_chrome(
+            chrome,
+            self._settings.ig_browser_dir,
+            port,
+            headless=self._settings.ig_browser_headless,
+        )
+        try:
+            wait_for_cdp(port)
+            with sync_playwright() as p:
+                browser = p.chromium.connect_over_cdp(cdp_url(port))
+                context = browser.contexts[0] if browser.contexts else browser.new_context()
+                page = context.pages[0] if context.pages else context.new_page()
+                page.goto(_HOME, wait_until="domcontentloaded")
                 while True:
                     item = self._queue.get()
                     if item is None:
@@ -128,8 +108,9 @@ class _BrowserWorker:
                         fut.set_result(job(page))
                     except Exception as exc:  # noqa: BLE001 — relayed to caller
                         fut.set_exception(exc)
-            finally:
-                context.close()
+                browser.close()
+        finally:
+            proc.terminate()
 
 
 def _fetch_json(page: Page, path: str) -> dict[str, Any]:

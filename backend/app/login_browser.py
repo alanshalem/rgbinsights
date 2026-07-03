@@ -1,8 +1,9 @@
 """One-time browser login for the Playwright source.
 
-Opens a real Chromium window with a persistent profile. You log in by hand
-(resolving any checkpoint like a human); the session is saved to disk so the
-app can then drive the browser headless.
+Opens a *plain* Chrome (no automation flags, so Instagram's reCAPTCHA behaves
+normally) at the login page. You log in by hand; the session is saved in the
+dedicated profile dir. We only attach over CDP *after* you're in, just to
+confirm and read the account id — the login itself never sees automation.
 
 Usage:
     python -m app.login_browser
@@ -13,6 +14,14 @@ from __future__ import annotations
 import sys
 
 from app.infrastructure.config.settings import get_settings
+from app.infrastructure.instagram.chrome_cdp import (
+    cdp_url,
+    find_chrome,
+    launch_chrome,
+    wait_for_cdp,
+)
+
+LOGIN_URL = "https://www.instagram.com/accounts/login/"
 
 
 def main() -> int:
@@ -27,31 +36,39 @@ def main() -> int:
         )
         return 1
 
-    from app.infrastructure.instagram.playwright_source import launch_stealth_context
+    try:
+        chrome = find_chrome(settings.ig_chrome_path)
+    except FileNotFoundError as exc:
+        print(f"\n{exc}", file=sys.stderr)
+        return 1
 
-    print("Abriendo navegador… logueate con la cuenta en la ventana.")
-    with sync_playwright() as p:
-        context = launch_stealth_context(p, settings, headless=False)
-        page = context.pages[0] if context.pages else context.new_page()
-        page.goto("https://www.instagram.com/accounts/login/", wait_until="domcontentloaded")
+    port = settings.ig_cdp_port
+    print("Abriendo Chrome… logueate con la cuenta en la ventana que se abre.")
+    proc = launch_chrome(chrome, settings.ig_browser_dir, port, headless=False, start_url=LOGIN_URL)
 
+    try:
         input(
-            "\nCuando estés adentro (feed cargado, sin checkpoint), volvé acá\n"
+            "\nCuando estés adentro (feed cargado, sin recaptcha), volvé acá\n"
             "y apretá Enter para guardar la sesión…"
         )
-
-        # Confirm we ended up logged in by checking the ds_user_id cookie.
-        pk = next(
-            (c.get("value") for c in context.cookies() if c.get("name") == "ds_user_id"),
-            None,
-        )
-        context.close()
+        wait_for_cdp(port)
+        with sync_playwright() as p:
+            browser = p.chromium.connect_over_cdp(cdp_url(port))
+            context = browser.contexts[0] if browser.contexts else None
+            cookies = context.cookies() if context else []
+            pk = next(
+                (c.get("value") for c in cookies if c.get("name") == "ds_user_id"),
+                None,
+            )
+            browser.close()
+    finally:
+        proc.terminate()
 
     if not pk:
         print("\nNo detecté sesión (falta ds_user_id). ¿Terminaste de loguearte?", file=sys.stderr)
         return 2
     print(f"\n✔ Sesión del navegador guardada (pk {pk}) en {settings.ig_browser_dir}.")
-    print("Poné IG_SOURCE=playwright en .env y levantá la app.")
+    print("Ya podés correr:  python -m app.web_check <url_de_un_post>")
     return 0
 
 

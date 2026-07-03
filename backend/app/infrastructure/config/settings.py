@@ -45,12 +45,11 @@ class Settings(BaseSettings):
     # Empty falls back to use_fake_instagram for backward compat.
     ig_source: str = ""
 
-    # Playwright source: on-disk browser profile (persists the login) + headless.
-    ig_browser_dir: str = ".pw-profile"
-    ig_browser_headless: bool = True
-    # Browser channel: "chrome" uses your installed Google Chrome (less likely
-    # to trip Instagram's bot check than bundled Chromium). Empty = bundled.
-    ig_browser_channel: str = "chrome"
+    # Playwright source: it drives a plain Chrome over CDP (see chrome_cdp.py).
+    ig_browser_dir: str = ".pw-profile"  # dedicated Chrome profile (persists login)
+    ig_browser_headless: bool = True  # headless when scraping; login is always headed
+    ig_chrome_path: str = ""  # path to chrome.exe; empty = auto-detect
+    ig_cdp_port: int = 9222
 
     def resolved_source(self) -> str:
         src = self.ig_source.strip().lower()
