@@ -22,6 +22,16 @@ export type SyncResult =
 export type EventCreate = paths['/events']['post']['requestBody']['content']['application/json'];
 export type EventRefresh =
   paths['/events/{event_id}/refresh']['post']['responses']['200']['content']['application/json'];
+export type Preset =
+  paths['/campaigns/presets']['get']['responses']['200']['content']['application/json'][number];
+export type CampaignPreview =
+  paths['/events/{event_id}/campaign/preview']['post']['responses']['200']['content']['application/json'];
+export type Campaign =
+  paths['/events/{event_id}/campaign']['post']['responses']['200']['content']['application/json'];
+export type CampaignCreate =
+  paths['/events/{event_id}/campaign']['post']['requestBody']['content']['application/json'];
+export type MessageSample =
+  paths['/events/{event_id}/campaign/test']['post']['responses']['200']['content']['application/json'];
 
 type ApiErrorDetail = { code: string; message: string };
 
@@ -108,4 +118,30 @@ export const api = {
     }),
 
   syncDms: () => request<SyncResult>('/sync/dms', { method: 'POST' }),
+
+  listPresets: () => request<Preset[]>('/campaigns/presets'),
+
+  previewCampaign: (eventId: number, body: CampaignCreate) =>
+    request<CampaignPreview>(`/events/${eventId}/campaign/preview`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  testCampaign: (eventId: number, body: CampaignCreate) =>
+    request<MessageSample>(`/events/${eventId}/campaign/test`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  createCampaign: (eventId: number, body: CampaignCreate) =>
+    request<Campaign>(`/events/${eventId}/campaign`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  getCampaign: (eventId: number) => request<Campaign | null>(`/events/${eventId}/campaign`),
+
+  stopCampaign: (id: number) => request<Campaign>(`/campaigns/${id}/stop`, { method: 'POST' }),
+
+  resumeCampaign: (id: number) => request<Campaign>(`/campaigns/${id}/resume`, { method: 'POST' }),
 };

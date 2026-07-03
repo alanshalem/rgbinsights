@@ -75,3 +75,35 @@ export function useSyncDms() {
     onSuccess: refresh,
   });
 }
+
+// -- campaigns -------------------------------------------------------------
+
+export function usePresets() {
+  return useQuery({ queryKey: ['presets'], queryFn: () => api.listPresets(), staleTime: Infinity });
+}
+
+export function useCampaign(eventId?: number) {
+  return useQuery({
+    queryKey: ['campaign', eventId ?? null],
+    queryFn: () => api.getCampaign(eventId as number),
+    enabled: eventId !== undefined,
+    // Poll while a campaign is actively sending.
+    refetchInterval: (q) => (q.state.data?.status === 'running' ? 4000 : false),
+  });
+}
+
+export function useStopCampaign() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => api.stopCampaign(id),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['campaign'] }),
+  });
+}
+
+export function useResumeCampaign() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => api.resumeCampaign(id),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['campaign'] }),
+  });
+}

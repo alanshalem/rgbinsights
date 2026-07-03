@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { ApiError, type Order, type TrafficLight } from './api/client';
 import { useCounts, useEvents, useRefreshEvent } from './api/hooks';
 import { Board } from './components/Board';
+import { CampaignModal } from './components/CampaignModal';
 import { FiestaModal } from './components/FiestaModal';
 import { Manual } from './components/Manual';
 import { PostsDrawer } from './components/PostsDrawer';
@@ -26,6 +27,7 @@ export default function App() {
   const [showManual, setShowManual] = useState(false);
   const [showFiesta, setShowFiesta] = useState(false);
   const [showPosts, setShowPosts] = useState(false);
+  const [showCampaign, setShowCampaign] = useState(false);
 
   const events = useEvents();
   const refreshEvent = useRefreshEvent();
@@ -101,6 +103,13 @@ export default function App() {
               className="rounded-lg bg-[var(--color-blue)] px-3 py-1.5 text-sm font-semibold text-[var(--color-bg)] shadow-[0_0_24px_-6px_var(--color-blue)] transition-opacity hover:opacity-90 disabled:opacity-50"
             >
               {refreshEvent.isPending ? '↻ Actualizando…' : '↻ Actualizar fiesta'}
+            </button>
+            <button
+              onClick={() => setShowCampaign(true)}
+              title="Enviar un mensaje a los rojos de la fiesta, con envío lento y seguro"
+              className="rounded-lg border border-[var(--color-red)]/60 px-3 py-1.5 text-sm font-semibold text-[var(--color-red)] hover:bg-[var(--color-red)]/10"
+            >
+              ✉ Campaña de DMs
             </button>
             <span className="mono text-xs text-[var(--color-muted)]">
               campaña {fmtDate(selected.promo_start)} → evento {fmtDate(selected.event_date)}{' '}
@@ -241,6 +250,13 @@ export default function App() {
             setEvent(id);
             setShowFiesta(false);
           }}
+        />
+      )}
+      {showCampaign && selected && (
+        <CampaignModal
+          event={selected.id}
+          eventName={selected.name}
+          onClose={() => setShowCampaign(false)}
         />
       )}
     </div>
