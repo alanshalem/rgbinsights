@@ -116,9 +116,16 @@ def main() -> int:
 def _finish(client: Any, settings: Any) -> int:
     """Validate the session with a lightweight call, then persist it."""
     try:
-        client.get_timeline_feed()
+        info = client.account_info()
+        print(f"Sesión válida: @{info.username} (pk {info.pk}).")
     except Exception as exc:
-        print(f"\nLa sesión no quedó válida: {exc}", file=sys.stderr)
+        print(
+            f"\nLa sesión no quedó válida: {exc}\n"
+            "Si es 'login_required', el sessionid está vencido o es de otra sesión.\n"
+            "Sacá uno nuevo: instagram.com logueado -> F12 -> Application -> Cookies\n"
+            "-> copiá el valor EXACTO de 'sessionid' (sin espacios) en IG_SESSIONID.",
+            file=sys.stderr,
+        )
         return 2
 
     client.dump_settings(settings.ig_session_file)

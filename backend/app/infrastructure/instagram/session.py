@@ -47,8 +47,10 @@ def build_client(settings: Settings, challenge_handler: ChallengeHandler) -> Cli
     if settings.ig_country:
         client.set_country(settings.ig_country)
 
+    # When authenticating by sessionid, start clean: a stale session.json could
+    # carry an old/expired cookie that overrides the fresh sessionid.
     session_path = Path(settings.ig_session_file)
-    if session_path.exists():
+    if session_path.exists() and not settings.ig_sessionid.strip():
         client.load_settings(session_path)
         logger.info("loaded IG session from %s", session_path)
 
