@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import sys
+from collections.abc import Callable
 
 from app.infrastructure.config.settings import get_settings
 from app.infrastructure.instagram.factory import build_source
@@ -46,7 +47,7 @@ def main() -> int:
         shortcode = extract_shortcode(url)
         media_pk = str(shortcode_to_pk(shortcode)) if shortcode else ""
         print(f"\nPost {shortcode} (pk {media_pk}):")
-        checks = [
+        checks: list[tuple[str, Callable[[], object]]] = [
             ("info", lambda: source.get_post(url)),
             ("comentarios", lambda: source.get_comments(media_pk)),
             ("likers", lambda: source.get_likers(media_pk)),
