@@ -13,6 +13,24 @@ Corre en tu propia máquina. No hay usuarios, login propio ni nube.
 
 ---
 
+## Arranque rápido (recomendado)
+
+Un solo comando que **chequea requisitos, instala lo que falte y levanta todo**.
+Si te falta Python o Node, te dice exactamente qué instalar.
+
+- **Windows:** click derecho en `start.ps1` → **Ejecutar con PowerShell**.
+  (o en terminal: `powershell -ExecutionPolicy Bypass -File start.ps1`)
+- **macOS / Linux:**
+  ```bash
+  chmod +x start.sh   # una sola vez
+  ./start.sh
+  ```
+
+Abre el frontend en http://localhost:5173. Para hacerlo manual (dos terminales),
+seguí los pasos de abajo.
+
+---
+
 ## Qué necesitás instalar (una sola vez)
 
 1. **Python 3.12 o superior** → https://www.python.org/downloads/

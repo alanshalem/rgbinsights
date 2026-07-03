@@ -21,6 +21,7 @@ from app.domain.entities import Comment, DmMessage, DmThread, IgUser, Post
 from app.infrastructure.config.settings import Settings
 from app.infrastructure.instagram.errors import (
     ChallengeRequiredError,
+    InstagramError,
     LoginRequiredError,
     PostNotFoundError,
     RateLimitedError,
@@ -90,10 +91,8 @@ class InstagrapiInstagramSource:
             client.load_settings(session_path)
             logger.info("loaded IG session from %s", session_path)
 
+        verification_code = self._totp_code(client)
         try:
-            verification_code = ""
-            if self._settings.ig_2fa_secret:
-                verification_code = client.totp_generate_code(self._settings.ig_2fa_secret)
             client.login(
                 self._settings.ig_username,
                 self._settings.ig_password,
@@ -107,11 +106,35 @@ class InstagrapiInstagramSource:
             raise ChallengeRequiredError("Instagram requested verification (challenge).") from exc
         except LoginRequired as exc:
             raise LoginRequiredError(str(exc)) from exc
+        except InstagramError:
+            raise  # already a handled type (e.g. from the TOTP guard)
+        except Exception as exc:
+            # Any other instagrapi/network error is surfaced as handled, so the
+            # UI shows a message instead of the API returning a raw 500.
+            raise LoginRequiredError(f"login failed: {exc}") from exc
 
         client.dump_settings(session_path)
         logger.info("saved IG session to %s", session_path)
         self._client = client
         return client
+
+    def _totp_code(self, client: Client) -> str:
+        """Generate a 2FA code from the seed, or "" if none is configured.
+
+        The seed is stripped first (a stray inline comment or whitespace in
+        .env must not be treated as a real seed), and a malformed seed becomes
+        a clear handled error rather than an unhandled base32 crash.
+        """
+        secret = self._settings.ig_2fa_secret.strip()
+        if not secret:
+            return ""
+        try:
+            return str(client.totp_generate_code(secret))
+        except Exception as exc:
+            raise LoginRequiredError(
+                "IG_2FA_SECRET is not a valid base32 TOTP seed; "
+                "leave it empty if the account has no 2FA."
+            ) from exc
 
     def _challenge_code_handler(self, username: str, choice: Any) -> str:
         # We can't prompt interactively from the API. Surface it as a handled

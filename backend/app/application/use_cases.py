@@ -142,12 +142,19 @@ class ScanPostsUseCase:
     @staticmethod
     def _run(results: list[Result[ScanResult]]) -> Result[ScanBatchResult]:
         oks: list[ScanResult] = []
+        errs: list[Err] = []
         for r in results:
             if isinstance(r, Ok):
                 oks.append(r.value)
-            elif r.code is ErrorCode.CHALLENGE_REQUIRED:
-                # A challenge blocks everything — surface it rather than partial data.
-                return r
+            else:
+                # A challenge blocks everything — surface it immediately.
+                if r.code is ErrorCode.CHALLENGE_REQUIRED:
+                    return r
+                errs.append(r)
+        # If nothing succeeded, surface the failure instead of a misleading
+        # empty-but-OK batch (e.g. login blocked / post not found).
+        if not oks and errs:
+            return errs[0]
         return Ok(
             ScanBatchResult(
                 results=oks,
