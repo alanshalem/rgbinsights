@@ -41,12 +41,7 @@ export default function App() {
     <div className="mx-auto flex min-h-full max-w-7xl flex-col gap-4 p-4 md:p-6">
       <header className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <div className="flex items-center gap-2.5">
-            <img src="/logo.png" alt="RGB Collective" className="h-9 w-auto" />
-            <span className="display text-lg font-black tracking-tight text-[var(--color-muted)] uppercase">
-              Semáforo
-            </span>
-          </div>
+          <img src="/logo.png" alt="RGB Collective" className="h-16 w-auto md:h-20" />
           <p className="mt-1 text-sm text-[var(--color-muted)]">
             Seguimiento de outreach por DM · @rgb.collective___
           </p>
