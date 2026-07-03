@@ -26,6 +26,7 @@ from app.infrastructure.instagram.errors import (
     PostNotFoundError,
     RateLimitedError,
 )
+from app.infrastructure.instagram.session import build_client
 
 if TYPE_CHECKING:
     from instagrapi import Client
@@ -71,25 +72,14 @@ class InstagrapiInstagramSource:
             return self._client
 
         # Lazy import: keeps instagrapi optional at import time.
-        from instagrapi import Client
         from instagrapi.exceptions import (
             ChallengeRequired,
             LoginRequired,
             TwoFactorRequired,
         )
 
-        client = Client()
-        client.delay_range = [
-            self._settings.scan_min_delay_seconds,
-            self._settings.scan_max_delay_seconds,
-        ]
-        client.challenge_code_handler = self._challenge_code_handler
-
+        client = build_client(self._settings, self._challenge_code_handler)
         session_path = Path(self._settings.ig_session_file)
-        if session_path.exists():
-            # Reuse a saved session: log in once, not every run.
-            client.load_settings(session_path)
-            logger.info("loaded IG session from %s", session_path)
 
         verification_code = self._totp_code(client)
         try:

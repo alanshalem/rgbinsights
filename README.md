@@ -105,14 +105,34 @@ Re-escanear un post no duplica nada: podés hacerlo las veces que quieras.
    - `USE_FAKE_INSTAGRAM=false`
    - `IG_USERNAME=` y `IG_PASSWORD=` con la cuenta.
    - Si la cuenta tiene 2FA, poné el seed TOTP en `IG_2FA_SECRET`.
-2. Reiniciá el backend.
+2. **Logueate una sola vez** (resuelve la verificación y guarda la sesión):
+   ```bash
+   cd backend
+   .venv\Scripts\Activate.ps1      # Mac/Linux: source .venv/bin/activate
+   python -m app.login
+   ```
+   Si Instagram pide un código (email/SMS/2FA), te lo pregunta por terminal.
+   Al terminar guarda `session.json`.
+3. Levantá la app normalmente: **reusa esa sesión** y no vuelve a loguear.
 
-La sesión se guarda en `session.json` para no tener que loguearse en cada corrida.
-Si Instagram pide **verificación (challenge)**, la app lo avisa en pantalla y **no
-se rompe** — resolvé la verificación y volvé a intentar.
+Si Instagram igual pide **verificación** durante el uso, la app lo avisa en
+pantalla (cartel amarillo) y **no se rompe** — corré `python -m app.login` de
+nuevo para re-validar.
 
-La herramienta usa demoras aleatorias y un tope de requests por corrida para
-comportarse bien (configurable en `.env`).
+### Que Instagram no te bloquee
+
+Lo que más ayuda, en orden:
+
+1. **Corré desde tu conexión de casa** (la misma donde usás Instagram). **Sin VPN.**
+2. **Logueate primero en la app oficial** de Instagram en esa red y aprobá el
+   *"¿Fuiste vos?"*.
+3. Usá `python -m app.login` para dejar la **sesión guardada** (reusar sesión es
+   la defensa #1).
+4. Poné país/locale en `.env`: `IG_COUNTRY=AR`, `IG_LOCALE=es_AR`.
+5. Si aún así te bloquea, configurá un **proxy estable** (residencial/móvil, uno
+   fijo — no rotativo) en `IG_PROXY=`.
+6. Andá **despacio**: pocas requests. Las demoras y el tope por corrida se
+   configuran con `SCAN_*` en `.env`.
 
 ---
 

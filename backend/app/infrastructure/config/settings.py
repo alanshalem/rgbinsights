@@ -16,6 +16,12 @@ class Settings(BaseSettings):
     ig_2fa_secret: str = ""  # optional TOTP seed
     ig_session_file: str = "session.json"
 
+    # Anti-block hygiene (all optional). A stable proxy + consistent
+    # country/locale make the account look far less suspicious to Instagram.
+    ig_proxy: str = ""  # e.g. http://user:pass@host:port
+    ig_country: str = ""  # e.g. AR
+    ig_locale: str = ""  # e.g. es_AR
+
     database_url: str = "sqlite:///./rgb.db"
 
     # Rate limiting / good behaviour.

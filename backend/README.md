@@ -52,8 +52,21 @@ Docs interactivas: http://localhost:8000/docs · OpenAPI: `/openapi.json`.
 | GET    | `/posts`      | Posts escaneados.                                               |
 | GET    | `/health`     | Estado + si está en modo fake.                                  |
 
+## Login a Instagram real
+
+```bash
+python -m app.login
+```
+
+Login interactivo de una sola vez: resuelve challenge/2FA (te pide el código por
+terminal) y guarda `session.json`. Después la API reusa esa sesión y no vuelve a
+loguear de cero — la mejor forma de evitar bloqueos. Usa el mismo `build_client`
+(`infrastructure/instagram/session.py`) que el adapter, así proxy/país/locale son
+consistentes.
+
 ## Config (`.env`)
 
 Ver `.env.example`. Clave: `USE_FAKE_INSTAGRAM` (default `true`) corre con datos
 de ejemplo; ponelo en `false` y completá credenciales para ir a Instagram real.
-`SCAN_*` controlan las demoras y el tope de requests por corrida.
+`SCAN_*` controlan las demoras y el tope de requests por corrida. Anti-bloqueo
+(opcional): `IG_PROXY` (uno estable), `IG_COUNTRY`, `IG_LOCALE`.
