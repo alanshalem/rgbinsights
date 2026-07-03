@@ -117,6 +117,13 @@ export default function App() {
                 contactaste {contacted}/{c.total}
               </span>
             </div>
+            {refreshEvent.isSuccess && (
+              <span className="mono w-full text-xs text-[var(--color-green)]">
+                ✓ actualizado: {refreshEvent.data.scan.results.length} posts ·{' '}
+                {refreshEvent.data.scan.total_users_found} usuarios ·{' '}
+                {refreshEvent.data.sync.threads_synced} DMs
+              </span>
+            )}
           </>
         )}
       </div>
