@@ -14,14 +14,39 @@ from app.domain.traffic_light import TrafficLight
 
 class ScanPostRequest(BaseModel):
     url: str = Field(examples=["https://instagram.com/p/Cabc123/"])
+    event_id: int | None = None
 
 
 class ScanPostsRequest(BaseModel):
     urls: list[str] | None = None
     date_from: datetime | None = Field(default=None, alias="from")
     date_to: datetime | None = Field(default=None, alias="to")
+    event_id: int | None = None
 
     model_config = {"populate_by_name": True}
+
+
+class EventCreate(BaseModel):
+    name: str
+    promo_start: datetime
+    event_date: datetime
+    notes: str | None = None
+
+
+class EventUpdate(BaseModel):
+    name: str | None = None
+    promo_start: datetime | None = None
+    event_date: datetime | None = None
+    notes: str | None = None
+
+
+class EventOut(BaseModel):
+    id: int
+    name: str
+    promo_start: datetime
+    event_date: datetime
+    notes: str | None
+    posts_count: int
 
 
 # -- responses ----------------------------------------------------------
@@ -78,6 +103,7 @@ class PostOut(BaseModel):
     caption: str
     taken_at: datetime | None
     last_scanned_at: datetime | None
+    event_id: int | None
 
 
 class HealthOut(BaseModel):

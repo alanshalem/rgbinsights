@@ -75,7 +75,7 @@ class ScanPostUseCase:
         self._posts = PostRepository(session)
         self._engagements = EngagementRepository(session)
 
-    def execute(self, url: str) -> Result[ScanResult]:
+    def execute(self, url: str, event_id: int | None = None) -> Result[ScanResult]:
         try:
             post = self._source.get_post(url)
             comments = self._source.get_comments(post.media_pk)
@@ -85,7 +85,7 @@ class ScanPostUseCase:
             return _map_error(exc)
 
         now = _now()
-        self._posts.upsert(post, scanned_at=now)
+        self._posts.upsert(post, scanned_at=now, event_id=event_id)
 
         seen: set[str] = set()
         new_users = 0
@@ -126,10 +126,12 @@ class ScanPostsUseCase:
         self._recent_limit = recent_limit
         self._single = ScanPostUseCase(source, session)
 
-    def by_urls(self, urls: list[str]) -> Result[ScanBatchResult]:
-        return self._run([self._single.execute(u) for u in urls])
+    def by_urls(self, urls: list[str], event_id: int | None = None) -> Result[ScanBatchResult]:
+        return self._run([self._single.execute(u, event_id) for u in urls])
 
-    def by_date_range(self, date_from: datetime, date_to: datetime) -> Result[ScanBatchResult]:
+    def by_date_range(
+        self, date_from: datetime, date_to: datetime, event_id: int | None = None
+    ) -> Result[ScanBatchResult]:
         try:
             recent = self._source.get_recent_posts(self._recent_limit)
         except InstagramError as exc:
@@ -137,7 +139,7 @@ class ScanPostsUseCase:
         in_range = [
             p for p in recent if p.taken_at is not None and date_from <= p.taken_at <= date_to
         ]
-        return self._run([self._single.execute(p.url) for p in in_range])
+        return self._run([self._single.execute(p.url, event_id) for p in in_range])
 
     @staticmethod
     def _run(results: list[Result[ScanResult]]) -> Result[ScanBatchResult]:
@@ -164,6 +166,21 @@ class ScanPostsUseCase:
         )
 
 
+class RescanEventUseCase:
+    """Re-scan every post already assigned to a fiesta (no URLs to paste)."""
+
+    def __init__(self, source: InstagramSource, session: Session, recent_limit: int) -> None:
+        self._session = session
+        self._batch = ScanPostsUseCase(source, session, recent_limit)
+
+    def execute(self, event_id: int) -> Result[ScanBatchResult]:
+        posts = PostRepository(self._session).list_all(event_id=event_id)
+        urls = [p.url for p in posts]
+        if not urls:
+            return Ok(ScanBatchResult(results=[], total_users_found=0, total_new_users=0))
+        return self._batch.by_urls(urls, event_id=event_id)
+
+
 class SyncDmsUseCase:
     def __init__(self, source: InstagramSource, session: Session) -> None:
         self._source = source
@@ -181,14 +198,24 @@ class SyncDmsUseCase:
 
         now = _now()
         for thread in threads:
-            has_outgoing = any(m.user_pk == our_pk for m in thread.messages)
-            has_incoming = any(m.user_pk != our_pk for m in thread.messages)
+            out_times = [
+                m.created_at
+                for m in thread.messages
+                if m.user_pk == our_pk and m.created_at is not None
+            ]
+            in_times = [
+                m.created_at
+                for m in thread.messages
+                if m.user_pk != our_pk and m.created_at is not None
+            ]
             self._users.upsert(thread.user, now)
             self._threads.upsert(
                 thread_id=thread.thread_id,
                 user_pk=thread.user.pk,
-                has_outgoing=has_outgoing,
-                has_incoming=has_incoming,
+                has_outgoing=any(m.user_pk == our_pk for m in thread.messages),
+                has_incoming=any(m.user_pk != our_pk for m in thread.messages),
+                last_outgoing_at=max(out_times) if out_times else None,
+                last_incoming_at=max(in_times) if in_times else None,
                 last_message_at=thread.last_message_at,
                 synced_at=now,
             )

@@ -48,7 +48,9 @@ class PostRepository:
     def __init__(self, session: Session) -> None:
         self.session = session
 
-    def upsert(self, post: Post, scanned_at: datetime) -> models.Post:
+    def upsert(
+        self, post: Post, scanned_at: datetime, event_id: int | None = None
+    ) -> models.Post:
         row = self.session.get(models.Post, post.media_pk)
         if row is None:
             row = models.Post(media_pk=post.media_pk, shortcode=post.shortcode, url=post.url)
@@ -57,11 +59,17 @@ class PostRepository:
         row.caption = post.caption
         row.taken_at = post.taken_at
         row.last_scanned_at = scanned_at
+        # Only (re)assign the fiesta when one is given; a plain re-scan keeps it.
+        if event_id is not None:
+            row.event_id = event_id
         self.session.add(row)
         return row
 
-    def list_all(self) -> list[models.Post]:
-        return list(self.session.exec(select(models.Post).order_by(col(models.Post.taken_at))))
+    def list_all(self, event_id: int | None = None) -> list[models.Post]:
+        stmt = select(models.Post)
+        if event_id is not None:
+            stmt = stmt.where(models.Post.event_id == event_id)
+        return list(self.session.exec(stmt.order_by(col(models.Post.taken_at))))
 
     def get(self, media_pk: str) -> models.Post | None:
         return self.session.get(models.Post, media_pk)
@@ -115,6 +123,8 @@ class DmThreadRepository:
         user_pk: str,
         has_outgoing: bool,
         has_incoming: bool,
+        last_outgoing_at: datetime | None,
+        last_incoming_at: datetime | None,
         last_message_at: datetime | None,
         synced_at: datetime,
     ) -> None:
@@ -124,6 +134,8 @@ class DmThreadRepository:
         row.user_pk = user_pk
         row.has_outgoing = has_outgoing
         row.has_incoming = has_incoming
+        row.last_outgoing_at = last_outgoing_at
+        row.last_incoming_at = last_incoming_at
         row.last_message_at = last_message_at
         row.last_synced_at = synced_at
         self.session.add(row)
@@ -132,3 +144,28 @@ class DmThreadRepository:
         """Map user_pk -> thread. One thread per user in this app's scope."""
         rows = self.session.exec(select(models.DmThread))
         return {row.user_pk: row for row in rows}
+
+
+class EventRepository:
+    def __init__(self, session: Session) -> None:
+        self.session = session
+
+    def create(self, event: models.Event) -> models.Event:
+        self.session.add(event)
+        self.session.commit()
+        self.session.refresh(event)
+        return event
+
+    def get(self, event_id: int) -> models.Event | None:
+        return self.session.get(models.Event, event_id)
+
+    def list_all(self) -> list[models.Event]:
+        return list(self.session.exec(select(models.Event).order_by(col(models.Event.event_date))))
+
+    def post_counts(self) -> dict[int, int]:
+        """event_id -> number of posts assigned."""
+        counts: dict[int, int] = {}
+        for row in self.session.exec(select(models.Post.event_id)):
+            if row is not None:
+                counts[row] = counts.get(row, 0) + 1
+        return counts

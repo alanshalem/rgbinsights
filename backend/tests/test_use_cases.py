@@ -81,6 +81,50 @@ def test_filter_by_status_and_post(session: Session) -> None:
     assert {v.username for v in only_b} == {"lucia.dj", "tomas_beats"}
 
 
+def test_scan_assigns_event(session: Session) -> None:
+    from app.infrastructure.persistence import models
+    from app.infrastructure.persistence.repositories import EventRepository, PostRepository
+
+    event = EventRepository(session).create(
+        models.Event(
+            name="Fiesta test",
+            promo_start=datetime(2026, 6, 1, tzinfo=UTC),
+            event_date=datetime(2026, 6, 30, tzinfo=UTC),
+            created_at=datetime(2026, 6, 1, tzinfo=UTC),
+        )
+    )
+    source = FakeInstagramSource()
+    ScanPostUseCase(source, session).execute(POST_A_URL, event_id=event.id)
+
+    posts = PostRepository(session)
+    assert posts.get("900001") is not None
+    assert posts.get("900001").event_id == event.id  # type: ignore[union-attr]
+    assert {p.media_pk for p in posts.list_all(event_id=event.id)} == {"900001"}
+    assert posts.list_all(event_id=999) == []
+
+
+def test_rescan_event(session: Session) -> None:
+    from app.application.use_cases import RescanEventUseCase
+    from app.infrastructure.persistence import models
+    from app.infrastructure.persistence.repositories import EventRepository
+
+    event = EventRepository(session).create(
+        models.Event(
+            name="Fiesta",
+            promo_start=datetime(2026, 6, 1, tzinfo=UTC),
+            event_date=datetime(2026, 6, 30, tzinfo=UTC),
+            created_at=datetime(2026, 6, 1, tzinfo=UTC),
+        )
+    )
+    source = FakeInstagramSource()
+    assert event.id is not None
+    ScanPostUseCase(source, session).execute(POST_A_URL, event_id=event.id)
+
+    result = RescanEventUseCase(source, session, recent_limit=50).execute(event.id)
+    assert isinstance(result, Ok)
+    assert len(result.value.results) == 1  # the one post assigned to the fiesta
+
+
 def test_scan_by_date_range(session: Session) -> None:
     source = FakeInstagramSource()
     use_case = ScanPostsUseCase(source, session, recent_limit=50)

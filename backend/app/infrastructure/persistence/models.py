@@ -25,6 +25,19 @@ class User(SQLModel, table=True):
     last_seen_at: datetime
 
 
+class Event(SQLModel, table=True):
+    """A party (fiesta): groups posts and defines the semáforo cutoff."""
+
+    __tablename__ = "events"
+
+    id: int | None = Field(default=None, primary_key=True)
+    name: str
+    promo_start: datetime  # start of the campaign -> semáforo cutoff date
+    event_date: datetime  # when the party happens/happened (metadata/status)
+    notes: str | None = None
+    created_at: datetime
+
+
 class Post(SQLModel, table=True):
     __tablename__ = "posts"
 
@@ -34,6 +47,7 @@ class Post(SQLModel, table=True):
     caption: str = ""
     taken_at: datetime | None = None
     last_scanned_at: datetime | None = None
+    event_id: int | None = Field(default=None, foreign_key="events.id", index=True)
 
 
 class Engagement(SQLModel, table=True):
@@ -58,5 +72,9 @@ class DmThread(SQLModel, table=True):
     user_pk: str = Field(foreign_key="users.pk", index=True)
     has_outgoing: bool = False
     has_incoming: bool = False
+    # Timestamps of the last message in each direction, for the per-fiesta
+    # date cutoff (a reply before the campaign started doesn't count).
+    last_outgoing_at: datetime | None = None
+    last_incoming_at: datetime | None = None
     last_message_at: datetime | None = None
     last_synced_at: datetime

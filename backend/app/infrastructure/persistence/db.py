@@ -23,6 +23,28 @@ engine = create_engine(
 
 def create_db_and_tables() -> None:
     SQLModel.metadata.create_all(engine)
+    _migrate()
+
+
+# New nullable columns added to already-existing tables. create_all() creates
+# brand-new tables (e.g. events) but never ALTERs existing ones, so add these by
+# hand to preserve data already scanned/synced. Keyed by table -> {column: ddl}.
+_ADDED_COLUMNS: dict[str, dict[str, str]] = {
+    "posts": {"event_id": "INTEGER"},
+    "dm_threads": {
+        "last_outgoing_at": "DATETIME",
+        "last_incoming_at": "DATETIME",
+    },
+}
+
+
+def _migrate() -> None:
+    with engine.begin() as conn:
+        for table, columns in _ADDED_COLUMNS.items():
+            existing = {row[1] for row in conn.exec_driver_sql(f"PRAGMA table_info({table})")}
+            for column, ddl in columns.items():
+                if column not in existing:
+                    conn.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
 
 
 def get_session() -> Iterator[Session]:
