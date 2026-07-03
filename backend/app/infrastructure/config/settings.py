@@ -48,6 +48,9 @@ class Settings(BaseSettings):
     # Playwright source: on-disk browser profile (persists the login) + headless.
     ig_browser_dir: str = ".pw-profile"
     ig_browser_headless: bool = True
+    # Browser channel: "chrome" uses your installed Google Chrome (less likely
+    # to trip Instagram's bot check than bundled Chromium). Empty = bundled.
+    ig_browser_channel: str = "chrome"
 
     def resolved_source(self) -> str:
         src = self.ig_source.strip().lower()

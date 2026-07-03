@@ -45,9 +45,47 @@ logger = logging.getLogger(__name__)
 
 _WEB_APP_ID = "936619743392459"
 _HOME = "https://www.instagram.com/"
+_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"
+)
+# Hide the automation fingerprint Instagram uses to gate logins behind a
+# never-completing reCAPTCHA.
+_STEALTH_JS = "Object.defineProperty(navigator, 'webdriver', {get: () => undefined});"
 
 # Job = a function to run on the browser thread with the live Page.
 _Job = Callable[["Page"], Any]
+
+
+def launch_stealth_context(playwright: Any, settings: Settings, headless: bool) -> Any:
+    """Launch a persistent context that looks like a normal browser.
+
+    Uses the real Chrome channel when available and strips the automation
+    flags, so Instagram doesn't wall the login behind an endless reCAPTCHA.
+    """
+    kwargs: dict[str, Any] = {
+        "user_data_dir": settings.ig_browser_dir,
+        "headless": headless,
+        "args": [
+            "--disable-blink-features=AutomationControlled",
+            "--no-first-run",
+            "--no-default-browser-check",
+        ],
+        "ignore_default_args": ["--enable-automation"],
+        "viewport": {"width": 1280, "height": 800},
+        "user_agent": _UA,
+    }
+    channel = settings.ig_browser_channel.strip()
+    context = None
+    if channel:
+        try:
+            context = playwright.chromium.launch_persistent_context(channel=channel, **kwargs)
+        except Exception as exc:  # noqa: BLE001 — fall back to bundled Chromium
+            logger.warning("channel %r unavailable (%s); using bundled Chromium", channel, exc)
+    if context is None:
+        context = playwright.chromium.launch_persistent_context(**kwargs)
+    context.add_init_script(_STEALTH_JS)
+    return context
 
 
 class _BrowserWorker:
@@ -75,9 +113,8 @@ class _BrowserWorker:
         from playwright.sync_api import sync_playwright
 
         with sync_playwright() as p:
-            context = p.chromium.launch_persistent_context(
-                self._settings.ig_browser_dir,
-                headless=self._settings.ig_browser_headless,
+            context = launch_stealth_context(
+                p, self._settings, self._settings.ig_browser_headless
             )
             page = context.pages[0] if context.pages else context.new_page()
             page.goto(_HOME, wait_until="domcontentloaded")

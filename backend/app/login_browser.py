@@ -27,14 +27,13 @@ def main() -> int:
         )
         return 1
 
-    print("Abriendo Chromium… logueate con la cuenta en la ventana.")
+    from app.infrastructure.instagram.playwright_source import launch_stealth_context
+
+    print("Abriendo navegador… logueate con la cuenta en la ventana.")
     with sync_playwright() as p:
-        context = p.chromium.launch_persistent_context(
-            settings.ig_browser_dir,
-            headless=False,
-        )
+        context = launch_stealth_context(p, settings, headless=False)
         page = context.pages[0] if context.pages else context.new_page()
-        page.goto("https://www.instagram.com/", wait_until="domcontentloaded")
+        page.goto("https://www.instagram.com/accounts/login/", wait_until="domcontentloaded")
 
         input(
             "\nCuando estés adentro (feed cargado, sin checkpoint), volvé acá\n"
