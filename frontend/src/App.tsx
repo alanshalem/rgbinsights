@@ -1,7 +1,10 @@
 import { useMemo, useState } from 'react';
-import { ApiError, type TrafficLight, type UsersQuery } from './api/client';
-import { usePosts, useUsers } from './api/hooks';
+import { ApiError, type Order, type TrafficLight } from './api/client';
+import { useCounts, useEvents } from './api/hooks';
 import { Board } from './components/Board';
+import { FiestaModal } from './components/FiestaModal';
+import { Manual } from './components/Manual';
+import { PostsDrawer } from './components/PostsDrawer';
 import { ScanBar } from './components/ScanBar';
 import { UsersTable } from './components/UsersTable';
 import { TrafficDot } from './components/TrafficChip';
@@ -9,35 +12,33 @@ import { LIGHTS, LIGHT_LABEL } from './lib/user';
 
 type View = 'board' | 'table';
 
+function fmtDate(iso: string): string {
+  return new Date(iso).toLocaleDateString('es-AR', { day: '2-digit', month: 'short' });
+}
+
 export default function App() {
   const [view, setView] = useState<View>('board');
+  const [event, setEvent] = useState<number | undefined>(undefined);
   const [status, setStatus] = useState<TrafficLight | ''>('');
-  const [post, setPost] = useState('');
   const [search, setSearch] = useState('');
-  const [order, setOrder] = useState<'username' | 'status'>('status');
+  const [order, setOrder] = useState<Order>('status');
   const [error, setError] = useState<ApiError | null>(null);
+  const [showManual, setShowManual] = useState(false);
+  const [showFiesta, setShowFiesta] = useState(false);
+  const [showPosts, setShowPosts] = useState(false);
 
-  const query: UsersQuery = useMemo(
-    () => ({
-      ...(status ? { status } : {}),
-      ...(post ? { post } : {}),
-      ...(search ? { search } : {}),
-      order,
-    }),
-    [status, post, search, order]
-  );
+  const events = useEvents();
+  const counts = useCounts({ event, search: search || undefined });
+  const c = counts.data ?? { red: 0, yellow: 0, green: 0, total: 0 };
 
-  const users = useUsers(query);
-  const posts = usePosts();
+  const selected = useMemo(() => events.data?.find((e) => e.id === event), [events.data, event]);
+  const contacted = c.yellow + c.green;
+  const pct = c.total ? Math.round((contacted / c.total) * 100) : 0;
 
-  const counts = useMemo(() => {
-    const c: Record<TrafficLight, number> = { red: 0, yellow: 0, green: 0 };
-    for (const u of users.data ?? []) c[u.traffic_light]++;
-    return c;
-  }, [users.data]);
+  const tableTotal = status ? c[status] : c.total;
 
   return (
-    <div className="mx-auto flex min-h-full max-w-7xl flex-col gap-5 p-4 md:p-6">
+    <div className="mx-auto flex min-h-full max-w-7xl flex-col gap-4 p-4 md:p-6">
       <header className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">
@@ -47,18 +48,67 @@ export default function App() {
             Seguimiento de outreach por DM · @rgb.collective___
           </p>
         </div>
-        <div className="flex gap-3 text-sm">
-          {LIGHTS.map((l) => (
-            <div key={l} className="flex items-center gap-1.5">
-              <TrafficDot light={l} />
-              <span className="font-semibold">{counts[l]}</span>
-              <span className="text-[var(--color-muted)]">{LIGHT_LABEL[l]}</span>
-            </div>
-          ))}
+        <div className="flex items-center gap-4">
+          <div className="flex gap-3 text-sm">
+            {LIGHTS.map((l) => (
+              <div key={l} className="flex items-center gap-1.5">
+                <TrafficDot light={l} />
+                <span className="font-semibold">{c[l]}</span>
+                <span className="text-[var(--color-muted)]">{LIGHT_LABEL[l]}</span>
+              </div>
+            ))}
+          </div>
+          <button
+            onClick={() => setShowManual(true)}
+            className="rounded-lg border border-[var(--color-border)] px-3 py-1.5 text-sm hover:bg-[var(--color-panel)]"
+          >
+            Manual
+          </button>
         </div>
       </header>
 
-      <ScanBar onError={setError} />
+      {/* Fiesta context: drives filter + scan target + counts */}
+      <div className="flex flex-wrap items-center gap-3">
+        <select
+          value={event ?? ''}
+          onChange={(e) => setEvent(e.target.value ? Number(e.target.value) : undefined)}
+          className="rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] px-3 py-1.5 text-sm font-medium outline-none"
+        >
+          <option value="">Todas las fiestas</option>
+          {(events.data ?? []).map((e) => (
+            <option key={e.id} value={e.id}>
+              {e.name} ({e.posts_count})
+            </option>
+          ))}
+        </select>
+        <button
+          onClick={() => setShowFiesta(true)}
+          className="rounded-lg bg-[var(--color-panel-2)] px-3 py-1.5 text-sm font-medium hover:bg-[var(--color-border)]"
+        >
+          + Nueva fiesta
+        </button>
+        {selected && (
+          <>
+            <span className="text-xs text-[var(--color-muted)]">
+              campaña desde {fmtDate(selected.promo_start)} · evento {fmtDate(selected.event_date)}{' '}
+              {new Date(selected.event_date) < new Date() ? '· ya pasó' : '· próxima'}
+            </span>
+            <div className="flex min-w-[180px] flex-1 items-center gap-2">
+              <div className="h-2 flex-1 overflow-hidden rounded-full bg-[var(--color-panel-2)]">
+                <div
+                  className="h-full rounded-full bg-[var(--color-green)]"
+                  style={{ width: `${pct}%` }}
+                />
+              </div>
+              <span className="shrink-0 text-xs text-[var(--color-muted)]">
+                contactaste {contacted}/{c.total}
+              </span>
+            </div>
+          </>
+        )}
+      </div>
+
+      <ScanBar event={event} eventName={selected?.name} onError={setError} />
 
       {error && (
         <div
@@ -70,8 +120,8 @@ export default function App() {
         >
           {error.isChallenge ? (
             <>
-              <strong>Instagram pide verificación.</strong> Resolvé el challenge / 2FA y volvé a
-              intentar. {error.message}
+              <strong>Instagram pide verificación.</strong> La sesión del navegador se venció: corré{' '}
+              <code>python -m app.login_browser</code> y reintentá. {error.message}
             </>
           ) : (
             <>Error: {error.message}</>
@@ -85,7 +135,7 @@ export default function App() {
             <button
               key={v}
               onClick={() => setView(v)}
-              className={`px-3 py-1.5 text-sm font-medium capitalize ${
+              className={`px-3 py-1.5 text-sm font-medium ${
                 view === v
                   ? 'bg-[var(--color-panel-2)] text-[var(--color-ink)]'
                   : 'text-[var(--color-muted)] hover:text-[var(--color-ink)]'
@@ -99,59 +149,80 @@ export default function App() {
         <input
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="Buscar @username…"
-          className="rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] px-3 py-1.5 text-sm outline-none placeholder:text-[var(--color-muted)] focus:border-[var(--color-muted)]"
+          placeholder="Buscar @usuario o nombre…"
+          className="rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] px-3 py-1.5 text-sm outline-none placeholder:text-[var(--color-muted)]"
         />
 
-        <select
-          value={status}
-          onChange={(e) => setStatus(e.target.value as TrafficLight | '')}
-          className="rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] px-3 py-1.5 text-sm outline-none"
-        >
-          <option value="">Todos los estados</option>
-          {LIGHTS.map((l) => (
-            <option key={l} value={l}>
-              {LIGHT_LABEL[l]}
-            </option>
-          ))}
-        </select>
-
-        <select
-          value={post}
-          onChange={(e) => setPost(e.target.value)}
-          className="max-w-[220px] rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] px-3 py-1.5 text-sm outline-none"
-        >
-          <option value="">Todos los posts</option>
-          {(posts.data ?? []).map((p) => (
-            <option key={p.media_pk} value={p.media_pk}>
-              {p.shortcode} — {p.caption.slice(0, 24) || 'sin caption'}
-            </option>
-          ))}
-        </select>
+        {view === 'table' && (
+          <select
+            value={status}
+            onChange={(e) => setStatus(e.target.value as TrafficLight | '')}
+            className="rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] px-3 py-1.5 text-sm outline-none"
+          >
+            <option value="">Todos los estados</option>
+            {LIGHTS.map((l) => (
+              <option key={l} value={l}>
+                {LIGHT_LABEL[l]}
+              </option>
+            ))}
+          </select>
+        )}
 
         <select
           value={order}
-          onChange={(e) => setOrder(e.target.value as 'username' | 'status')}
+          onChange={(e) => setOrder(e.target.value as Order)}
           className="rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] px-3 py-1.5 text-sm outline-none"
         >
           <option value="status">Orden: estado</option>
+          <option value="fans">Orden: fans 🔥</option>
           <option value="username">Orden: usuario</option>
         </select>
+
+        <button
+          onClick={() => setShowPosts((s) => !s)}
+          className="rounded-lg border border-[var(--color-border)] px-3 py-1.5 text-sm hover:bg-[var(--color-panel)]"
+        >
+          {showPosts ? 'Ocultar posts' : 'Ver posts'}
+        </button>
       </div>
 
+      {showPosts && <PostsDrawer event={event} onError={setError} />}
+
       <main className="flex-1">
-        {users.isPending ? (
-          <p className="py-12 text-center text-sm text-[var(--color-muted)]">Cargando…</p>
-        ) : users.isError ? (
+        {counts.isError ? (
           <p className="py-12 text-center text-sm text-[var(--color-red)]">
             No se pudo cargar. ¿Está corriendo el backend en :8000?
           </p>
         ) : view === 'board' ? (
-          <Board users={users.data} />
+          <Board
+            event={event}
+            search={search || undefined}
+            order={order}
+            counts={{ red: c.red, yellow: c.yellow, green: c.green }}
+          />
         ) : (
-          <UsersTable users={users.data} />
+          <UsersTable
+            query={{
+              event,
+              status: status || undefined,
+              search: search || undefined,
+              order,
+            }}
+            total={tableTotal}
+          />
         )}
       </main>
+
+      {showManual && <Manual onClose={() => setShowManual(false)} />}
+      {showFiesta && (
+        <FiestaModal
+          onClose={() => setShowFiesta(false)}
+          onCreated={(id) => {
+            setEvent(id);
+            setShowFiesta(false);
+          }}
+        />
+      )}
     </div>
   );
 }

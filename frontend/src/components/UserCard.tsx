@@ -13,6 +13,7 @@ function Chip({ children }: { children: string }) {
 export function UserCard({ user }: { user: UserOut }) {
   const { commented, liked, commentPreview } = summarize(user);
   const hasThread = user.thread_id !== null;
+  const regular = user.engagement_count >= 2;
 
   return (
     <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-panel)] p-3 transition-colors hover:border-[var(--color-muted)]/40">
@@ -29,6 +30,14 @@ export function UserCard({ user }: { user: UserOut }) {
               @{user.username}
             </a>
             {user.is_private && <span title="cuenta privada">🔒</span>}
+            {regular && (
+              <span
+                title={`enganchó ${user.engagement_count} posts`}
+                className="ml-auto shrink-0 rounded-full bg-[var(--color-red)]/15 px-1.5 py-0.5 text-[10px] font-semibold text-[var(--color-red)]"
+              >
+                🔥 {user.engagement_count}
+              </span>
+            )}
           </div>
           {user.full_name && (
             <div className="truncate text-xs text-[var(--color-muted)]">{user.full_name}</div>

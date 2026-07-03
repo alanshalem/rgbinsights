@@ -1,6 +1,10 @@
-import type { TrafficLight, UserOut } from '../api/client';
-import { LIGHTS, LIGHT_HINT, LIGHT_LABEL } from '../lib/user';
+import { useState } from 'react';
+import type { Order, TrafficLight } from '../api/client';
+import { useUsers } from '../api/hooks';
+import { LIGHT_HINT, LIGHT_LABEL } from '../lib/user';
 import { UserCard } from './UserCard';
+
+const PAGE = 20;
 
 const ACCENT: Record<TrafficLight, string> = {
   red: 'var(--color-red)',
@@ -8,7 +12,22 @@ const ACCENT: Record<TrafficLight, string> = {
   green: 'var(--color-green)',
 };
 
-function Column({ light, users }: { light: TrafficLight; users: UserOut[] }) {
+type ColumnQuery = { event?: number; search?: string; order: Order };
+
+function Column({
+  light,
+  total,
+  query,
+}: {
+  light: TrafficLight;
+  total: number;
+  query: ColumnQuery;
+}) {
+  const [pages, setPages] = useState(1);
+  const limit = pages * PAGE;
+  const users = useUsers({ ...query, status: light, limit, offset: 0 });
+  const rows = users.data ?? [];
+
   return (
     <section className="flex min-w-0 flex-1 flex-col rounded-2xl border border-[var(--color-border)] bg-[var(--color-panel)]/40">
       <header
@@ -20,29 +39,45 @@ function Column({ light, users }: { light: TrafficLight; users: UserOut[] }) {
             <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: ACCENT[light] }} />
             <h2 className="font-semibold">{LIGHT_LABEL[light]}</h2>
           </div>
-          <span className="text-sm text-[var(--color-muted)]">{users.length}</span>
+          <span className="text-sm text-[var(--color-muted)]">{total}</span>
         </div>
         <p className="mt-0.5 text-xs text-[var(--color-muted)]">{LIGHT_HINT[light]}</p>
       </header>
       <div className="flex flex-col gap-2.5 overflow-y-auto p-3">
-        {users.length === 0 ? (
+        {total === 0 ? (
           <p className="py-8 text-center text-sm text-[var(--color-muted)]">—</p>
         ) : (
-          users.map((u) => <UserCard key={u.pk} user={u} />)
+          rows.map((u) => <UserCard key={u.pk} user={u} />)
+        )}
+        {rows.length < total && (
+          <button
+            onClick={() => setPages((p) => p + 1)}
+            className="rounded-lg border border-[var(--color-border)] py-1.5 text-sm text-[var(--color-muted)] hover:text-[var(--color-ink)]"
+          >
+            Cargar más ({rows.length}/{total})
+          </button>
         )}
       </div>
     </section>
   );
 }
 
-export function Board({ users }: { users: UserOut[] }) {
-  const byLight: Record<TrafficLight, UserOut[]> = { red: [], yellow: [], green: [] };
-  for (const u of users) byLight[u.traffic_light].push(u);
-
+export function Board({
+  event,
+  search,
+  order,
+  counts,
+}: {
+  event?: number;
+  search?: string;
+  order: Order;
+  counts: Record<TrafficLight, number>;
+}) {
+  const query: ColumnQuery = { event, search, order };
   return (
     <div className="flex flex-col gap-4 md:flex-row md:items-start">
-      {LIGHTS.map((light) => (
-        <Column key={light} light={light} users={byLight[light]} />
+      {(['red', 'yellow', 'green'] as const).map((light) => (
+        <Column key={light} light={light} total={counts[light]} query={query} />
       ))}
     </div>
   );

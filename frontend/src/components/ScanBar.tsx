@@ -9,28 +9,28 @@ function parseUrls(raw: string): string[] {
     .filter((s) => s.length > 0);
 }
 
-export function ScanBar({ onError }: { onError: (err: ApiError | null) => void }) {
+export function ScanBar({
+  event,
+  eventName,
+  onError,
+}: {
+  event?: number;
+  eventName?: string;
+  onError: (err: ApiError | null) => void;
+}) {
   const [raw, setRaw] = useState('');
   const scan = useScanPosts();
   const sync = useSyncDms();
-
   const busy = scan.isPending || sync.isPending;
+
+  const fail = (e: unknown) =>
+    onError(e instanceof ApiError ? e : new ApiError(0, 'unknown', String(e)));
 
   const handleScan = () => {
     const urls = parseUrls(raw);
     if (urls.length === 0) return;
     onError(null);
-    scan.mutate(urls, {
-      onError: (e) => onError(e instanceof ApiError ? e : new ApiError(0, 'unknown', String(e))),
-      onSuccess: () => setRaw(''),
-    });
-  };
-
-  const handleSync = () => {
-    onError(null);
-    sync.mutate(undefined, {
-      onError: (e) => onError(e instanceof ApiError ? e : new ApiError(0, 'unknown', String(e))),
-    });
+    scan.mutate({ urls, eventId: event }, { onError: fail, onSuccess: () => setRaw('') });
   };
 
   return (
@@ -40,7 +40,9 @@ export function ScanBar({ onError }: { onError: (err: ApiError | null) => void }
           value={raw}
           onChange={(e) => setRaw(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && handleScan()}
-          placeholder="Pegá una o varias URLs de posts…"
+          placeholder={
+            event ? `Pegá URLs de posts para "${eventName}"…` : 'Pegá una o varias URLs de posts…'
+          }
           className="flex-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm outline-none placeholder:text-[var(--color-muted)] focus:border-[var(--color-muted)]"
         />
         <button
@@ -51,13 +53,22 @@ export function ScanBar({ onError }: { onError: (err: ApiError | null) => void }
           {scan.isPending ? 'Escaneando…' : 'Escanear'}
         </button>
         <button
-          onClick={handleSync}
+          onClick={() => {
+            onError(null);
+            sync.mutate(undefined, { onError: fail });
+          }}
           disabled={busy}
           className="rounded-lg border border-[var(--color-border)] bg-[var(--color-panel-2)] px-4 py-2 text-sm font-semibold transition-colors hover:bg-[var(--color-border)] disabled:opacity-40"
         >
           {sync.isPending ? 'Sincronizando…' : 'Sincronizar DMs'}
         </button>
       </div>
+      {!event && (
+        <p className="mt-2 text-xs text-[var(--color-muted)]">
+          Sin fiesta seleccionada: los posts quedan sin asignar. Elegí o creá una fiesta arriba para
+          agruparlos.
+        </p>
+      )}
       {scan.isSuccess && (
         <p className="mt-2 text-xs text-[var(--color-muted)]">
           {scan.data.results.length} post(s) · {scan.data.total_users_found} usuarios ·{' '}

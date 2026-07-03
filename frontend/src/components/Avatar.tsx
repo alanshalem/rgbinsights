@@ -16,6 +16,7 @@ export function Avatar({ user, size = 40 }: { user: UserOut; size?: number }) {
           src={user.profile_pic_url ?? ''}
           alt={user.username}
           className="h-full w-full object-cover"
+          referrerPolicy="no-referrer"
           onError={() => setBroken(true)}
         />
       ) : (

@@ -1,23 +1,25 @@
 // Thin fetch wrapper. All request/response shapes come from ./generated
-// (produced by `npm run gen:api` from the backend OpenAPI) — no hand-written
-// response types, so the client is type-safe end to end.
+// (produced by `npm run gen:api` from the backend OpenAPI) — type-safe end to end.
 import type { paths } from './generated';
 
 const BASE = '/api';
 
 export type TrafficLight = 'red' | 'yellow' | 'green';
+export type Order = 'status' | 'username' | 'fans';
 
 export type UserOut =
   paths['/users']['get']['responses']['200']['content']['application/json'][number];
 export type PostOut =
   paths['/posts']['get']['responses']['200']['content']['application/json'][number];
-export type ScanResult =
-  paths['/scan/post']['post']['responses']['200']['content']['application/json'];
+export type EventOut =
+  paths['/events']['get']['responses']['200']['content']['application/json'][number];
+export type StatusCounts =
+  paths['/users/counts']['get']['responses']['200']['content']['application/json'];
 export type ScanBatchResult =
   paths['/scan/posts']['post']['responses']['200']['content']['application/json'];
 export type SyncResult =
   paths['/sync/dms']['post']['responses']['200']['content']['application/json'];
-export type Health = paths['/health']['get']['responses']['200']['content']['application/json'];
+export type EventCreate = paths['/events']['post']['requestBody']['content']['application/json'];
 
 type ApiErrorDetail = { code: string; message: string };
 
@@ -60,37 +62,44 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export type UsersQuery = {
+  event?: number;
   post?: string;
   status?: TrafficLight;
   search?: string;
-  order?: 'username' | 'status';
+  order?: Order;
+  limit?: number;
+  offset?: number;
 };
 
+function qs(params: Record<string, string | number | undefined>): string {
+  const sp = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== '') sp.set(k, String(v));
+  }
+  const s = sp.toString();
+  return s ? `?${s}` : '';
+}
+
 export const api = {
-  health: () => request<Health>('/health'),
+  listUsers: (q: UsersQuery = {}) => request<UserOut[]>(`/users${qs({ ...q })}`),
 
-  listUsers: (q: UsersQuery = {}) => {
-    const params = new URLSearchParams();
-    if (q.post) params.set('post', q.post);
-    if (q.status) params.set('status', q.status);
-    if (q.search) params.set('search', q.search);
-    if (q.order) params.set('order', q.order);
-    const qs = params.toString();
-    return request<UserOut[]>(`/users${qs ? `?${qs}` : ''}`);
-  },
+  counts: (q: Pick<UsersQuery, 'event' | 'post' | 'search'> = {}) =>
+    request<StatusCounts>(`/users/counts${qs({ ...q })}`),
 
-  listPosts: () => request<PostOut[]>('/posts'),
+  listPosts: (event?: number) => request<PostOut[]>(`/posts${qs({ event })}`),
 
-  scanPost: (url: string) =>
-    request<ScanResult>('/scan/post', {
-      method: 'POST',
-      body: JSON.stringify({ url }),
-    }),
+  listEvents: () => request<EventOut[]>('/events'),
 
-  scanPosts: (urls: string[]) =>
+  createEvent: (body: EventCreate) =>
+    request<EventOut>('/events', { method: 'POST', body: JSON.stringify(body) }),
+
+  rescanEvent: (eventId: number) =>
+    request<ScanBatchResult>(`/events/${eventId}/rescan`, { method: 'POST' }),
+
+  scanPosts: (urls: string[], eventId?: number) =>
     request<ScanBatchResult>('/scan/posts', {
       method: 'POST',
-      body: JSON.stringify({ urls }),
+      body: JSON.stringify({ urls, event_id: eventId ?? null }),
     }),
 
   syncDms: () => request<SyncResult>('/sync/dms', { method: 'POST' }),
