@@ -267,9 +267,14 @@ class WebInstagramSource:
             raise ChallengeRequiredError("Instagram pidió verificación (checkpoint).")
         return data
 
-    def probe(self, url: str, params: dict[str, Any] | None = None) -> tuple[int, str, str]:
+    def probe(
+        self,
+        url: str,
+        params: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> tuple[int, str, str]:
         """Diagnostic: raw GET returning (status, content-type, body snippet)."""
-        resp = self._http().get(url, params=params, timeout=20)
+        resp = self._http().get(url, params=params, headers=headers, timeout=20)
         ctype = resp.headers.get("content-type", "?")
         return resp.status_code, ctype, " ".join(resp.text[:160].split())
 
