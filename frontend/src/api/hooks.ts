@@ -59,6 +59,15 @@ export function useRescanEvent() {
   });
 }
 
+/** Re-scan the fiesta's posts + sync DMs in one call. */
+export function useRefreshEvent() {
+  const refresh = useRefreshAll();
+  return useMutation({
+    mutationFn: (eventId: number) => api.refreshEvent(eventId),
+    onSuccess: refresh,
+  });
+}
+
 export function useSyncDms() {
   const refresh = useRefreshAll();
   return useMutation({

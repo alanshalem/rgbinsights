@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { ApiError, type Order, type TrafficLight } from './api/client';
-import { useCounts, useEvents } from './api/hooks';
+import { useCounts, useEvents, useRefreshEvent } from './api/hooks';
 import { Board } from './components/Board';
 import { FiestaModal } from './components/FiestaModal';
 import { Manual } from './components/Manual';
@@ -28,6 +28,7 @@ export default function App() {
   const [showPosts, setShowPosts] = useState(false);
 
   const events = useEvents();
+  const refreshEvent = useRefreshEvent();
   const counts = useCounts({ event, search: search || undefined });
   const c = counts.data ?? { red: 0, yellow: 0, green: 0, total: 0 };
 
@@ -87,6 +88,20 @@ export default function App() {
         </button>
         {selected && (
           <>
+            <button
+              onClick={() => {
+                setError(null);
+                refreshEvent.mutate(selected.id, {
+                  onError: (e) =>
+                    setError(e instanceof ApiError ? e : new ApiError(0, 'unknown', String(e))),
+                });
+              }}
+              disabled={refreshEvent.isPending}
+              title="Re-escanea los posts de la fiesta y sincroniza los DMs"
+              className="rounded-lg bg-[var(--color-blue)] px-3 py-1.5 text-sm font-semibold text-[var(--color-bg)] shadow-[0_0_24px_-6px_var(--color-blue)] transition-opacity hover:opacity-90 disabled:opacity-50"
+            >
+              {refreshEvent.isPending ? '↻ Actualizando…' : '↻ Actualizar fiesta'}
+            </button>
             <span className="mono text-xs text-[var(--color-muted)]">
               campaña {fmtDate(selected.promo_start)} → evento {fmtDate(selected.event_date)}{' '}
               {new Date(selected.event_date) < new Date() ? '· ya pasó' : '· próxima'}

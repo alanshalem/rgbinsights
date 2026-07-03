@@ -85,11 +85,15 @@ export function Manual({ onClose }: { onClose: () => void }) {
           </p>
         </Section>
 
-        <Section title="Re-escanear sin pegar URLs">
+        <Section title="Actualizar / re-escanear">
           <p>
-            En el panel de <b>Posts</b>, con una fiesta seleccionada, el botón{' '}
-            <b>↻ Re-escanear fiesta</b> vuelve a traer likers/comentarios de todos sus posts. No
-            hace falta pegar las URLs de nuevo.
+            Con una fiesta seleccionada, el botón <b>↻ Actualizar fiesta</b> (arriba) hace todo de
+            una: re-trae likers/comentarios de <b>todos</b> sus posts <b>y</b> sincroniza los DMs.
+            No hace falta pegar URLs ni tocar “Sincronizar DMs” por separado.
+          </p>
+          <p>
+            En el panel de <b>Posts</b> también está <b>↻ Re-escanear fiesta</b> si solo querés
+            refrescar los posts (sin DMs).
           </p>
         </Section>
 

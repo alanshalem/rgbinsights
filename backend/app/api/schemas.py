@@ -77,6 +77,11 @@ class SyncResultOut(BaseModel):
     users_touched: int
 
 
+class EventRefreshOut(BaseModel):
+    scan: ScanBatchResultOut
+    sync: SyncResultOut
+
+
 class UserEngagementOut(BaseModel):
     post_media_pk: str
     type: EngagementType

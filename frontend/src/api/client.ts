@@ -20,6 +20,8 @@ export type ScanBatchResult =
 export type SyncResult =
   paths['/sync/dms']['post']['responses']['200']['content']['application/json'];
 export type EventCreate = paths['/events']['post']['requestBody']['content']['application/json'];
+export type EventRefresh =
+  paths['/events/{event_id}/refresh']['post']['responses']['200']['content']['application/json'];
 
 type ApiErrorDetail = { code: string; message: string };
 
@@ -95,6 +97,9 @@ export const api = {
 
   rescanEvent: (eventId: number) =>
     request<ScanBatchResult>(`/events/${eventId}/rescan`, { method: 'POST' }),
+
+  refreshEvent: (eventId: number) =>
+    request<EventRefresh>(`/events/${eventId}/refresh`, { method: 'POST' }),
 
   scanPosts: (urls: string[], eventId?: number) =>
     request<ScanBatchResult>('/scan/posts', {

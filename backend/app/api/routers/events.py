@@ -6,8 +6,15 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session
 
 from app.api.deps import raise_for_err, session_dep, source_dep
-from app.api.schemas import EventCreate, EventOut, EventUpdate, ScanBatchResultOut
-from app.application.use_cases import RescanEventUseCase
+from app.api.schemas import (
+    EventCreate,
+    EventOut,
+    EventRefreshOut,
+    EventUpdate,
+    ScanBatchResultOut,
+    SyncResultOut,
+)
+from app.application.use_cases import RescanEventUseCase, SyncDmsUseCase
 from app.domain.result import Err
 from app.infrastructure.config.settings import Settings, get_settings
 from app.infrastructure.instagram.base import InstagramSource
@@ -79,3 +86,26 @@ def rescan_event(
     if isinstance(result, Err):
         raise_for_err(result)
     return ScanBatchResultOut.model_validate(result.value, from_attributes=True)
+
+
+@router.post("/{event_id}/refresh", response_model=EventRefreshOut)
+def refresh_event(
+    event_id: int,
+    session: Session = Depends(session_dep),
+    source: InstagramSource = Depends(source_dep),
+    settings: Settings = Depends(get_settings),
+) -> EventRefreshOut:
+    """Re-scan the fiesta's posts (likes + comments) AND sync DMs in one call."""
+    if EventRepository(session).get(event_id) is None:
+        raise HTTPException(status_code=404, detail={"code": "not_found", "message": "fiesta"})
+
+    scan = RescanEventUseCase(source, session, settings.recent_posts_limit).execute(event_id)
+    if isinstance(scan, Err):
+        raise_for_err(scan)
+    sync = SyncDmsUseCase(source, session).execute()
+    if isinstance(sync, Err):
+        raise_for_err(sync)
+    return EventRefreshOut(
+        scan=ScanBatchResultOut.model_validate(scan.value, from_attributes=True),
+        sync=SyncResultOut.model_validate(sync.value, from_attributes=True),
+    )
