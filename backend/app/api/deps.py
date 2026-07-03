@@ -12,6 +12,7 @@ from sqlmodel import Session
 from app.domain.result import Err, ErrorCode
 from app.infrastructure.config.settings import Settings, get_settings
 from app.infrastructure.instagram.base import InstagramSource
+from app.infrastructure.instagram.factory import build_source
 from app.infrastructure.instagram.fake_source import FakeInstagramSource
 from app.infrastructure.persistence.db import get_session
 
@@ -29,23 +30,16 @@ def session_dep() -> Iterator[Session]:
 
 
 @lru_cache
-def _real_source(source: str) -> InstagramSource:
-    # Cache the client so its HTTP session / login is reused across requests.
-    settings = get_settings()
-    if source == "web":
-        from app.infrastructure.instagram.web_source import WebInstagramSource
-
-        return WebInstagramSource(settings)
-    from app.infrastructure.instagram.instagrapi_source import InstagrapiInstagramSource
-
-    return InstagrapiInstagramSource(settings)
+def _cached_source(source: str) -> InstagramSource:
+    # Cache the client so its HTTP session / browser / login is reused.
+    return build_source(get_settings())
 
 
 def source_dep(settings: Settings = Depends(get_settings)) -> InstagramSource:
     source = settings.resolved_source()
     if source == "fake":
         return FakeInstagramSource()
-    return _real_source(source)
+    return _cached_source(source)
 
 
 def raise_for_err(err: Err) -> NoReturn:

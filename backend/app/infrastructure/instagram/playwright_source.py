@@ -1,0 +1,201 @@
+"""PlaywrightInstagramSource — drives a real logged-in browser.
+
+The pure-`requests` web source can only reach `/users/*`; Instagram serves
+media/comments/likers/DMs only to its in-browser SPA (dynamic tokens). So here
+we run a headless Chromium with a *persistent* profile (logged in once, by
+hand) and make the page itself call `fetch('/api/v1/...')`. Inside the real
+origin those calls return JSON — exactly what the app fetches — with none of
+the tokens to replicate.
+
+All Playwright calls run on a single dedicated worker thread (Playwright's sync
+API is thread-affine), so this is safe under FastAPI's threadpool.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import queue
+import threading
+from collections.abc import Callable
+from concurrent.futures import Future
+from typing import TYPE_CHECKING, Any
+from urllib.parse import urlencode
+
+from app.domain.entities import Comment, DmThread, IgUser, Post
+from app.infrastructure.config.settings import Settings
+from app.infrastructure.instagram.errors import (
+    ChallengeRequiredError,
+    LoginRequiredError,
+    PostNotFoundError,
+)
+from app.infrastructure.instagram.web_source import (
+    extract_shortcode,
+    parse_comments,
+    parse_inbox,
+    parse_likers,
+    parse_media_info,
+    shortcode_to_pk,
+)
+
+if TYPE_CHECKING:
+    from playwright.sync_api import Page
+
+logger = logging.getLogger(__name__)
+
+_WEB_APP_ID = "936619743392459"
+_HOME = "https://www.instagram.com/"
+
+# Job = a function to run on the browser thread with the live Page.
+_Job = Callable[["Page"], Any]
+
+
+class _BrowserWorker:
+    """Owns the browser on one thread; other threads submit jobs and wait."""
+
+    def __init__(self, settings: Settings) -> None:
+        self._settings = settings
+        self._queue: queue.Queue[tuple[_Job, Future[Any]] | None] = queue.Queue()
+        self._thread: threading.Thread | None = None
+        self._lock = threading.Lock()
+
+    def submit(self, job: _Job) -> Any:
+        self._ensure_started()
+        fut: Future[Any] = Future()
+        self._queue.put((job, fut))
+        return fut.result()
+
+    def _ensure_started(self) -> None:
+        with self._lock:
+            if self._thread is None:
+                self._thread = threading.Thread(target=self._run, daemon=True)
+                self._thread.start()
+
+    def _run(self) -> None:
+        from playwright.sync_api import sync_playwright
+
+        with sync_playwright() as p:
+            context = p.chromium.launch_persistent_context(
+                self._settings.ig_browser_dir,
+                headless=self._settings.ig_browser_headless,
+            )
+            page = context.pages[0] if context.pages else context.new_page()
+            page.goto(_HOME, wait_until="domcontentloaded")
+            try:
+                while True:
+                    item = self._queue.get()
+                    if item is None:
+                        break
+                    job, fut = item
+                    try:
+                        fut.set_result(job(page))
+                    except Exception as exc:  # noqa: BLE001 — relayed to caller
+                        fut.set_exception(exc)
+            finally:
+                context.close()
+
+
+def _fetch_json(page: Page, path: str) -> dict[str, Any]:
+    """Run fetch() inside the page (same-origin, fully authed) and return JSON."""
+    result = page.evaluate(
+        """async ({ path, appId }) => {
+            const r = await fetch(path, {
+                headers: { 'X-IG-App-ID': appId },
+                credentials: 'include',
+            });
+            const body = await r.text();
+            return { status: r.status, ct: r.headers.get('content-type') || '', body };
+        }""",
+        {"path": path, "appId": _WEB_APP_ID},
+    )
+    status = int(result["status"])
+    if status in (401, 403):
+        raise LoginRequiredError("browser session not logged in — run: python -m app.login_browser")
+    if status == 404:
+        raise PostNotFoundError(path)
+    ctype = str(result["ct"])
+    body = str(result["body"])
+    if "json" not in ctype:
+        raise LoginRequiredError(
+            f"non-JSON from {path} (status {status}); browser likely logged out — "
+            "run: python -m app.login_browser"
+        )
+    data: dict[str, Any] = json.loads(body)
+    if data.get("message") == "checkpoint_required" or data.get("require_login"):
+        raise ChallengeRequiredError("Instagram requested verification (checkpoint).")
+    return data
+
+
+def _path(base: str, params: dict[str, Any] | None = None) -> str:
+    return f"{base}?{urlencode(params)}" if params else base
+
+
+class PlaywrightInstagramSource:
+    """InstagramSource backed by a logged-in headless browser."""
+
+    def __init__(self, settings: Settings) -> None:
+        self._settings = settings
+        self._worker = _BrowserWorker(settings)
+
+    def _get(self, base: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        data: dict[str, Any] = self._worker.submit(
+            lambda page: _fetch_json(page, _path(base, params))
+        )
+        return data
+
+    def current_user_pk(self) -> str:
+        def read_pk(page: Page) -> str:
+            for cookie in page.context.cookies():
+                if cookie.get("name") == "ds_user_id":
+                    return str(cookie.get("value", ""))
+            return ""
+
+        pk: str = self._worker.submit(read_pk)
+        if not pk:
+            raise LoginRequiredError(
+                "no logged-in browser session — run: python -m app.login_browser"
+            )
+        return pk
+
+    def get_post(self, url: str) -> Post:
+        shortcode = extract_shortcode(url)
+        if shortcode is None:
+            raise PostNotFoundError(url)
+        media_pk = shortcode_to_pk(shortcode)
+        return parse_media_info(self._get(f"/api/v1/media/{media_pk}/info/"))
+
+    def get_recent_posts(self, limit: int) -> list[Post]:
+        pk = self.current_user_pk()
+        data = self._get(f"/api/v1/feed/user/{pk}/", {"count": limit})
+        return [parse_media_info({"items": [item]}) for item in data.get("items") or []][:limit]
+
+    def get_likers(self, media_pk: str) -> list[IgUser]:
+        return parse_likers(self._get(f"/api/v1/media/{media_pk}/likers/"))
+
+    def get_comments(self, media_pk: str) -> list[Comment]:
+        comments: list[Comment] = []
+        params: dict[str, Any] = {}
+        for _ in range(10):
+            data = self._get(f"/api/v1/media/{media_pk}/comments/", params or None)
+            comments.extend(parse_comments(data))
+            next_min_id = data.get("next_min_id")
+            if not next_min_id:
+                break
+            params = {"min_id": next_min_id}
+        return comments
+
+    def get_dm_threads(self) -> list[DmThread]:
+        our_pk = self.current_user_pk()
+        threads: list[DmThread] = []
+        params: dict[str, Any] = {"thread_message_limit": 20, "limit": 20}
+        for _ in range(20):
+            data = self._get("/api/v1/direct_v2/inbox/", params)
+            threads.extend(parse_inbox(data, our_pk))
+            inbox = data.get("inbox") or {}
+            if not inbox.get("has_older"):
+                break
+            cursor = inbox.get("oldest_cursor")
+            if not cursor:
+                break
+            params = {"thread_message_limit": 20, "limit": 20, "cursor": cursor}
+        return threads

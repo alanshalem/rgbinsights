@@ -101,27 +101,34 @@ Re-escanear un post no duplica nada: podés hacerlo las veces que quieras.
 
 ## Usar Instagram real
 
-### Opción recomendada: reusar la sesión del navegador (evita el checkpoint)
+Instagram bloquea el login por API con un *checkpoint*, y el `sessionid` de web
+solo da acceso a `/users/*` (no a DMs). Por eso el modo real anda con un
+**navegador real logueado** (Playwright): te logueás a mano una vez y la app
+maneja el navegador headless.
 
-Instagram suele frenar el login por API con un *checkpoint*. La forma más
-confiable de evitarlo es **reusar la cookie de un navegador donde ya estás
-logueado** (no hay login por API, así que no hay challenge):
+### Opción recomendada: navegador real (Playwright)
 
-1. Entrá a **instagram.com** en tu navegador, logueado con la cuenta.
-2. Abrí DevTools (**F12**) → pestaña **Application** → **Cookies** →
-   `https://www.instagram.com` → copiá el **valor** de la cookie `sessionid`.
-3. En `backend/.env`: `USE_FAKE_INSTAGRAM=false` y pegá `IG_SESSIONID=<ese valor>`.
-4. Validá y guardá la sesión:
+1. En `backend/.env`: `USE_FAKE_INSTAGRAM=false` y `IG_SOURCE=playwright`.
+2. Logueate una vez (abre una ventana de Chromium):
    ```bash
    cd backend
-   .venv\Scripts\python.exe -m app.login     # Mac/Linux: .venv/bin/python -m app.login
+   .venv\Scripts\python.exe -m app.login_browser   # Mac/Linux: .venv/bin/python -m app.login_browser
    ```
-5. Levantá la app normal. La API reusa `session.json`.
+   Logueate en la ventana (resolvé cualquier checkpoint como humano), volvé a la
+   terminal y apretá Enter. La sesión queda guardada en `.pw-profile/`.
+3. Verificá que anda (identidad + DMs + un post):
+   ```bash
+   .venv\Scripts\python.exe -m app.web_check https://www.instagram.com/p/TU_POST/
+   ```
+4. Levantá la app (`.\start.ps1`) y escaneá.
 
-> El `sessionid` es como una contraseña temporal: no lo compartas. Vive en
-> `.env` (git-ignored). Si expira, sacá uno nuevo con los mismos pasos.
+> La carpeta `.pw-profile/` guarda tu sesión de Instagram: no la compartas
+> (está en `.gitignore`). Para más velocidad corre headless (`IG_BROWSER_HEADLESS=true`);
+> poné `false` si querés ver el navegador.
 
-### Alternativa: login con usuario y contraseña
+### Alternativa: login con usuario y contraseña (instagrapi)
+
+Suele frenar con checkpoint; solo si tu cuenta permite login móvil.
 
 1. Editá `backend/.env`:
    - `USE_FAKE_INSTAGRAM=false`

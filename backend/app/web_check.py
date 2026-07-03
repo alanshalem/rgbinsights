@@ -15,17 +15,15 @@ import sys
 
 from app.infrastructure.config.settings import get_settings
 from app.infrastructure.instagram.errors import InstagramError
-from app.infrastructure.instagram.web_source import WebInstagramSource
+from app.infrastructure.instagram.factory import build_source
 
 
 def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     settings = get_settings()
-    if not settings.ig_sessionid.strip():
-        print("Falta IG_SESSIONID en backend/.env", file=sys.stderr)
-        return 1
 
-    source = WebInstagramSource(settings)
+    source = build_source(settings)
+    print(f"Fuente: {settings.resolved_source()}")
     try:
         pk = source.current_user_pk()
         print(f"Usuario (pk desde sessionid): {pk}")

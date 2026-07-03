@@ -38,11 +38,16 @@ class Settings(BaseSettings):
     # Instagram. Set to false once credentials are filled in .env.
     use_fake_instagram: bool = True
 
-    # Which data source to use: "fake" | "web" | "instagrapi".
-    #   web        -> browser web API via IG_SESSIONID (recommended for real use)
+    # Which data source to use: "fake" | "web" | "playwright" | "instagrapi".
+    #   web        -> browser web API via IG_SESSIONID (only /users/* works)
+    #   playwright -> real logged-in headless browser (recommended for real use)
     #   instagrapi -> mobile private API via user/password (needs a mobile login)
     # Empty falls back to use_fake_instagram for backward compat.
     ig_source: str = ""
+
+    # Playwright source: on-disk browser profile (persists the login) + headless.
+    ig_browser_dir: str = ".pw-profile"
+    ig_browser_headless: bool = True
 
     def resolved_source(self) -> str:
         src = self.ig_source.strip().lower()

@@ -1,6 +1,7 @@
 # Secrets / session
 .env
 session.json
+.pw-profile/
 
 # Database
 *.db

@@ -229,9 +229,7 @@ class WebInstagramSource:
         csrf = s.cookies.get("csrftoken")
         if csrf:
             s.headers["X-CSRFToken"] = csrf
-        logger.info(
-            "web session cookies: %s", sorted(c.name for c in s.cookies)
-        )
+        logger.info("web session cookies: %s", sorted(c.name for c in s.cookies))
         self._session = s
         return s
 
