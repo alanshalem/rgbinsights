@@ -111,6 +111,31 @@ export function Manual({ onClose }: { onClose: () => void }) {
           </p>
         </Section>
 
+        <Section title="Seguidores y perfiles">
+          <p>
+            Al sincronizar DMs se trae si cada uno <b>te sigue</b> (chip <b>te sigue</b> /{' '}
+            <b>mutuo</b>). Un rojo que te sigue es lead más caliente <b>y</b> más seguro para
+            escribirle.
+          </p>
+          <p>
+            <b>🌟 Enriquecer perfiles</b> trae seguidores, verificado y bio (lento, opcional) →
+            detectás influencers/DJs. Ordená por <b>seguidores 🌟</b> o filtrá{' '}
+            <b>Solo seguidores</b>.
+          </p>
+        </Section>
+
+        <Section title="Campaña de DMs (envío masivo, con cuidado)">
+          <p>
+            En una fiesta, <b>✉ Campaña de DMs</b> manda un mensaje (con variantes y {'{nombre}'}) a
+            los rojos, <b>lento</b> para no arriesgar la cuenta: elegís cautela (máxima/media), ves
+            ETA, mandás 1 de prueba, y lanzás.
+          </p>
+          <p>
+            Tildá <b>seguidores primero</b> o <b>solo a los que me siguen</b> — DMs a seguidores son
+            <b> mucho menos riesgosos</b>. Se frena solo si Instagram avisa.
+          </p>
+        </Section>
+
         <Section title="Si Instagram pide verificación">
           <p>
             Si aparece un cartel amarillo de “verificación”, la sesión del navegador se venció. En

@@ -12,6 +12,7 @@ type TableQuery = {
   status?: TrafficLight;
   search?: string;
   order: Order;
+  follows?: boolean;
 };
 
 export function UsersTable({ query, total }: { query: TableQuery; total: number }) {

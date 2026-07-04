@@ -12,7 +12,7 @@ export function useUsers(query: UsersQuery) {
   });
 }
 
-export function useCounts(query: Pick<UsersQuery, 'event' | 'post' | 'search'>) {
+export function useCounts(query: Pick<UsersQuery, 'event' | 'post' | 'search' | 'follows'>) {
   return useQuery({
     queryKey: ['counts', query],
     queryFn: () => api.counts(query),
@@ -55,6 +55,14 @@ export function useRescanEvent() {
   const refresh = useRefreshAll();
   return useMutation({
     mutationFn: (eventId: number) => api.rescanEvent(eventId),
+    onSuccess: refresh,
+  });
+}
+
+export function useEnrichEvent() {
+  const refresh = useRefreshAll();
+  return useMutation({
+    mutationFn: (eventId: number) => api.enrichEvent(eventId),
     onSuccess: refresh,
   });
 }

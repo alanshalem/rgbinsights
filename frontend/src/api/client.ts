@@ -5,7 +5,7 @@ import type { paths } from './generated';
 const BASE = '/api';
 
 export type TrafficLight = 'red' | 'yellow' | 'green';
-export type Order = 'status' | 'username' | 'fans';
+export type Order = 'status' | 'username' | 'fans' | 'followers';
 
 export type UserOut =
   paths['/users']['get']['responses']['200']['content']['application/json'][number];
@@ -79,11 +79,12 @@ export type UsersQuery = {
   status?: TrafficLight;
   search?: string;
   order?: Order;
+  follows?: boolean;
   limit?: number;
   offset?: number;
 };
 
-function qs(params: Record<string, string | number | undefined>): string {
+function qs(params: Record<string, string | number | boolean | undefined>): string {
   const sp = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) {
     if (v !== undefined && v !== '') sp.set(k, String(v));
@@ -107,6 +108,9 @@ export const api = {
 
   rescanEvent: (eventId: number) =>
     request<ScanBatchResult>(`/events/${eventId}/rescan`, { method: 'POST' }),
+
+  enrichEvent: (eventId: number) =>
+    request<{ enriched: number }>(`/events/${eventId}/enrich`, { method: 'POST' }),
 
   refreshEvent: (eventId: number) =>
     request<EventRefresh>(`/events/${eventId}/refresh`, { method: 'POST' }),

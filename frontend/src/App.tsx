@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { ApiError, type Order, type TrafficLight } from './api/client';
-import { useCounts, useEvents, useRefreshEvent } from './api/hooks';
+import { useCounts, useEnrichEvent, useEvents, useRefreshEvent } from './api/hooks';
 import { Board } from './components/Board';
 import { CampaignModal } from './components/CampaignModal';
 import { FiestaModal } from './components/FiestaModal';
@@ -23,6 +23,7 @@ export default function App() {
   const [status, setStatus] = useState<TrafficLight | ''>('');
   const [search, setSearch] = useState('');
   const [order, setOrder] = useState<Order>('status');
+  const [onlyFollowers, setOnlyFollowers] = useState(false);
   const [error, setError] = useState<ApiError | null>(null);
   const [showManual, setShowManual] = useState(false);
   const [showFiesta, setShowFiesta] = useState(false);
@@ -31,7 +32,9 @@ export default function App() {
 
   const events = useEvents();
   const refreshEvent = useRefreshEvent();
-  const counts = useCounts({ event, search: search || undefined });
+  const enrichEvent = useEnrichEvent();
+  const follows = onlyFollowers || undefined;
+  const counts = useCounts({ event, search: search || undefined, follows });
   const c = counts.data ?? { red: 0, yellow: 0, green: 0, total: 0 };
 
   const selected = useMemo(() => events.data?.find((e) => e.id === event), [events.data, event]);
@@ -103,6 +106,20 @@ export default function App() {
               className="rounded-lg bg-[var(--color-blue)] px-3 py-1.5 text-sm font-semibold text-[var(--color-bg)] shadow-[0_0_24px_-6px_var(--color-blue)] transition-opacity hover:opacity-90 disabled:opacity-50"
             >
               {refreshEvent.isPending ? '↻ Actualizando…' : '↻ Actualizar fiesta'}
+            </button>
+            <button
+              onClick={() => {
+                setError(null);
+                enrichEvent.mutate(selected.id, {
+                  onError: (e) =>
+                    setError(e instanceof ApiError ? e : new ApiError(0, 'unknown', String(e))),
+                });
+              }}
+              disabled={enrichEvent.isPending}
+              title="Trae seguidores / verificado / bio de los usuarios de la fiesta (lento)"
+              className="rounded-lg border border-[var(--color-border)] px-3 py-1.5 text-sm font-semibold hover:bg-[var(--color-panel)] disabled:opacity-50"
+            >
+              {enrichEvent.isPending ? '🌟 Enriqueciendo…' : '🌟 Enriquecer perfiles'}
             </button>
             <button
               onClick={() => setShowCampaign(true)}
@@ -204,8 +221,21 @@ export default function App() {
         >
           <option value="status">Orden: estado</option>
           <option value="fans">Orden: fans 🔥</option>
+          <option value="followers">Orden: seguidores 🌟</option>
           <option value="username">Orden: usuario</option>
         </select>
+
+        <button
+          onClick={() => setOnlyFollowers((v) => !v)}
+          title="Mostrar solo los que te siguen (más seguros para escribir)"
+          className={`rounded-lg border px-3 py-1.5 text-sm font-medium ${
+            onlyFollowers
+              ? 'border-[var(--color-blue)] bg-[var(--color-blue)]/15 text-[var(--color-blue)]'
+              : 'border-[var(--color-border)] text-[var(--color-muted)] hover:text-[var(--color-ink)]'
+          }`}
+        >
+          {onlyFollowers ? '✓ Solo seguidores' : 'Solo seguidores'}
+        </button>
 
         <button
           onClick={() => setShowPosts((s) => !s)}
@@ -227,6 +257,7 @@ export default function App() {
             event={event}
             search={search || undefined}
             order={order}
+            follows={follows}
             counts={{ red: c.red, yellow: c.yellow, green: c.green }}
           />
         ) : (
@@ -236,6 +267,7 @@ export default function App() {
               status: status || undefined,
               search: search || undefined,
               order,
+              follows,
             }}
             total={tableTotal}
           />

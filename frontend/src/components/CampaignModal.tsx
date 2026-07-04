@@ -77,13 +77,20 @@ export function CampaignModal({
   const [preview, setPreview] = useState<CampaignPreview | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [testedTo, setTestedTo] = useState<string | null>(null);
+  const [onlyFollowers, setOnlyFollowers] = useState(false);
+  const [followersFirst, setFollowersFirst] = useState(true);
 
   const active = campaign.data;
   const showProgress = active != null && ['running', 'paused', 'blocked'].includes(active.status);
 
   const body: CampaignCreate = useMemo(
-    () => ({ templates: templates.map((t) => t.trim()).filter(Boolean), ...params }),
-    [templates, params]
+    () => ({
+      templates: templates.map((t) => t.trim()).filter(Boolean),
+      ...params,
+      only_followers: onlyFollowers,
+      followers_first: followersFirst,
+    }),
+    [templates, params, onlyFollowers, followersFirst]
   );
 
   // Apply a preset's params.
@@ -174,6 +181,10 @@ export function CampaignModal({
             presetNames={(presets.data ?? []).map((p) => p.name)}
             params={params}
             setParams={setParams}
+            onlyFollowers={onlyFollowers}
+            setOnlyFollowers={setOnlyFollowers}
+            followersFirst={followersFirst}
+            setFollowersFirst={setFollowersFirst}
             preview={preview}
             recalc={() => {
               setError(null);
@@ -272,6 +283,10 @@ function Setup(props: {
   presetNames: string[];
   params: Params;
   setParams: (p: Params) => void;
+  onlyFollowers: boolean;
+  setOnlyFollowers: (b: boolean) => void;
+  followersFirst: boolean;
+  setFollowersFirst: (b: boolean) => void;
   preview: CampaignPreview | null;
   recalc: () => void;
   recalcBusy: boolean;
@@ -291,6 +306,10 @@ function Setup(props: {
     presetNames,
     params,
     setParams,
+    onlyFollowers,
+    setOnlyFollowers,
+    followersFirst,
+    setFollowersFirst,
     preview,
     recalc,
     recalcBusy,
@@ -400,6 +419,28 @@ function Setup(props: {
           />
         </div>
       )}
+
+      {/* follow-status safety options */}
+      <div className="flex flex-wrap gap-4 text-xs">
+        <label className="flex items-center gap-2">
+          <input
+            type="checkbox"
+            checked={onlyFollowers}
+            onChange={(e) => setOnlyFollowers(e.target.checked)}
+          />
+          <span>
+            Solo a los que <b>me siguen</b> (más seguro)
+          </span>
+        </label>
+        <label className="flex items-center gap-2">
+          <input
+            type="checkbox"
+            checked={followersFirst}
+            onChange={(e) => setFollowersFirst(e.target.checked)}
+          />
+          <span>Seguidores primero</span>
+        </label>
+      </div>
 
       {/* estimate + preview */}
       <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-3">

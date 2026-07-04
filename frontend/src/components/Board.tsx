@@ -12,7 +12,7 @@ const ACCENT: Record<TrafficLight, string> = {
   green: 'var(--color-green)',
 };
 
-type ColumnQuery = { event?: number; search?: string; order: Order };
+type ColumnQuery = { event?: number; search?: string; order: Order; follows?: boolean };
 
 function Column({
   light,
@@ -74,14 +74,16 @@ export function Board({
   event,
   search,
   order,
+  follows,
   counts,
 }: {
   event?: number;
   search?: string;
   order: Order;
+  follows?: boolean;
   counts: Record<TrafficLight, number>;
 }) {
-  const query: ColumnQuery = { event, search, order };
+  const query: ColumnQuery = { event, search, order, follows };
   return (
     <div className="flex flex-col gap-4 md:flex-row md:items-start">
       {(['red', 'yellow', 'green'] as const).map((light) => (
