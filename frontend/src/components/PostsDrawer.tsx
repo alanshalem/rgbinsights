@@ -1,5 +1,5 @@
 import { usePosts, useRescanEvent } from '../api/hooks';
-import { ApiError } from '../api/client';
+import { ApiError, toApiError } from '../api/client';
 
 function timeAgo(iso: string | null): string {
   if (!iso) return 'nunca';
@@ -26,7 +26,7 @@ export function PostsDrawer({
     if (event === undefined) return;
     onError(null);
     rescan.mutate(event, {
-      onError: (e) => onError(e instanceof ApiError ? e : new ApiError(0, 'unknown', String(e))),
+      onError: (e) => onError(toApiError(e)),
     });
   };
 

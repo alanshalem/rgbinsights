@@ -57,6 +57,11 @@ function isErrorDetail(v: unknown): v is ApiErrorDetail {
   return typeof v === 'object' && v !== null && 'code' in v && 'message' in v;
 }
 
+/** Normalize any thrown value into an ApiError for the UI. */
+export function toApiError(e: unknown): ApiError {
+  return e instanceof ApiError ? e : new ApiError(0, 'unknown', String(e));
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(BASE + path, {
     headers: { 'Content-Type': 'application/json' },

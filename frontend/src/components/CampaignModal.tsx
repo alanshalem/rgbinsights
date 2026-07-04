@@ -8,6 +8,7 @@ import {
   type CampaignPreview,
 } from '../api/client';
 import { useCampaign, usePresets, useResumeCampaign, useStopCampaign } from '../api/hooks';
+import { Modal } from './Modal';
 
 type Params = {
   delay_min: number;
@@ -146,14 +147,8 @@ export function CampaignModal({
   };
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex justify-center overflow-y-auto bg-black/60 p-4"
-      onClick={onClose}
-    >
-      <div
-        className="my-8 h-fit w-full max-w-2xl rounded-2xl border border-[var(--color-border)] bg-[var(--color-panel)] p-6"
-        onClick={(e) => e.stopPropagation()}
-      >
+    <Modal onClose={onClose} size="lg">
+      <div>
         <div className="mb-4 flex items-center justify-between">
           <h2 className="display text-xl font-black tracking-tight uppercase">Campaña de DMs</h2>
           <button
@@ -204,7 +199,7 @@ export function CampaignModal({
           />
         )}
       </div>
-    </div>
+    </Modal>
   );
 }
 

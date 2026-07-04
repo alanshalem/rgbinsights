@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useScanPosts, useSyncDms } from '../api/hooks';
-import { ApiError } from '../api/client';
+import { ApiError, toApiError } from '../api/client';
 
 function parseUrls(raw: string): string[] {
   return raw
@@ -23,8 +23,7 @@ export function ScanBar({
   const sync = useSyncDms();
   const busy = scan.isPending || sync.isPending;
 
-  const fail = (e: unknown) =>
-    onError(e instanceof ApiError ? e : new ApiError(0, 'unknown', String(e)));
+  const fail = (e: unknown) => onError(toApiError(e));
 
   const handleScan = () => {
     const urls = parseUrls(raw);
