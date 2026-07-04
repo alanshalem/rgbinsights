@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useScanPosts, useSyncDms } from '../api/hooks';
+import { useScanPosts } from '../api/hooks';
 import { ApiError, toApiError } from '../api/client';
 
 function parseUrls(raw: string): string[] {
@@ -20,16 +20,15 @@ export function ScanBar({
 }) {
   const [raw, setRaw] = useState('');
   const scan = useScanPosts();
-  const sync = useSyncDms();
-  const busy = scan.isPending || sync.isPending;
-
-  const fail = (e: unknown) => onError(toApiError(e));
 
   const handleScan = () => {
     const urls = parseUrls(raw);
     if (urls.length === 0) return;
     onError(null);
-    scan.mutate({ urls, eventId: event }, { onError: fail, onSuccess: () => setRaw('') });
+    scan.mutate(
+      { urls, eventId: event },
+      { onError: (e) => onError(toApiError(e)), onSuccess: () => setRaw('') }
+    );
   };
 
   return (
@@ -46,37 +45,16 @@ export function ScanBar({
         />
         <button
           onClick={handleScan}
-          disabled={busy || parseUrls(raw).length === 0}
+          disabled={scan.isPending || parseUrls(raw).length === 0}
           className="rounded-lg bg-[var(--color-green)] px-4 py-2 text-sm font-semibold text-[var(--color-bg)] shadow-[0_0_24px_-6px_var(--color-green)] transition-opacity hover:opacity-90 disabled:opacity-40"
         >
           {scan.isPending ? 'Escaneando…' : 'Escanear'}
-        </button>
-        <button
-          onClick={() => {
-            onError(null);
-            sync.mutate(undefined, { onError: fail });
-          }}
-          disabled={busy}
-          className="rounded-lg border border-[var(--color-border)] bg-[var(--color-panel-2)] px-4 py-2 text-sm font-semibold transition-colors hover:bg-[var(--color-border)] disabled:opacity-40"
-        >
-          {sync.isPending ? 'Sincronizando…' : 'Sincronizar DMs'}
         </button>
       </div>
       {!event && (
         <p className="mt-2 text-xs text-[var(--color-muted)]">
           Sin fiesta seleccionada: los posts quedan sin asignar. Elegí o creá una fiesta arriba para
           agruparlos.
-        </p>
-      )}
-      {scan.isSuccess && (
-        <p className="mt-2 text-xs text-[var(--color-muted)]">
-          {scan.data.results.length} post(s) · {scan.data.total_users_found} usuarios ·{' '}
-          {scan.data.total_new_users} nuevos.
-        </p>
-      )}
-      {sync.isSuccess && (
-        <p className="mt-2 text-xs text-[var(--color-muted)]">
-          {sync.data.threads_synced} hilos de DM sincronizados.
         </p>
       )}
     </div>

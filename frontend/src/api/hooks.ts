@@ -136,3 +136,11 @@ export function useActiveCampaign(active: boolean) {
     refetchInterval: (q) => (active || q.state.data?.status === 'running' ? 4000 : false),
   });
 }
+
+export function useActivity() {
+  return useQuery({
+    queryKey: ['activity'],
+    queryFn: () => api.listActivity(),
+    refetchInterval: 5000,
+  });
+}
