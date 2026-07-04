@@ -16,6 +16,13 @@ $MIN_PY = [version]'3.12'
 $MIN_NODE = 20
 $updated = $false
 
+# Recargar PATH desde el registro (Machine + User). Si el usuario acaba de
+# instalar Node/Python/Git en OTRA ventana, esta sesion tiene el PATH viejo y
+# no los ve. Esto los hace visibles sin tener que reabrir la terminal.
+$machinePath = [System.Environment]::GetEnvironmentVariable('Path', 'Machine')
+$userPath    = [System.Environment]::GetEnvironmentVariable('Path', 'User')
+$env:Path = (@($machinePath, $userPath) | Where-Object { $_ }) -join ';'
+
 function Info($m) { Write-Host "  $m" -ForegroundColor Gray }
 function Ok($m) { Write-Host "OK  $m" -ForegroundColor Green }
 function Step($m) { Write-Host "`n=> $m" -ForegroundColor Cyan }

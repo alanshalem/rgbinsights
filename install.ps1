@@ -28,6 +28,11 @@ if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
   try {
     winget install --id Git.Git -e --source winget --accept-package-agreements --accept-source-agreements
   } catch { }
+  # Recargar PATH desde el registro para ver el git recien instalado sin
+  # tener que reabrir la terminal.
+  $machinePath = [System.Environment]::GetEnvironmentVariable('Path', 'Machine')
+  $userPath    = [System.Environment]::GetEnvironmentVariable('Path', 'User')
+  $env:Path = (@($machinePath, $userPath) | Where-Object { $_ }) -join ';'
   if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
     Die "No pude instalar Git. Instalalo a mano desde https://git-scm.com/download/win y volve a correr esto."
   }
