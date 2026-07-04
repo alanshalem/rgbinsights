@@ -32,3 +32,6 @@ backend/openapi.json
 # Agent / tooling artifacts (no aportan al cliente)
 .claude/
 docs/superpowers/
+
+# TS build cache
+*.tsbuildinfo
