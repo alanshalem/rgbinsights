@@ -35,6 +35,7 @@ from app.infrastructure.instagram.chrome_cdp import (
 )
 from app.infrastructure.instagram.errors import (
     ChallengeRequiredError,
+    InstagramError,
     LoginRequiredError,
     PostNotFoundError,
     SendBlockedError,
@@ -233,6 +234,11 @@ class PlaywrightInstagramSource:
         our_pk = self.current_user_pk()
         followers = self._collect_pks(f"/api/v1/friendships/{our_pk}/followers/")
         following = self._collect_pks(f"/api/v1/friendships/{our_pk}/following/")
+        # A logged-in account always has followers/following. Both empty means the
+        # lists were blocked, not that they're empty — refuse, so we don't overwrite
+        # good "te sigue" data with all-False on a flaky fetch.
+        if not followers and not following:
+            raise InstagramError("no se pudo leer seguidores/seguidos (bloqueado?)")
         return {
             pk: Friendship(following=pk in following, followed_by=pk in followers)
             for pk in set(user_pks)
