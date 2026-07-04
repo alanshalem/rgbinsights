@@ -7,48 +7,53 @@ import {
   type CampaignCreate,
   type CampaignPreview,
 } from '../api/client';
-import { useCampaign, usePresets, useResumeCampaign, useStopCampaign } from '../api/hooks';
+import {
+  useCampaign,
+  usePresets,
+  useResumeCampaign,
+  useStopCampaign,
+  useUsers,
+} from '../api/hooks';
+import { estimateFor, fmtGap, type SendParams } from '../lib/campaign';
 import { Modal } from './Modal';
 
-type Params = {
-  delay_min: number;
-  delay_max: number;
-  daily_cap: number;
-  hour_start: number;
-  hour_end: number;
-};
+type Params = SendParams;
+
+/** How the red list is filtered/ordered by follow status. */
+type Audience = 'only' | 'first' | 'all';
 
 const DEFAULT_MSG =
   'Hola {nombre}, ¿cómo estás? Vi que te copó RGB 🔴🟢🔵 — se viene fecha nueva y te queríamos invitar. Cualquier cosa te paso la data 🙌';
 
-const PRESET_LABEL: Record<string, string> = { max: 'Máxima cautela', media: 'Media cautela' };
+const PRESET_LABEL: Record<string, string> = {
+  max: 'Máxima cautela',
+  media: 'Media cautela',
+  custom: 'Custom',
+};
 
-function Field({
-  label,
-  value,
-  onChange,
-  min,
-  max,
-}: {
-  label: string;
-  value: number;
-  onChange: (n: number) => void;
-  min: number;
-  max: number;
-}) {
-  return (
-    <label className="flex flex-col gap-1 text-xs">
-      <span className="text-[var(--color-muted)]">{label}</span>
-      <input
-        type="number"
-        value={value}
-        min={min}
-        max={max}
-        onChange={(e) => onChange(Number(e.target.value))}
-        className="mono w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-2 py-1.5 outline-none"
-      />
-    </label>
-  );
+const AUDIENCE: { key: Audience; label: string; hint: string }[] = [
+  {
+    key: 'only',
+    label: 'Solo a los que me siguen',
+    hint: 'Lo más seguro: casi nunca bloquean un DM a un seguidor. Llega a menos gente.',
+  },
+  {
+    key: 'first',
+    label: 'Seguidores primero (recomendado)',
+    hint: 'Le manda a todos los rojos, pero arranca por los que te siguen. Equilibra alcance y riesgo.',
+  },
+  {
+    key: 'all',
+    label: 'Todos, sin orden',
+    hint: 'Todos los rojos en el orden del board. Máximo alcance, más riesgo.',
+  },
+];
+
+function audienceToFlags(a: Audience): { only_followers: boolean; followers_first: boolean } {
+  return {
+    only_followers: a === 'only',
+    followers_first: a === 'only' || a === 'first',
+  };
 }
 
 export function CampaignModal({
@@ -75,26 +80,35 @@ export function CampaignModal({
     hour_start: 11,
     hour_end: 23,
   });
+  const [audience, setAudience] = useState<Audience>('first');
   const [preview, setPreview] = useState<CampaignPreview | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [testedTo, setTestedTo] = useState<string | null>(null);
-  const [onlyFollowers, setOnlyFollowers] = useState(false);
-  const [followersFirst, setFollowersFirst] = useState(true);
+  const [testTarget, setTestTarget] = useState('');
 
   const active = campaign.data;
   const showProgress = active != null && ['running', 'paused', 'blocked'].includes(active.status);
 
+  const flags = audienceToFlags(audience);
   const body: CampaignCreate = useMemo(
     () => ({
       templates: templates.map((t) => t.trim()).filter(Boolean),
       ...params,
-      only_followers: onlyFollowers,
-      followers_first: followersFirst,
+      ...audienceToFlags(audience),
     }),
-    [templates, params, onlyFollowers, followersFirst]
+    [templates, params, audience]
   );
 
-  // Apply a preset's params.
+  // Red list for the test-send picker (respects the audience follow filter).
+  const reds = useUsers({
+    event,
+    status: 'red',
+    follows: flags.only_followers ? true : undefined,
+    order: 'followers',
+    limit: 500,
+  });
+  const redUsers = reds.data ?? [];
+
   const applyPreset = (name: string) => {
     setPresetName(name);
     if (name === 'custom') return;
@@ -115,7 +129,7 @@ export function CampaignModal({
     onError: (e) => setError(e instanceof ApiError ? e.message : String(e)),
   });
   const testMut = useMutation({
-    mutationFn: () => api.testCampaign(event, body),
+    mutationFn: () => api.testCampaign(event, body, testTarget.trim() || undefined),
     onSuccess: (r) => setTestedTo(r.username),
     onError: (e) => setError(e instanceof ApiError ? e.message : String(e)),
   });
@@ -128,18 +142,20 @@ export function CampaignModal({
     onError: (e) => setError(e instanceof ApiError ? e.message : String(e)),
   });
 
-  // First preview once presets/params are ready, when in setup mode.
+  // Recalc whenever the audience or send params change (not on every keystroke
+  // in the message — those are picked up by the Recalcular button).
+  const settingsKey = JSON.stringify({ ...params, audience });
   useEffect(() => {
-    if (!showProgress && body.templates.length > 0 && preview === null) previewMut.mutate();
+    if (!showProgress && body.templates.length > 0) previewMut.mutate();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showProgress]);
+  }, [settingsKey, showProgress]);
 
   const launch = () => {
     setError(null);
     const n = preview?.targets_count ?? 0;
     if (
       !confirm(
-        `Vas a enviar DMs a ${n} usuarios rojos de "${eventName}". Enviar masivo tiene riesgo de ban. ¿Confirmás?`
+        `Vas a enviar DMs a ${n} rojos de "${eventName}". Enviar masivo tiene riesgo de ban. ¿Confirmás?`
       )
     )
       return;
@@ -173,13 +189,14 @@ export function CampaignModal({
             setTemplates={setTemplates}
             presetName={presetName}
             applyPreset={applyPreset}
-            presetNames={(presets.data ?? []).map((p) => p.name)}
+            presets={presets.data ?? []}
             params={params}
             setParams={setParams}
-            onlyFollowers={onlyFollowers}
-            setOnlyFollowers={setOnlyFollowers}
-            followersFirst={followersFirst}
-            setFollowersFirst={setFollowersFirst}
+            audience={audience}
+            setAudience={setAudience}
+            redUsers={redUsers}
+            testTarget={testTarget}
+            setTestTarget={setTestTarget}
             preview={preview}
             recalc={() => {
               setError(null);
@@ -269,19 +286,22 @@ function Progress({
   );
 }
 
+type Preset = { name: string; [k: string]: number | string };
+
 function Setup(props: {
   eventName: string;
   templates: string[];
   setTemplates: (t: string[]) => void;
   presetName: string;
   applyPreset: (n: string) => void;
-  presetNames: string[];
+  presets: Preset[];
   params: Params;
   setParams: (p: Params) => void;
-  onlyFollowers: boolean;
-  setOnlyFollowers: (b: boolean) => void;
-  followersFirst: boolean;
-  setFollowersFirst: (b: boolean) => void;
+  audience: Audience;
+  setAudience: (a: Audience) => void;
+  redUsers: { username: string; follows_us?: boolean | null }[];
+  testTarget: string;
+  setTestTarget: (s: string) => void;
   preview: CampaignPreview | null;
   recalc: () => void;
   recalcBusy: boolean;
@@ -298,13 +318,14 @@ function Setup(props: {
     setTemplates,
     presetName,
     applyPreset,
-    presetNames,
+    presets,
     params,
     setParams,
-    onlyFollowers,
-    setOnlyFollowers,
-    followersFirst,
-    setFollowersFirst,
+    audience,
+    setAudience,
+    redUsers,
+    testTarget,
+    setTestTarget,
     preview,
     recalc,
     recalcBusy,
@@ -315,7 +336,26 @@ function Setup(props: {
     launchBusy,
     error,
   } = props;
-  const avgMin = preview ? Math.round(preview.estimate.avg_delay_seconds / 60) : null;
+
+  const count = preview?.targets_count ?? redUsers.length;
+  const variants = templates.filter((t) => t.trim());
+  const usesName = variants.some((t) => /\{nombre\}|\{usuario\}|\{username\}/.test(t));
+
+  // Params for a given preset name (custom uses the live editable params).
+  const paramsFor = (name: string): Params => {
+    if (name === 'custom') return params;
+    const p = presets.find((x) => x.name === name);
+    return p
+      ? {
+          delay_min: p.delay_min as number,
+          delay_max: p.delay_max as number,
+          daily_cap: p.daily_cap as number,
+          hour_start: p.hour_start as number,
+          hour_end: p.hour_end as number,
+        }
+      : params;
+  };
+  const cards = [...presets.map((p) => p.name), 'custom'];
 
   return (
     <div className="flex flex-col gap-4 text-sm">
@@ -328,7 +368,7 @@ function Setup(props: {
       {/* message variants */}
       <div className="flex flex-col gap-2">
         <span className="text-[var(--color-muted)]">
-          Mensaje ({templates.filter((t) => t.trim()).length} variante(s)) — usá{' '}
+          Mensaje ({variants.length} variante{variants.length === 1 ? '' : 's'}) — usá{' '}
           <code>{'{nombre}'}</code> y <code>{'{usuario}'}</code>. Varias variantes = menos spam.
         </span>
         {templates.map((t, i) => (
@@ -345,34 +385,69 @@ function Setup(props: {
             className="w-full resize-none rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 outline-none"
           />
         ))}
+        {variants.length > 0 && !usesName && (
+          <p className="text-xs text-[var(--color-yellow)]">
+            ⚠ Sin <code>{'{nombre}'}</code> todos reciben el mismo texto exacto — más señal de spam.
+          </p>
+        )}
       </div>
 
-      {/* presets */}
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="text-[var(--color-muted)]">Cautela:</span>
-        {presetNames.map((name) => (
-          <button
-            key={name}
-            onClick={() => applyPreset(name)}
-            className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${
-              presetName === name
-                ? 'bg-[var(--color-blue)] text-[var(--color-bg)]'
-                : 'border border-[var(--color-border)]'
+      {/* audience — follow-status filter, explained */}
+      <div className="flex flex-col gap-1.5">
+        <span className="text-[var(--color-muted)]">¿A quién le mando?</span>
+        {AUDIENCE.map((a) => (
+          <label
+            key={a.key}
+            className={`flex cursor-pointer gap-2 rounded-lg border px-3 py-2 ${
+              audience === a.key
+                ? 'border-[var(--color-blue)] bg-[var(--color-blue)]/10'
+                : 'border-[var(--color-border)]'
             }`}
           >
-            {PRESET_LABEL[name] ?? name}
-          </button>
+            <input
+              type="radio"
+              name="audience"
+              checked={audience === a.key}
+              onChange={() => setAudience(a.key)}
+              className="mt-0.5"
+            />
+            <span>
+              <span className="font-semibold">{a.label}</span>
+              <span className="block text-xs text-[var(--color-muted)]">{a.hint}</span>
+            </span>
+          </label>
         ))}
-        <button
-          onClick={() => applyPreset('custom')}
-          className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${
-            presetName === 'custom'
-              ? 'bg-[var(--color-blue)] text-[var(--color-bg)]'
-              : 'border border-[var(--color-border)]'
-          }`}
-        >
-          Custom
-        </button>
+      </div>
+
+      {/* cautela presets — each card shows its knobs + ETA */}
+      <div className="flex flex-col gap-1.5">
+        <span className="text-[var(--color-muted)]">Cautela (ritmo de envío)</span>
+        <div className="grid gap-2 sm:grid-cols-3">
+          {cards.map((name) => {
+            const p = paramsFor(name);
+            const est = estimateFor(count, p);
+            const selected = presetName === name;
+            return (
+              <button
+                key={name}
+                onClick={() => applyPreset(name)}
+                className={`flex flex-col gap-1 rounded-lg border px-3 py-2 text-left ${
+                  selected
+                    ? 'border-[var(--color-blue)] bg-[var(--color-blue)]/10'
+                    : 'border-[var(--color-border)] hover:border-[var(--color-muted)]'
+                }`}
+              >
+                <span className="font-semibold">{PRESET_LABEL[name] ?? name}</span>
+                <span className="mono text-xs text-[var(--color-muted)]">
+                  {p.delay_min}–{p.delay_max}s · {p.daily_cap}/día · {p.hour_start}–{p.hour_end}h
+                </span>
+                <span className="mono text-xs">
+                  {count > 0 ? `~${est.days} día${est.days === 1 ? '' : 's'}` : 'sin rojos'}
+                </span>
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       {presetName === 'custom' && (
@@ -415,51 +490,42 @@ function Setup(props: {
         </div>
       )}
 
-      {/* follow-status safety options */}
-      <div className="flex flex-wrap gap-4 text-xs">
-        <label className="flex items-center gap-2">
-          <input
-            type="checkbox"
-            checked={onlyFollowers}
-            onChange={(e) => setOnlyFollowers(e.target.checked)}
-          />
-          <span>
-            Solo a los que <b>me siguen</b> (más seguro)
-          </span>
-        </label>
-        <label className="flex items-center gap-2">
-          <input
-            type="checkbox"
-            checked={followersFirst}
-            onChange={(e) => setFollowersFirst(e.target.checked)}
-          />
-          <span>Seguidores primero</span>
-        </label>
-      </div>
-
-      {/* estimate + preview */}
+      {/* estimate + message preview */}
       <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-3">
-        <div className="flex items-center justify-between">
-          <span className="mono text-sm">
-            {preview ? (
-              <>
-                <b>{preview.targets_count}</b> rojos · ~<b>{preview.estimate.days}</b> día(s) ·{' '}
-                {preview.estimate.per_day}/día · 1 cada ~{avgMin}min
-              </>
-            ) : (
-              'Calculá el resumen…'
-            )}
-          </span>
+        <div className="flex items-start justify-between gap-2">
+          {preview ? (
+            <div className="flex flex-col gap-0.5">
+              <span className="text-sm">
+                Se enviarán <b>{preview.targets_count}</b> mensaje
+                {preview.targets_count === 1 ? '' : 's'}
+              </span>
+              <span className="mono text-xs text-[var(--color-muted)]">
+                ~{preview.estimate.days} día{preview.estimate.days === 1 ? '' : 's'} ·{' '}
+                {preview.estimate.per_day}/día · 1 cada {fmtGap(preview.estimate.avg_delay_seconds)}{' '}
+                ({params.delay_min}–{params.delay_max}s) · franja {params.hour_start}–
+                {params.hour_end}h
+              </span>
+              <span className="mono text-xs text-[var(--color-muted)]">
+                ≈ {preview.estimate.minutes_per_day} min de envíos por día activo ·{' '}
+                <span className="text-[var(--color-blue)]">
+                  {preview.follower_targets} te siguen
+                </span>{' '}
+                · {preview.targets_count - preview.follower_targets} no
+              </span>
+            </div>
+          ) : (
+            <span className="mono text-sm text-[var(--color-muted)]">Calculando resumen…</span>
+          )}
           <button
             onClick={recalc}
             disabled={recalcBusy}
-            className="rounded-lg border border-[var(--color-border)] px-3 py-1 text-xs disabled:opacity-40"
+            className="shrink-0 rounded-lg border border-[var(--color-border)] px-3 py-1 text-xs disabled:opacity-40"
           >
             {recalcBusy ? '…' : 'Recalcular'}
           </button>
         </div>
         {preview && preview.samples.length > 0 && (
-          <ul className="mt-2 flex flex-col gap-1 text-xs text-[var(--color-muted)]">
+          <ul className="mt-2 flex flex-col gap-1 border-t border-[var(--color-border)] pt-2 text-xs text-[var(--color-muted)]">
             {preview.samples.map((s) => (
               <li key={s.username} className="truncate">
                 <b>@{s.username}:</b> {s.message}
@@ -476,22 +542,73 @@ function Setup(props: {
         </p>
       )}
 
-      <div className="flex flex-wrap justify-end gap-2">
+      {/* test send — choose who to send the single test DM to */}
+      <div className="flex flex-wrap items-end gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-3">
+        <label className="flex flex-1 flex-col gap-1 text-xs">
+          <span className="text-[var(--color-muted)]">
+            Prueba: a quién le mando 1 DM (por defecto el primero)
+          </span>
+          <input
+            list="test-targets"
+            value={testTarget}
+            onChange={(e) => setTestTarget(e.target.value)}
+            placeholder={redUsers[0] ? `@${redUsers[0].username}` : '@usuario'}
+            className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] px-3 py-2 outline-none"
+          />
+          <datalist id="test-targets">
+            {redUsers.slice(0, 500).map((u) => (
+              <option key={u.username} value={u.username}>
+                {u.follows_us ? 'te sigue' : ''}
+              </option>
+            ))}
+          </datalist>
+        </label>
         <button
           onClick={onTest}
-          disabled={testBusy || (preview?.targets_count ?? 0) === 0}
+          disabled={testBusy || count === 0}
           className="rounded-lg border border-[var(--color-border)] px-4 py-2 font-semibold disabled:opacity-40"
         >
           {testBusy ? 'Enviando…' : 'Enviar 1 de prueba'}
         </button>
+      </div>
+
+      <div className="flex justify-end">
         <button
           onClick={onLaunch}
-          disabled={launchBusy || (preview?.targets_count ?? 0) === 0}
+          disabled={launchBusy || count === 0}
           className="rounded-lg bg-[var(--color-red)] px-4 py-2 font-semibold text-[var(--color-bg)] shadow-[0_0_24px_-6px_var(--color-red)] disabled:opacity-40"
         >
           {launchBusy ? 'Lanzando…' : `Lanzar campaña (${eventName})`}
         </button>
       </div>
     </div>
+  );
+}
+
+function Field({
+  label,
+  value,
+  onChange,
+  min,
+  max,
+}: {
+  label: string;
+  value: number;
+  onChange: (n: number) => void;
+  min: number;
+  max: number;
+}) {
+  return (
+    <label className="flex flex-col gap-1 text-xs">
+      <span className="text-[var(--color-muted)]">{label}</span>
+      <input
+        type="number"
+        value={value}
+        min={min}
+        max={max}
+        onChange={(e) => onChange(Number(e.target.value))}
+        className="mono w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-2 py-1.5 outline-none"
+      />
+    </label>
   );
 }

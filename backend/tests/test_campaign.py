@@ -14,6 +14,13 @@ def test_estimate_zero() -> None:
     assert estimate(0, PRESETS["media"]).days == 0
 
 
+def test_estimate_reports_window_and_activity() -> None:
+    est = estimate(66, PRESETS["max"])
+    assert est.window_hours == 12  # 11..23h
+    assert est.avg_delay_seconds == 120  # (60+180)/2
+    assert est.minutes_per_day == 50.0  # 25 sends * 120s / 60
+
+
 def test_render_uses_first_name_and_rotates() -> None:
     templates = ["Hola {nombre}, ¿cómo estás?", "Qué hacés {nombre} 👋 (@{usuario})"]
     a = render_message(templates, "lucia.dj", "Lucía Gómez", "101")

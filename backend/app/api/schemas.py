@@ -185,6 +185,8 @@ class EstimateOut(BaseModel):
     per_day: int
     days: int
     avg_delay_seconds: float
+    window_hours: int
+    minutes_per_day: float
 
 
 class MessageSample(BaseModel):
@@ -194,6 +196,7 @@ class MessageSample(BaseModel):
 
 class CampaignPreviewOut(BaseModel):
     targets_count: int
+    follower_targets: int  # how many targets already follow us (safest to DM)
     estimate: EstimateOut
     samples: list[MessageSample]
 

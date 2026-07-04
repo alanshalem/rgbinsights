@@ -92,8 +92,13 @@ def preview(
     ]
     return CampaignPreviewOut(
         targets_count=len(reds),
+        follower_targets=sum(1 for u in reds if u.follows_us),
         estimate=EstimateOut(
-            per_day=est.per_day, days=est.days, avg_delay_seconds=est.avg_delay_seconds
+            per_day=est.per_day,
+            days=est.days,
+            avg_delay_seconds=est.avg_delay_seconds,
+            window_hours=est.window_hours,
+            minutes_per_day=est.minutes_per_day,
         ),
         samples=samples,
     )
@@ -103,15 +108,27 @@ def preview(
 def test_send(
     event_id: int,
     body: CampaignCreate,
+    username: str | None = None,
     session: Session = Depends(session_dep),
     source: InstagramSource = Depends(source_dep),
 ) -> MessageSample:
-    """Send ONE real DM to the first red — verify it lands before the batch."""
+    """Send ONE real DM to verify it lands before the batch.
+
+    Defaults to the first red; pass ?username= to test on a specific person
+    (e.g. a friend / someone who follows you).
+    """
     _require_event(session, event_id)
     reds = _reds(session, event_id, body)
     if not reds:
         raise HTTPException(422, detail={"code": "bad_request", "message": "no hay usuarios rojos"})
     target = reds[0]
+    if username is not None:
+        picked = next((u for u in reds if u.username == username), None)
+        if picked is None:
+            raise HTTPException(
+                422, detail={"code": "bad_request", "message": f"@{username} no está en la lista"}
+            )
+        target = picked
     message = camp.render_message(body.templates, target.username, target.full_name, target.pk)
     try:
         source.send_dm(target.pk, message)

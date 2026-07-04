@@ -30,9 +30,11 @@ PRESETS: dict[str, SendParams] = {
 
 @dataclass(frozen=True, slots=True)
 class Estimate:
-    per_day: int
-    days: int
-    avg_delay_seconds: float
+    per_day: int  # messages actually sent on a full day
+    days: int  # calendar days to drain the whole list
+    avg_delay_seconds: float  # mean gap between two sends
+    window_hours: int  # length of the daily active window
+    minutes_per_day: float  # minutes of actual sending activity per full day
 
 
 def estimate(count: int, params: SendParams) -> Estimate:
@@ -42,7 +44,13 @@ def estimate(count: int, params: SendParams) -> Estimate:
     max_by_time = int(window_hours * 3600 / avg) if avg > 0 else count
     per_day = max(1, min(params.daily_cap, max_by_time))
     days = math.ceil(count / per_day) if count > 0 else 0
-    return Estimate(per_day=per_day, days=days, avg_delay_seconds=avg)
+    return Estimate(
+        per_day=per_day,
+        days=days,
+        avg_delay_seconds=avg,
+        window_hours=window_hours,
+        minutes_per_day=round(per_day * avg / 60, 1),
+    )
 
 
 def _first_name(full_name: str, username: str) -> str:

@@ -140,8 +140,8 @@ export const api = {
       body: JSON.stringify(body),
     }),
 
-  testCampaign: (eventId: number, body: CampaignCreate) =>
-    request<MessageSample>(`/events/${eventId}/campaign/test`, {
+  testCampaign: (eventId: number, body: CampaignCreate, username?: string) =>
+    request<MessageSample>(`/events/${eventId}/campaign/test${qs({ username })}`, {
       method: 'POST',
       body: JSON.stringify(body),
     }),
