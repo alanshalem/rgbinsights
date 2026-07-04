@@ -32,7 +32,9 @@ class Settings(BaseSettings):
     # Rate limiting / good behaviour.
     scan_min_delay_seconds: float = 1.0
     scan_max_delay_seconds: float = 3.0
-    scan_max_requests: int = 200
+    # Per-operation request cap (anti-runaway). Reset before each op; high enough
+    # that enriching a few hundred profiles in one run doesn't trip it.
+    scan_max_requests: int = 1500
 
     # When true (default), the app uses FakeInstagramSource and never touches
     # Instagram. Set to false once credentials are filled in .env.

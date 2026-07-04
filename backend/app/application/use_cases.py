@@ -264,7 +264,7 @@ class EnrichProfilesUseCase:
         self._users = UserRepository(session)
 
     def execute(
-        self, pks: list[str], limit: int = 200, progress: ProgressFn | None = None
+        self, pks: list[str], limit: int = 1000, progress: ProgressFn | None = None
     ) -> Result[int]:
         self._source.reset_budget()
         pending = self._users.unenriched(pks)[:limit]
