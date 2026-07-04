@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 from sqlmodel import Session, col, select
 
 from app.application.dto import (
+    EnrichResult,
     ScanBatchResult,
     ScannedPost,
     ScanResult,
@@ -233,38 +234,18 @@ class SyncDmsUseCase:
                 synced_at=now,
             )
 
-        # Follow relationship for everyone we know, batched (cheap) — powers the
-        # "te sigue / mutuo" chip and the safer followers-first campaigns.
-        follows_synced = 0
-        try:
-            pks = self._users.all_pks()
-            if pks:
-                if progress is not None:
-                    progress(len(threads), len(threads), "trayendo relaciones (te sigue)…")
-                rels = self._source.get_friendships(pks)
-                self._users.set_friendships(rels)
-                follows_synced = len(rels)
-                if follows_synced == 0:
-                    logger.warning("friendship sync returned no relationships (show_many empty)")
-        except InstagramError as exc:
-            logger.warning("friendship sync skipped: %s", exc)
-
         self._session.commit()
-        logger.info("synced %d DM threads, %d relationships", len(threads), follows_synced)
-        return Ok(
-            SyncResult(
-                threads_synced=len(threads),
-                users_touched=len(threads),
-                follows_synced=follows_synced,
-            )
-        )
+        logger.info("synced %d DM threads", len(threads))
+        return Ok(SyncResult(threads_synced=len(threads), users_touched=len(threads)))
 
 
 class EnrichProfilesUseCase:
-    """Fetch richer profile fields (follower count, verified, bio) per user.
+    """The slow, opt-in "extra data" step, for a fiesta's users:
 
-    Costly (one call per user), so it only touches users not yet enriched and is
-    throttled by the source. Meant to run on demand for a fiesta's users.
+    1. Follow relationship (te sigue / mutuo) — read from our followers/following
+       lists (the only accurate way; show_many omits "followed_by").
+    2. Richer profile per user (follower count, verified, bio) — one call each,
+       so only users not yet enriched are fetched.
     """
 
     def __init__(self, source: InstagramSource, session: Session) -> None:
@@ -274,11 +255,22 @@ class EnrichProfilesUseCase:
 
     def execute(
         self, pks: list[str], limit: int = 1000, progress: ProgressFn | None = None
-    ) -> Result[int]:
+    ) -> Result[EnrichResult]:
         self._source.reset_budget()
+        now = _now()
+
+        relations = 0
+        try:
+            if progress is not None:
+                progress(0, 0, "trayendo relaciones (te sigue)…")
+            rels = self._source.get_friendships(pks)
+            self._users.set_friendships(rels)
+            relations = len(rels)
+        except InstagramError as exc:
+            logger.warning("relationship fetch skipped: %s", exc)
+
         pending = self._users.unenriched(pks)[:limit]
         total = len(pending)
-        now = _now()
         enriched = 0
         for user in pending:
             if progress is not None:
@@ -290,8 +282,9 @@ class EnrichProfilesUseCase:
                 return _map_error(exc)
             self._users.set_profile(user.pk, profile, now)
             enriched += 1
+
         self._session.commit()
-        return Ok(enriched)
+        return Ok(EnrichResult(enriched=enriched, relations=relations))
 
 
 def _naive(dt: datetime | None) -> datetime | None:

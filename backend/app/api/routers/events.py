@@ -121,7 +121,6 @@ def refresh_event(
             "posts": len(scan.value.results),
             "usuarios": scan.value.total_users_found,
             "hilos": sync.value.threads_synced,
-            "relaciones": sync.value.follows_synced,
         }
         out = EventRefreshOut(
             scan=ScanBatchResultOut.model_validate(scan.value, from_attributes=True),
@@ -140,10 +139,10 @@ def enrich_event(
     if EventRepository(session).get(event_id) is None:
         raise HTTPException(status_code=404, detail={"code": "not_found", "message": "fiesta"})
     pks = [u.pk for u in ListUsersUseCase(session).execute(event=event_id)]
-    with tasks.track("enrich", "Enriqueciendo perfiles") as task:
+    with tasks.track("enrich", "Enriqueciendo (relación + perfiles)") as task:
         result = EnrichProfilesUseCase(source, session).execute(pks, progress=task.progress)
         if isinstance(result, Err):
             task.fail(result.message or result.code.value)
             raise_for_err(result)
-        task.result = {"enriquecidos": result.value}
-    return EnrichResultOut(enriched=result.value)
+        task.result = {"relaciones": result.value.relations, "perfiles": result.value.enriched}
+    return EnrichResultOut(enriched=result.value.enriched, relations=result.value.relations)

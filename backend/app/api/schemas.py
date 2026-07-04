@@ -76,7 +76,6 @@ class ScanBatchResultOut(BaseModel):
 class SyncResultOut(BaseModel):
     threads_synced: int
     users_touched: int
-    follows_synced: int
 
 
 class EventRefreshOut(BaseModel):
@@ -171,6 +170,7 @@ class CampaignCreate(SendParamsIn):
 
 class EnrichResultOut(BaseModel):
     enriched: int
+    relations: int
 
 
 class EstimateOut(BaseModel):

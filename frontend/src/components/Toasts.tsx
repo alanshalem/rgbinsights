@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
+import { useIsMutating, useQueryClient } from '@tanstack/react-query';
 import type { Campaign, Task } from '../api/client';
 import { useActiveCampaign, useTasks } from '../api/hooks';
 
@@ -98,8 +98,9 @@ function CampaignToast({ c }: { c: Campaign }) {
 
 export function Toasts() {
   const qc = useQueryClient();
-  const tasks = useTasks();
-  const campaign = useActiveCampaign();
+  const active = useIsMutating() > 0;
+  const tasks = useTasks(active);
+  const campaign = useActiveCampaign(active);
   const [dismissed, setDismissed] = useState<Set<string>>(new Set());
   const processed = useRef<Set<string>>(new Set());
 

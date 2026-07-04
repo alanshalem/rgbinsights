@@ -154,10 +154,14 @@ def test_semaforo_per_fiesta_cutoff(session: Session) -> None:
 
 
 def test_follow_status_synced_and_filtered(session: Session) -> None:
+    from app.application.use_cases import EnrichProfilesUseCase
+    from app.infrastructure.persistence.repositories import UserRepository
+
     source = FakeInstagramSource()
     ScanPostUseCase(source, session).execute(POST_A_URL)
     ScanPostUseCase(source, session).execute("https://instagram.com/p/Cdef456/")
-    SyncDmsUseCase(source, session).execute()  # also fills follow status
+    # Follow status now comes from the enrich step, not the DM sync.
+    EnrichProfilesUseCase(source, session).execute(UserRepository(session).all_pks())
 
     views = {v.username: v for v in ListUsersUseCase(session).execute()}
     assert views["lucia.dj"].follows_us is True

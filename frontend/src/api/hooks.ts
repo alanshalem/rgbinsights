@@ -118,14 +118,21 @@ export function useResumeCampaign() {
 
 // -- toasts (live task/campaign progress) ----------------------------------
 
-export function useTasks() {
-  return useQuery({ queryKey: ['tasks'], queryFn: () => api.listTasks(), refetchInterval: 1500 });
+/** Poll only while something is happening: a mutation in flight (`active`) or a
+ * task already running. Idle → no polling (one fetch on mount). */
+export function useTasks(active: boolean) {
+  return useQuery({
+    queryKey: ['tasks'],
+    queryFn: () => api.listTasks(),
+    refetchInterval: (q) =>
+      active || (q.state.data?.some((t) => t.status === 'running') ?? false) ? 1200 : false,
+  });
 }
 
-export function useActiveCampaign() {
+export function useActiveCampaign(active: boolean) {
   return useQuery({
     queryKey: ['activeCampaign'],
     queryFn: () => api.activeCampaign(),
-    refetchInterval: (q) => (q.state.data?.status === 'running' ? 4000 : 8000),
+    refetchInterval: (q) => (active || q.state.data?.status === 'running' ? 4000 : false),
   });
 }

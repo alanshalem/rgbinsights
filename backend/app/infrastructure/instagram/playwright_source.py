@@ -202,35 +202,6 @@ def _send_dm(page: Page, user_pk: str, text: str) -> None:
     raise SendBlockedError(str(data.get("message") or f"status {status}"))
 
 
-def _friendship_job(csv: str) -> _Job:
-    return lambda page: _show_many(page, csv)
-
-
-def _show_many(page: Page, user_ids_csv: str) -> dict[str, Any]:
-    """POST friendships/show_many/ for a batch of user ids."""
-    result = page.evaluate(
-        """async ({ csv, appId }) => {
-            const headers = {
-                'X-IG-App-ID': appId,
-                'content-type': 'application/x-www-form-urlencoded',
-            };
-            const m = document.cookie.match(/csrftoken=([^;]+)/);
-            if (m) headers['X-CSRFToken'] = m[1];
-            const r = await fetch('/api/v1/friendships/show_many/', {
-                method: 'POST', headers, credentials: 'include',
-                body: 'user_ids=' + encodeURIComponent(csv),
-            });
-            const body = await r.text();
-            return { ct: r.headers.get('content-type') || '', body };
-        }""",
-        {"csv": user_ids_csv, "appId": _WEB_APP_ID},
-    )
-    if "json" not in str(result["ct"]):
-        return {}
-    data: dict[str, Any] = json.loads(str(result["body"]))
-    return data
-
-
 class PlaywrightInstagramSource:
     """InstagramSource backed by a logged-in headless browser."""
 
@@ -257,18 +228,31 @@ class PlaywrightInstagramSource:
         self._worker.submit(lambda page: _send_dm(page, user_pk, text))
 
     def get_friendships(self, user_pks: list[str]) -> dict[str, Friendship]:
-        out: dict[str, Friendship] = {}
-        for i in range(0, len(user_pks), 100):
-            csv = ",".join(user_pks[i : i + 100])
-            self._budget.spend()
-            data = self._worker.submit(_friendship_job(csv))
-            statuses = data.get("friendship_statuses") or {}
-            for pk, st in statuses.items():
-                out[str(pk)] = Friendship(
-                    following=bool(st.get("following")),
-                    followed_by=bool(st.get("followed_by")),
-                )
-        return out
+        # show_many only tells us who WE follow, not who follows US. To know
+        # "te sigue" we read our own followers/following lists and test membership.
+        our_pk = self.current_user_pk()
+        followers = self._collect_pks(f"/api/v1/friendships/{our_pk}/followers/")
+        following = self._collect_pks(f"/api/v1/friendships/{our_pk}/following/")
+        return {
+            pk: Friendship(following=pk in following, followed_by=pk in followers)
+            for pk in set(user_pks)
+        }
+
+    def _collect_pks(self, base: str) -> set[str]:
+        """Paginate a followers/following list into a set of user pks."""
+        pks: set[str] = set()
+        params: dict[str, Any] = {"count": 100}
+        for _ in range(300):  # bounded; the request cap also limits this
+            data = self._get(base, params)
+            for user in data.get("users") or []:
+                pk = user.get("pk") or user.get("id")
+                if pk:
+                    pks.add(str(pk))
+            next_max = data.get("next_max_id")
+            if not next_max:
+                break
+            params = {"count": 100, "max_id": str(next_max)}
+        return pks
 
     def get_profile(self, username: str) -> ProfileInfo:
         data = self._get("/api/v1/users/web_profile_info/", {"username": username})
