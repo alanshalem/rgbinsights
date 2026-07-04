@@ -28,3 +28,7 @@ backend/openapi.json
 .DS_Store
 .vscode/
 .idea/
+
+# Agent / tooling artifacts (no aportan al cliente)
+.claude/
+docs/superpowers/
