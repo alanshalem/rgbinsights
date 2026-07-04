@@ -13,6 +13,24 @@ Corre en tu propia máquina. No hay usuarios, login propio ni nube.
 
 ---
 
+## Instalación de un click (para el cliente)
+
+La **primera vez**, bajá el instalador y ejecutalo — clona el proyecto desde
+GitHub y lo levanta solo:
+
+- **Windows:** bajá `install.ps1` → click derecho → **Ejecutar con PowerShell**.
+- **macOS / Linux:** bajá `install.sh` y corré `bash install.sh`.
+
+**Para actualizar** (cada vez que hay una versión nueva): no hace falta nada
+especial — **corré `start.ps1` / `start.sh` de siempre**. Arranca haciendo
+`git pull` solo, así que siempre levanta la última versión. (Si preferís, volver
+a correr el instalador también actualiza.)
+
+> Requiere **Git** (el instalador te ayuda a ponerlo). El repo:
+> https://github.com/alanshalem/rgbinsights
+
+---
+
 ## Arranque rápido (recomendado)
 
 Un solo comando que **chequea requisitos, instala lo que falte y levanta todo**.
