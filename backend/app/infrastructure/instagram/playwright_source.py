@@ -18,9 +18,7 @@ import contextlib
 import json
 import logging
 import queue
-import random
 import threading
-import time
 from collections.abc import Callable
 from concurrent.futures import Future
 from typing import TYPE_CHECKING, Any
@@ -39,9 +37,9 @@ from app.infrastructure.instagram.errors import (
     ChallengeRequiredError,
     LoginRequiredError,
     PostNotFoundError,
-    RateLimitedError,
     SendBlockedError,
 )
+from app.infrastructure.instagram.throttle import RequestBudget
 from app.infrastructure.instagram.web_source import (
     extract_shortcode,
     parse_comments,
@@ -153,9 +151,7 @@ def _fetch_json(page: Page, path: str) -> dict[str, Any]:
     if status == 404:
         raise PostNotFoundError(path)
     if "json" not in ctype:
-        raise LoginRequiredError(
-            f"non-JSON from {path} (status {status}, ct {ctype}): {snippet}"
-        )
+        raise LoginRequiredError(f"non-JSON from {path} (status {status}, ct {ctype}): {snippet}")
 
     data: dict[str, Any] = json.loads(body)
     message = str(data.get("message", ""))
@@ -241,27 +237,17 @@ class PlaywrightInstagramSource:
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
         self._worker = _BrowserWorker(settings)
-        self._request_count = 0
-
-    def reset_budget(self) -> None:
-        self._request_count = 0
-
-    def _throttle(self) -> None:
-        """Randomized pause + hard cap per run — be a good citizen."""
-        self._request_count += 1
-        if self._request_count > self._settings.scan_max_requests:
-            raise RateLimitedError(
-                f"request cap reached ({self._settings.scan_max_requests}); stopping to stay safe"
-            )
-        time.sleep(
-            random.uniform(
-                self._settings.scan_min_delay_seconds,
-                self._settings.scan_max_delay_seconds,
-            )
+        self._budget = RequestBudget(
+            settings.scan_min_delay_seconds,
+            settings.scan_max_delay_seconds,
+            settings.scan_max_requests,
         )
 
+    def reset_budget(self) -> None:
+        self._budget.reset()
+
     def _get(self, base: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
-        self._throttle()
+        self._budget.spend()
         data: dict[str, Any] = self._worker.submit(
             lambda page: _fetch_json(page, _path(base, params))
         )
@@ -274,7 +260,7 @@ class PlaywrightInstagramSource:
         out: dict[str, Friendship] = {}
         for i in range(0, len(user_pks), 100):
             csv = ",".join(user_pks[i : i + 100])
-            self._throttle()
+            self._budget.spend()
             data = self._worker.submit(_friendship_job(csv))
             statuses = data.get("friendship_statuses") or {}
             for pk, st in statuses.items():

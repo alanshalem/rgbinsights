@@ -184,9 +184,7 @@ def active_campaign(session: Session = Depends(session_dep)) -> CampaignOut | No
 
 
 @router.get("/events/{event_id}/campaign", response_model=CampaignOut | None)
-def latest_campaign(
-    event_id: int, session: Session = Depends(session_dep)
-) -> CampaignOut | None:
+def latest_campaign(event_id: int, session: Session = Depends(session_dep)) -> CampaignOut | None:
     campaign = session.exec(
         select(models.Campaign)
         .where(models.Campaign.event_id == event_id)

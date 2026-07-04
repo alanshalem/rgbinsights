@@ -14,9 +14,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
-import random
 import re
-import time
 from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import unquote
@@ -40,6 +38,7 @@ from app.infrastructure.instagram.errors import (
     RateLimitedError,
     SendNotSupportedError,
 )
+from app.infrastructure.instagram.throttle import RequestBudget
 
 logger = logging.getLogger(__name__)
 
@@ -169,31 +168,12 @@ def parse_inbox(data: dict[str, Any], our_pk: str) -> list[DmThread]:
 # ------------------------------------------------------------------ the source
 
 
-class _RequestBudget:
-    def __init__(self, min_delay: float, max_delay: float, max_requests: int) -> None:
-        self._min_delay = min_delay
-        self._max_delay = max_delay
-        self._max_requests = max_requests
-        self._count = 0
-
-    def reset(self) -> None:
-        self._count = 0
-
-    def spend(self) -> None:
-        self._count += 1
-        if self._count > self._max_requests:
-            raise RateLimitedError(
-                f"request cap reached ({self._max_requests}); stopping to stay safe"
-            )
-        time.sleep(random.uniform(self._min_delay, self._max_delay))
-
-
 class WebInstagramSource:
     """InstagramSource backed by the web (browser) API, authed via sessionid."""
 
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
-        self._budget = _RequestBudget(
+        self._budget = RequestBudget(
             settings.scan_min_delay_seconds,
             settings.scan_max_delay_seconds,
             settings.scan_max_requests,

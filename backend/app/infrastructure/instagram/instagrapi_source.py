@@ -11,8 +11,6 @@ between requests, and a hard cap on requests per run.
 from __future__ import annotations
 
 import logging
-import random
-import time
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -32,10 +30,10 @@ from app.infrastructure.instagram.errors import (
     InstagramError,
     LoginRequiredError,
     PostNotFoundError,
-    RateLimitedError,
     SendBlockedError,
 )
 from app.infrastructure.instagram.session import build_client
+from app.infrastructure.instagram.throttle import RequestBudget
 
 if TYPE_CHECKING:
     from instagrapi import Client
@@ -43,34 +41,12 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class _RequestBudget:
-    """Randomized throttle + a hard per-run request cap."""
-
-    def __init__(self, min_delay: float, max_delay: float, max_requests: int) -> None:
-        self._min = min_delay
-        self._max = max_delay
-        self._max_requests = max_requests
-        self._count = 0
-
-    def reset(self) -> None:
-        self._count = 0
-
-    def spend(self) -> None:
-        self._count += 1
-        if self._count > self._max_requests:
-            raise RateLimitedError(
-                f"request cap reached ({self._max_requests}); stopping to stay safe"
-            )
-        # Jitter avoids a robotic fixed cadence.
-        time.sleep(random.uniform(self._min, self._max))
-
-
 class InstagrapiInstagramSource:
     """Adapter over instagrapi.Client implementing the InstagramSource port."""
 
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
-        self._budget = _RequestBudget(
+        self._budget = RequestBudget(
             settings.scan_min_delay_seconds,
             settings.scan_max_delay_seconds,
             settings.scan_max_requests,

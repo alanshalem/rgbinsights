@@ -185,9 +185,7 @@ class RescanEventUseCase:
         self._session = session
         self._batch = ScanPostsUseCase(source, session, recent_limit)
 
-    def execute(
-        self, event_id: int, progress: ProgressFn | None = None
-    ) -> Result[ScanBatchResult]:
+    def execute(self, event_id: int, progress: ProgressFn | None = None) -> Result[ScanBatchResult]:
         posts = PostRepository(self._session).list_all(event_id=event_id)
         urls = [p.url for p in posts]
         if not urls:
@@ -357,9 +355,11 @@ class ListUsersUseCase:
             user = self._session.get(models.User, user_pk)
             if user is None:
                 continue
-            if needle and needle not in user.username.lower() and needle not in (
-                user.full_name or ""
-            ).lower():
+            if (
+                needle
+                and needle not in user.username.lower()
+                and needle not in (user.full_name or "").lower()
+            ):
                 continue
 
             if follows is True and user.follows_us is not True:

@@ -81,9 +81,7 @@ class PostRepository:
     def __init__(self, session: Session) -> None:
         self.session = session
 
-    def upsert(
-        self, post: Post, scanned_at: datetime, event_id: int | None = None
-    ) -> models.Post:
+    def upsert(self, post: Post, scanned_at: datetime, event_id: int | None = None) -> models.Post:
         row = self.session.get(models.Post, post.media_pk)
         if row is None:
             row = models.Post(media_pk=post.media_pk, shortcode=post.shortcode, url=post.url)
