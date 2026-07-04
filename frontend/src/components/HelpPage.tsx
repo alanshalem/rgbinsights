@@ -127,6 +127,12 @@ export function HelpPage({ onBack }: { onBack: () => void }) {
               <b>Relación + perfiles</b> — lento, opcional: trae <b>te sigue</b> (lee tu lista de
               seguidores) + seguidores/verificado/bio.
             </p>
+            <p>
+              Cada ítem del menú muestra <b>hace cuánto</b> se actualizó. Para gastar menos pedidos
+              a Instagram (y bajar el riesgo de bloqueo) el sistema <b>reusa lo reciente</b>: la
+              lista de seguidores se cachea ~12h, los DMs traen solo lo que cambió, y no re-escanea
+              un post visto hace poco. Si necesitás forzar, tildá <b>“Forzar (ignorar caché)”</b>.
+            </p>
           </Section>
 
           <Section id="seguidores" title="Te sigue, seguidores y filtros">

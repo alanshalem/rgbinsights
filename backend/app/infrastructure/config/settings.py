@@ -62,6 +62,13 @@ class Settings(BaseSettings):
     # How many recent posts to pull when scanning by date range.
     recent_posts_limit: int = 50
 
+    # Caching to spare Instagram requests (and lower ban risk). Each is a TTL:
+    # within it the app reuses stored data instead of re-fetching. "force" in the
+    # UI bypasses them. See use_cases + the caching docs in Ayuda.
+    relationship_cache_hours: float = 12.0  # skip re-reading followers/following
+    rescan_skip_hours: float = 6.0  # skip re-scanning a post scanned this recently
+    dm_incremental: bool = True  # only pull DM threads changed since last sync
+
 
 @lru_cache
 def get_settings() -> Settings:

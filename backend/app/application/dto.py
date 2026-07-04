@@ -30,18 +30,21 @@ class ScanBatchResult:
     results: list[ScanResult]
     total_users_found: int
     total_new_users: int
+    skipped: int = 0  # posts skipped because scanned recently (cache)
 
 
 @dataclass(frozen=True, slots=True)
 class SyncResult:
     threads_synced: int
     users_touched: int
+    incremental: bool = False  # only changed threads pulled (vs full inbox)
 
 
 @dataclass(frozen=True, slots=True)
 class EnrichResult:
     enriched: int  # profiles fetched (follower count / verified / bio)
     relations: int  # users whose follow-status was set
+    relations_cached: bool = False  # relationships were fresh, fetch skipped
 
 
 @dataclass(frozen=True, slots=True)

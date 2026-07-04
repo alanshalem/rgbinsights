@@ -31,7 +31,13 @@ function useRefreshAll() {
     void qc.invalidateQueries({ queryKey: ['counts'] });
     void qc.invalidateQueries({ queryKey: ['posts'] });
     void qc.invalidateQueries({ queryKey: ['events'] });
+    void qc.invalidateQueries({ queryKey: ['status'] });
   };
+}
+
+/** Freshness of the shared data (last relationships/DMs sync), for the hints. */
+export function useStatus() {
+  return useQuery({ queryKey: ['status'], queryFn: () => api.getStatus() });
 }
 
 export function useCreateEvent() {
@@ -59,10 +65,12 @@ export function useRescanEvent() {
   });
 }
 
+type Forceable = { id: number; force?: boolean };
+
 export function useEnrichEvent() {
   const refresh = useRefreshAll();
   return useMutation({
-    mutationFn: (eventId: number) => api.enrichEvent(eventId),
+    mutationFn: ({ id, force }: Forceable) => api.enrichEvent(id, force),
     onSuccess: refresh,
   });
 }
@@ -71,7 +79,7 @@ export function useEnrichEvent() {
 export function useRefreshEvent() {
   const refresh = useRefreshAll();
   return useMutation({
-    mutationFn: (eventId: number) => api.refreshEvent(eventId),
+    mutationFn: ({ id, force }: Forceable) => api.refreshEvent(id, force),
     onSuccess: refresh,
   });
 }
@@ -79,7 +87,7 @@ export function useRefreshEvent() {
 export function useSyncDms() {
   const refresh = useRefreshAll();
   return useMutation({
-    mutationFn: () => api.syncDms(),
+    mutationFn: (force?: boolean) => api.syncDms(force),
     onSuccess: refresh,
   });
 }

@@ -77,7 +77,11 @@ export default function App() {
             >
               + Nueva fiesta
             </button>
-            <ActionsMenu event={event} onError={setError} />
+            <ActionsMenu
+              event={event}
+              lastScannedAt={selected?.last_scanned_at}
+              onError={setError}
+            />
             {selected && (
               <>
                 <button

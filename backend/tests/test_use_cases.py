@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from app.application.use_cases import (
+    EnrichProfilesUseCase,
     ListUsersUseCase,
     ScanPostsUseCase,
     ScanPostUseCase,
@@ -120,9 +121,16 @@ def test_rescan_event(session: Session) -> None:
     assert event.id is not None
     ScanPostUseCase(source, session).execute(POST_A_URL, event_id=event.id)
 
-    result = RescanEventUseCase(source, session, recent_limit=50).execute(event.id)
-    assert isinstance(result, Ok)
-    assert len(result.value.results) == 1  # the one post assigned to the fiesta
+    # Just scanned, so a plain rescan skips it (cache: skip-if-recent).
+    cached = RescanEventUseCase(source, session, recent_limit=50).execute(event.id)
+    assert isinstance(cached, Ok)
+    assert cached.value.results == []
+    assert cached.value.skipped == 1
+
+    # force=True re-scans regardless of freshness.
+    forced = RescanEventUseCase(source, session, recent_limit=50).execute(event.id, force=True)
+    assert isinstance(forced, Ok)
+    assert len(forced.value.results) == 1  # the one post assigned to the fiesta
 
 
 def test_semaforo_per_fiesta_cutoff(session: Session) -> None:
@@ -184,3 +192,33 @@ def test_scan_by_date_range(session: Session) -> None:
     # Only post A (taken_at Jun 10) falls in range; post B is Jun 20.
     assert len(result.value.results) == 1
     assert result.value.results[0].post.shortcode == "Cabc123"
+
+
+def test_sync_dms_is_incremental_after_first(session: Session) -> None:
+    source = FakeInstagramSource()
+    first = SyncDmsUseCase(source, session).execute()
+    assert isinstance(first, Ok)
+    assert first.value.incremental is False  # no prior sync -> full pull
+
+    second = SyncDmsUseCase(source, session).execute()
+    assert isinstance(second, Ok)
+    assert second.value.incremental is True  # only changes since last time
+
+
+def test_enrich_relationships_cached_within_ttl(session: Session) -> None:
+    source = FakeInstagramSource()
+    ScanPostUseCase(source, session).execute(POST_A_URL)
+    pks = [u.pk for u in ListUsersUseCase(session).execute()]
+
+    first = EnrichProfilesUseCase(source, session).execute(pks, cache_hours=12)
+    assert isinstance(first, Ok)
+    assert first.value.relations_cached is False
+    assert first.value.relations > 0
+
+    second = EnrichProfilesUseCase(source, session).execute(pks, cache_hours=12)
+    assert isinstance(second, Ok)
+    assert second.value.relations_cached is True  # fresh -> followers fetch skipped
+
+    forced = EnrichProfilesUseCase(source, session).execute(pks, cache_hours=12, force=True)
+    assert isinstance(forced, Ok)
+    assert forced.value.relations_cached is False  # force bypasses the cache

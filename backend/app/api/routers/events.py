@@ -31,7 +31,9 @@ from app.infrastructure.persistence.repositories import EventRepository
 router = APIRouter(prefix="/events", tags=["events"])
 
 
-def _to_out(event: models.Event, posts_count: int) -> EventOut:
+def _to_out(
+    event: models.Event, posts_count: int, last_scanned_at: datetime | None = None
+) -> EventOut:
     assert event.id is not None
     return EventOut(
         id=event.id,
@@ -40,6 +42,7 @@ def _to_out(event: models.Event, posts_count: int) -> EventOut:
         event_date=event.event_date,
         notes=event.notes,
         posts_count=posts_count,
+        last_scanned_at=last_scanned_at,
     )
 
 
@@ -61,7 +64,10 @@ def create_event(body: EventCreate, session: Session = Depends(session_dep)) -> 
 def list_events(session: Session = Depends(session_dep)) -> list[EventOut]:
     repo = EventRepository(session)
     counts = repo.post_counts()
-    return [_to_out(e, counts.get(e.id or -1, 0)) for e in repo.list_all()]
+    scanned = repo.last_scanned()
+    return [
+        _to_out(e, counts.get(e.id or -1, 0), scanned.get(e.id or -1)) for e in repo.list_all()
+    ]
 
 
 @router.patch("/{event_id}", response_model=EventOut)
@@ -83,13 +89,16 @@ def update_event(
 @router.post("/{event_id}/rescan", response_model=ScanBatchResultOut)
 def rescan_event(
     event_id: int,
+    force: bool = False,
     session: Session = Depends(session_dep),
     source: InstagramSource = Depends(source_dep),
     settings: Settings = Depends(get_settings),
 ) -> ScanBatchResultOut:
     if EventRepository(session).get(event_id) is None:
         raise HTTPException(status_code=404, detail={"code": "not_found", "message": "fiesta"})
-    result = RescanEventUseCase(source, session, settings.recent_posts_limit).execute(event_id)
+    result = RescanEventUseCase(source, session, settings.recent_posts_limit).execute(
+        event_id, force=force, skip_hours=settings.rescan_skip_hours
+    )
     if isinstance(result, Err):
         raise_for_err(result)
     return ScanBatchResultOut.model_validate(result.value, from_attributes=True)
@@ -98,6 +107,7 @@ def rescan_event(
 @router.post("/{event_id}/refresh", response_model=EventRefreshOut)
 def refresh_event(
     event_id: int,
+    force: bool = False,
     session: Session = Depends(session_dep),
     source: InstagramSource = Depends(source_dep),
     settings: Settings = Depends(get_settings),
@@ -108,12 +118,14 @@ def refresh_event(
 
     with tasks.track("refresh", "Actualizando fiesta") as task:
         scan = RescanEventUseCase(source, session, settings.recent_posts_limit).execute(
-            event_id, task.progress
+            event_id, task.progress, force=force, skip_hours=settings.rescan_skip_hours
         )
         if isinstance(scan, Err):
             task.fail(scan.message or scan.code.value)
             raise_for_err(scan)
-        sync = SyncDmsUseCase(source, session).execute(task.progress)
+        sync = SyncDmsUseCase(source, session).execute(
+            task.progress, force=force, incremental=settings.dm_incremental
+        )
         if isinstance(sync, Err):
             task.fail(sync.message or sync.code.value)
             raise_for_err(sync)
@@ -132,17 +144,29 @@ def refresh_event(
 @router.post("/{event_id}/enrich", response_model=EnrichResultOut)
 def enrich_event(
     event_id: int,
+    force: bool = False,
     session: Session = Depends(session_dep),
     source: InstagramSource = Depends(source_dep),
+    settings: Settings = Depends(get_settings),
 ) -> EnrichResultOut:
     """Fetch follower count / verified / bio for the fiesta's users (slow, opt-in)."""
     if EventRepository(session).get(event_id) is None:
         raise HTTPException(status_code=404, detail={"code": "not_found", "message": "fiesta"})
     pks = [u.pk for u in ListUsersUseCase(session).execute(event=event_id)]
     with tasks.track("enrich", "Enriqueciendo (relación + perfiles)") as task:
-        result = EnrichProfilesUseCase(source, session).execute(pks, progress=task.progress)
+        result = EnrichProfilesUseCase(source, session).execute(
+            pks,
+            progress=task.progress,
+            force=force,
+            cache_hours=settings.relationship_cache_hours,
+        )
         if isinstance(result, Err):
             task.fail(result.message or result.code.value)
             raise_for_err(result)
-        task.result = {"relaciones": result.value.relations, "perfiles": result.value.enriched}
-    return EnrichResultOut(enriched=result.value.enriched, relations=result.value.relations)
+        rel = "cache" if result.value.relations_cached else result.value.relations
+        task.result = {"relaciones": rel, "perfiles": result.value.enriched}
+    return EnrichResultOut(
+        enriched=result.value.enriched,
+        relations=result.value.relations,
+        relations_cached=result.value.relations_cached,
+    )

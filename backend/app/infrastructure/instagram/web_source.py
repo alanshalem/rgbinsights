@@ -312,7 +312,9 @@ class WebInstagramSource:
             params["min_id"] = next_min_id
         return comments
 
-    def get_dm_threads(self, progress: object | None = None) -> list[DmThread]:
+    def get_dm_threads(
+        self, progress: object | None = None, since: datetime | None = None
+    ) -> list[DmThread]:
         our_pk = self.current_user_pk()
         threads: list[DmThread] = []
         params: dict[str, Any] = {

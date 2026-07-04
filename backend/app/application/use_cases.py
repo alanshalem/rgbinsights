@@ -8,7 +8,8 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from datetime import UTC, datetime
+from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 
 from sqlmodel import Session, col, select
 
@@ -35,6 +36,7 @@ from app.infrastructure.instagram.errors import (
 )
 from app.infrastructure.persistence import models
 from app.infrastructure.persistence.repositories import (
+    AppStateRepository,
     DmThreadRepository,
     EngagementRepository,
     PostRepository,
@@ -44,6 +46,10 @@ from app.infrastructure.persistence.repositories import (
 logger = logging.getLogger(__name__)
 
 ProgressFn = Callable[..., None]
+
+# app_state keys for cache/TTL timestamps.
+KEY_DMS_SYNCED = "dms_synced_at"
+KEY_RELATIONS_SYNCED = "relationships_synced_at"
 
 
 def _now() -> datetime:
@@ -186,12 +192,35 @@ class RescanEventUseCase:
         self._session = session
         self._batch = ScanPostsUseCase(source, session, recent_limit)
 
-    def execute(self, event_id: int, progress: ProgressFn | None = None) -> Result[ScanBatchResult]:
+    def execute(
+        self,
+        event_id: int,
+        progress: ProgressFn | None = None,
+        force: bool = False,
+        skip_hours: float = 6.0,
+    ) -> Result[ScanBatchResult]:
         posts = PostRepository(self._session).list_all(event_id=event_id)
-        urls = [p.url for p in posts]
+        if force:
+            stale = posts
+        else:
+            cutoff = _naive(_now() - timedelta(hours=skip_hours))
+            stale = [
+                p
+                for p in posts
+                if p.last_scanned_at is None or _naive(p.last_scanned_at) < cutoff  # type: ignore[operator]
+            ]
+        skipped = len(posts) - len(stale)
+        urls = [p.url for p in stale]
         if not urls:
-            return Ok(ScanBatchResult(results=[], total_users_found=0, total_new_users=0))
-        return self._batch.by_urls(urls, event_id=event_id, progress=progress)
+            return Ok(
+                ScanBatchResult(
+                    results=[], total_users_found=0, total_new_users=0, skipped=skipped
+                )
+            )
+        result = self._batch.by_urls(urls, event_id=event_id, progress=progress)
+        if isinstance(result, Ok):
+            return Ok(replace(result.value, skipped=skipped))
+        return result
 
 
 class SyncDmsUseCase:
@@ -201,11 +230,18 @@ class SyncDmsUseCase:
         self._users = UserRepository(session)
         self._threads = DmThreadRepository(session)
 
-    def execute(self, progress: ProgressFn | None = None) -> Result[SyncResult]:
+    def execute(
+        self,
+        progress: ProgressFn | None = None,
+        force: bool = False,
+        incremental: bool = True,
+    ) -> Result[SyncResult]:
         self._source.reset_budget()
+        state = AppStateRepository(self._session)
+        since = None if (force or not incremental) else state.get_dt(KEY_DMS_SYNCED)
         try:
             our_pk = self._source.current_user_pk()
-            threads = self._source.get_dm_threads(progress)
+            threads = self._source.get_dm_threads(progress, since)
         except InstagramError as exc:
             logger.warning("dm sync failed: %s", exc)
             return _map_error(exc)
@@ -234,9 +270,16 @@ class SyncDmsUseCase:
                 synced_at=now,
             )
 
+        state.set_dt(KEY_DMS_SYNCED, now)
         self._session.commit()
-        logger.info("synced %d DM threads", len(threads))
-        return Ok(SyncResult(threads_synced=len(threads), users_touched=len(threads)))
+        logger.info("synced %d DM threads (incremental=%s)", len(threads), since is not None)
+        return Ok(
+            SyncResult(
+                threads_synced=len(threads),
+                users_touched=len(threads),
+                incremental=since is not None,
+            )
+        )
 
 
 class EnrichProfilesUseCase:
@@ -254,20 +297,35 @@ class EnrichProfilesUseCase:
         self._users = UserRepository(session)
 
     def execute(
-        self, pks: list[str], limit: int = 1000, progress: ProgressFn | None = None
+        self,
+        pks: list[str],
+        limit: int = 1000,
+        progress: ProgressFn | None = None,
+        force: bool = False,
+        cache_hours: float = 12.0,
     ) -> Result[EnrichResult]:
         self._source.reset_budget()
         now = _now()
+        state = AppStateRepository(self._session)
 
         relations = 0
-        try:
-            if progress is not None:
-                progress(0, 0, "trayendo relaciones (te sigue)…")
-            rels = self._source.get_friendships(pks)
-            self._users.set_friendships(rels)
-            relations = len(rels)
-        except InstagramError as exc:
-            logger.warning("relationship fetch skipped: %s", exc)
+        last = state.get_dt(KEY_RELATIONS_SYNCED)
+        fresh = last is not None and (now - last) < timedelta(hours=cache_hours)
+        relations_cached = bool(fresh) and not force
+        if relations_cached:
+            # Followers/following read < cache_hours ago — reuse stored flags
+            # (hundreds of paginated, ban-prone requests skipped).
+            logger.info("relationships fresh (%s) — skipping fetch", last)
+        else:
+            try:
+                if progress is not None:
+                    progress(0, 0, "trayendo relaciones (te sigue)…")
+                rels = self._source.get_friendships(pks)
+                self._users.set_friendships(rels)
+                relations = len(rels)
+                state.set_dt(KEY_RELATIONS_SYNCED, now)
+            except InstagramError as exc:
+                logger.warning("relationship fetch skipped: %s", exc)
 
         pending = self._users.unenriched(pks)[:limit]
         total = len(pending)
@@ -284,7 +342,11 @@ class EnrichProfilesUseCase:
             enriched += 1
 
         self._session.commit()
-        return Ok(EnrichResult(enriched=enriched, relations=relations))
+        return Ok(
+            EnrichResult(
+                enriched=enriched, relations=relations, relations_cached=relations_cached
+            )
+        )
 
 
 def _naive(dt: datetime | None) -> datetime | None:

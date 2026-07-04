@@ -21,6 +21,7 @@ import queue
 import threading
 from collections.abc import Callable
 from concurrent.futures import Future
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlencode
 
@@ -203,6 +204,16 @@ def _send_dm(page: Page, user_pk: str, text: str) -> None:
     raise SendBlockedError(str(data.get("message") or f"status {status}"))
 
 
+def _naive_dt(dt: datetime | None) -> datetime | None:
+    return dt.replace(tzinfo=None) if dt is not None and dt.tzinfo is not None else dt
+
+
+def _page_older_than(page: list[DmThread], cut: datetime) -> bool:
+    """True when every thread on this inbox page last moved before `cut`."""
+    times = [_naive_dt(t.last_message_at) for t in page if t.last_message_at is not None]
+    return bool(times) and all(t is not None and t < cut for t in times)
+
+
 class PlaywrightInstagramSource:
     """InstagramSource backed by a logged-in headless browser."""
 
@@ -317,15 +328,23 @@ class PlaywrightInstagramSource:
             params = {"min_id": next_min_id}
         return comments
 
-    def get_dm_threads(self, progress: Any = None) -> list[DmThread]:
+    def get_dm_threads(
+        self, progress: Any = None, since: datetime | None = None
+    ) -> list[DmThread]:
         our_pk = self.current_user_pk()
         threads: list[DmThread] = []
         params: dict[str, Any] = {"thread_message_limit": 20, "limit": 20}
+        cut = _naive_dt(since)
         for _ in range(20):
             data = self._get("/api/v1/direct_v2/inbox/", params)
-            threads.extend(parse_inbox(data, our_pk))
+            page = parse_inbox(data, our_pk)
+            threads.extend(page)
             if progress is not None:
                 progress(len(threads), None, f"{len(threads)} hilos de DM")
+            # Inbox is ordered by recent activity: once a page's oldest thread is
+            # older than the cutoff, everything beyond is stale — stop early.
+            if cut is not None and _page_older_than(page, cut):
+                break
             inbox = data.get("inbox") or {}
             if not inbox.get("has_older"):
                 break

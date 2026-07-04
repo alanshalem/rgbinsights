@@ -8,6 +8,7 @@ from app.api.schemas import SyncResultOut
 from app.application.tasks import registry as tasks
 from app.application.use_cases import SyncDmsUseCase
 from app.domain.result import Err
+from app.infrastructure.config.settings import Settings, get_settings
 from app.infrastructure.instagram.base import InstagramSource
 
 router = APIRouter(prefix="/sync", tags=["sync"])
@@ -15,11 +16,15 @@ router = APIRouter(prefix="/sync", tags=["sync"])
 
 @router.post("/dms", response_model=SyncResultOut)
 def sync_dms(
+    force: bool = False,
     session: Session = Depends(session_dep),
     source: InstagramSource = Depends(source_dep),
+    settings: Settings = Depends(get_settings),
 ) -> SyncResultOut:
     with tasks.track("sync", "Sincronizando DMs") as task:
-        result = SyncDmsUseCase(source, session).execute(task.progress)
+        result = SyncDmsUseCase(source, session).execute(
+            task.progress, force=force, incremental=settings.dm_incremental
+        )
         if isinstance(result, Err):
             task.fail(result.message or result.code.value)
             raise_for_err(result)

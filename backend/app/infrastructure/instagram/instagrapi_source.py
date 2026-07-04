@@ -207,7 +207,9 @@ class InstagrapiInstagramSource:
             )
         return comments
 
-    def get_dm_threads(self, progress: object | None = None) -> list[DmThread]:
+    def get_dm_threads(
+        self, progress: object | None = None, since: datetime | None = None
+    ) -> list[DmThread]:
         client = self._login()
         self._budget.spend()
         threads: list[DmThread] = []

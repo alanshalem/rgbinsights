@@ -123,6 +123,16 @@ class ActivityLog(SQLModel, table=True):
     created_at: datetime
 
 
+class AppState(SQLModel, table=True):
+    """Tiny key→value store for singletons (e.g. last-followers-sync timestamp),
+    so cache/TTL decisions survive restarts without a dedicated table each."""
+
+    __tablename__ = "app_state"
+
+    key: str = Field(primary_key=True)
+    value: str
+
+
 class CampaignTarget(SQLModel, table=True):
     __tablename__ = "campaign_targets"
 

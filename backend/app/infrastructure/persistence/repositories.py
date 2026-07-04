@@ -200,3 +200,39 @@ class EventRepository:
             if row is not None:
                 counts[row] = counts.get(row, 0) + 1
         return counts
+
+    def last_scanned(self) -> dict[int, datetime]:
+        """event_id -> most recent post scan (for the 'posts hace Xh' hint)."""
+        latest: dict[int, datetime] = {}
+        for event_id, scanned in self.session.exec(
+            select(models.Post.event_id, models.Post.last_scanned_at)
+        ):
+            if event_id is None or scanned is None:
+                continue
+            if event_id not in latest or scanned > latest[event_id]:
+                latest[event_id] = scanned
+        return latest
+
+
+class AppStateRepository:
+    """Persisted singletons (timestamps) for cache/TTL decisions."""
+
+    def __init__(self, session: Session) -> None:
+        self.session = session
+
+    def get_dt(self, key: str) -> datetime | None:
+        row = self.session.get(models.AppState, key)
+        if row is None:
+            return None
+        try:
+            return datetime.fromisoformat(row.value)
+        except ValueError:
+            return None
+
+    def set_dt(self, key: str, when: datetime) -> None:
+        row = self.session.get(models.AppState, key)
+        if row is None:
+            row = models.AppState(key=key, value=when.isoformat())
+        else:
+            row.value = when.isoformat()
+        self.session.add(row)

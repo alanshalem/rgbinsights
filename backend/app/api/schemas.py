@@ -48,6 +48,7 @@ class EventOut(BaseModel):
     event_date: datetime
     notes: str | None
     posts_count: int
+    last_scanned_at: datetime | None = None
 
 
 # -- responses ----------------------------------------------------------
@@ -71,11 +72,13 @@ class ScanBatchResultOut(BaseModel):
     results: list[ScanResultOut]
     total_users_found: int
     total_new_users: int
+    skipped: int = 0
 
 
 class SyncResultOut(BaseModel):
     threads_synced: int
     users_touched: int
+    incremental: bool = False
 
 
 class EventRefreshOut(BaseModel):
@@ -179,6 +182,14 @@ class CampaignCreate(SendParamsIn):
 class EnrichResultOut(BaseModel):
     enriched: int
     relations: int
+    relations_cached: bool = False
+
+
+class StatusOut(BaseModel):
+    """Freshness of the shared (global) data, for the 'hace Xh' hints."""
+
+    relationships_synced_at: datetime | None
+    dms_synced_at: datetime | None
 
 
 class EstimateOut(BaseModel):

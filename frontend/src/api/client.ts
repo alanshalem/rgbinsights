@@ -36,6 +36,7 @@ export type Task =
   paths['/tasks']['get']['responses']['200']['content']['application/json'][number];
 export type Activity =
   paths['/activity']['get']['responses']['200']['content']['application/json'][number];
+export type Status = paths['/status']['get']['responses']['200']['content']['application/json'];
 
 type ApiErrorDetail = { code: string; message: string };
 
@@ -118,11 +119,11 @@ export const api = {
   rescanEvent: (eventId: number) =>
     request<ScanBatchResult>(`/events/${eventId}/rescan`, { method: 'POST' }),
 
-  enrichEvent: (eventId: number) =>
-    request<{ enriched: number }>(`/events/${eventId}/enrich`, { method: 'POST' }),
+  enrichEvent: (eventId: number, force = false) =>
+    request<{ enriched: number }>(`/events/${eventId}/enrich${qs({ force })}`, { method: 'POST' }),
 
-  refreshEvent: (eventId: number) =>
-    request<EventRefresh>(`/events/${eventId}/refresh`, { method: 'POST' }),
+  refreshEvent: (eventId: number, force = false) =>
+    request<EventRefresh>(`/events/${eventId}/refresh${qs({ force })}`, { method: 'POST' }),
 
   scanPosts: (urls: string[], eventId?: number) =>
     request<ScanBatchResult>('/scan/posts', {
@@ -130,7 +131,9 @@ export const api = {
       body: JSON.stringify({ urls, event_id: eventId ?? null }),
     }),
 
-  syncDms: () => request<SyncResult>('/sync/dms', { method: 'POST' }),
+  syncDms: (force = false) => request<SyncResult>(`/sync/dms${qs({ force })}`, { method: 'POST' }),
+
+  getStatus: () => request<Status>('/status'),
 
   listPresets: () => request<Preset[]>('/campaigns/presets'),
 
