@@ -121,6 +121,7 @@ def refresh_event(
             "posts": len(scan.value.results),
             "usuarios": scan.value.total_users_found,
             "hilos": sync.value.threads_synced,
+            "relaciones": sync.value.follows_synced,
         }
         out = EventRefreshOut(
             scan=ScanBatchResultOut.model_validate(scan.value, from_attributes=True),

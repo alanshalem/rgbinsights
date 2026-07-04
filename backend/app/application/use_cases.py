@@ -235,18 +235,29 @@ class SyncDmsUseCase:
 
         # Follow relationship for everyone we know, batched (cheap) — powers the
         # "te sigue / mutuo" chip and the safer followers-first campaigns.
+        follows_synced = 0
         try:
             pks = self._users.all_pks()
             if pks:
                 if progress is not None:
                     progress(len(threads), len(threads), "trayendo relaciones (te sigue)…")
-                self._users.set_friendships(self._source.get_friendships(pks))
+                rels = self._source.get_friendships(pks)
+                self._users.set_friendships(rels)
+                follows_synced = len(rels)
+                if follows_synced == 0:
+                    logger.warning("friendship sync returned no relationships (show_many empty)")
         except InstagramError as exc:
             logger.warning("friendship sync skipped: %s", exc)
 
         self._session.commit()
-        logger.info("synced %d DM threads", len(threads))
-        return Ok(SyncResult(threads_synced=len(threads), users_touched=len(threads)))
+        logger.info("synced %d DM threads, %d relationships", len(threads), follows_synced)
+        return Ok(
+            SyncResult(
+                threads_synced=len(threads),
+                users_touched=len(threads),
+                follows_synced=follows_synced,
+            )
+        )
 
 
 class EnrichProfilesUseCase:

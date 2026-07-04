@@ -23,6 +23,9 @@ def sync_dms(
         if isinstance(result, Err):
             task.fail(result.message or result.code.value)
             raise_for_err(result)
-        task.result = {"hilos": result.value.threads_synced}
+        task.result = {
+            "hilos": result.value.threads_synced,
+            "relaciones": result.value.follows_synced,
+        }
         out = SyncResultOut.model_validate(result.value, from_attributes=True)
     return out

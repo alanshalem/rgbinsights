@@ -36,6 +36,7 @@ class ScanBatchResult:
 class SyncResult:
     threads_synced: int
     users_touched: int
+    follows_synced: int = 0  # how many follow-relationships were fetched
 
 
 @dataclass(frozen=True, slots=True)
