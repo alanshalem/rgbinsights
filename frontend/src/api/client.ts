@@ -32,6 +32,8 @@ export type CampaignCreate =
   paths['/events/{event_id}/campaign']['post']['requestBody']['content']['application/json'];
 export type MessageSample =
   paths['/events/{event_id}/campaign/test']['post']['responses']['200']['content']['application/json'];
+export type Task =
+  paths['/tasks']['get']['responses']['200']['content']['application/json'][number];
 
 type ApiErrorDetail = { code: string; message: string };
 
@@ -148,4 +150,8 @@ export const api = {
   stopCampaign: (id: number) => request<Campaign>(`/campaigns/${id}/stop`, { method: 'POST' }),
 
   resumeCampaign: (id: number) => request<Campaign>(`/campaigns/${id}/resume`, { method: 'POST' }),
+
+  listTasks: () => request<Task[]>('/tasks'),
+
+  activeCampaign: () => request<Campaign | null>('/campaigns/active'),
 };

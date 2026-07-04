@@ -7,6 +7,7 @@ import { FiestaModal } from './components/FiestaModal';
 import { Manual } from './components/Manual';
 import { PostsDrawer } from './components/PostsDrawer';
 import { ScanBar } from './components/ScanBar';
+import { Toasts } from './components/Toasts';
 import { UsersTable } from './components/UsersTable';
 import { TrafficDot } from './components/TrafficChip';
 import { LIGHTS, LIGHT_LABEL } from './lib/user';
@@ -291,6 +292,7 @@ export default function App() {
           onClose={() => setShowCampaign(false)}
         />
       )}
+      <Toasts />
     </div>
   );
 }

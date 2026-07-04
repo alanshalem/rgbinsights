@@ -115,3 +115,17 @@ export function useResumeCampaign() {
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['campaign'] }),
   });
 }
+
+// -- toasts (live task/campaign progress) ----------------------------------
+
+export function useTasks() {
+  return useQuery({ queryKey: ['tasks'], queryFn: () => api.listTasks(), refetchInterval: 1500 });
+}
+
+export function useActiveCampaign() {
+  return useQuery({
+    queryKey: ['activeCampaign'],
+    queryFn: () => api.activeCampaign(),
+    refetchInterval: (q) => (q.state.data?.status === 'running' ? 4000 : 8000),
+  });
+}
