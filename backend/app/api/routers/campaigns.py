@@ -44,8 +44,15 @@ def _params(body: SendParamsIn) -> camp.SendParams:
     )
 
 
-def _reds(session: Session, event_id: int) -> list[UserView]:
-    return ListUsersUseCase(session).execute(event=event_id, status=TrafficLight.RED)
+def _reds(session: Session, event_id: int, body: CampaignCreate) -> list[UserView]:
+    reds = ListUsersUseCase(session).execute(
+        event=event_id,
+        status=TrafficLight.RED,
+        follows=True if body.only_followers else None,
+    )
+    if body.followers_first:
+        reds = sorted(reds, key=lambda u: (0 if u.follows_us else 1, -(u.follower_count or 0)))
+    return reds
 
 
 def _require_event(session: Session, event_id: int) -> None:
@@ -74,7 +81,7 @@ def preview(
 ) -> CampaignPreviewOut:
     _require_event(session, event_id)
     params = _params(body)
-    reds = _reds(session, event_id)
+    reds = _reds(session, event_id, body)
     est = camp.estimate(len(reds), params)
     samples = [
         MessageSample(
@@ -101,7 +108,7 @@ def test_send(
 ) -> MessageSample:
     """Send ONE real DM to the first red — verify it lands before the batch."""
     _require_event(session, event_id)
-    reds = _reds(session, event_id)
+    reds = _reds(session, event_id, body)
     if not reds:
         raise HTTPException(422, detail={"code": "bad_request", "message": "no hay usuarios rojos"})
     target = reds[0]
@@ -129,7 +136,7 @@ def create_campaign(
             detail={"code": "conflict", "message": "ya hay una campaña activa; pausala o esperá"},
         )
 
-    reds = _reds(session, event_id)
+    reds = _reds(session, event_id, body)
     if not reds:
         raise HTTPException(422, detail={"code": "bad_request", "message": "no hay usuarios rojos"})
 

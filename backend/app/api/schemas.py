@@ -99,6 +99,15 @@ class UserOut(BaseModel):
     action_url: str
     last_message_at: datetime | None
     engagement_count: int
+    follows_us: bool | None
+    we_follow: bool | None
+    follower_count: int | None
+    is_verified: bool
+    is_business: bool
+    biography: str | None
+    event_engaged: int
+    event_posts_total: int
+    last_engaged_at: datetime | None
     engagements: list[UserEngagementOut]
 
 
@@ -142,6 +151,12 @@ class SendParamsIn(BaseModel):
 
 class CampaignCreate(SendParamsIn):
     templates: list[str]
+    only_followers: bool = False  # DM only users who follow us (safest)
+    followers_first: bool = False  # order followers/mutuals first
+
+
+class EnrichResultOut(BaseModel):
+    enriched: int
 
 
 class EstimateOut(BaseModel):

@@ -35,6 +35,15 @@ _ADDED_COLUMNS: dict[str, dict[str, str]] = {
         "last_outgoing_at": "DATETIME",
         "last_incoming_at": "DATETIME",
     },
+    "users": {
+        "follows_us": "BOOLEAN",
+        "we_follow": "BOOLEAN",
+        "follower_count": "INTEGER",
+        "is_verified": "BOOLEAN DEFAULT 0",
+        "is_business": "BOOLEAN DEFAULT 0",
+        "biography": "TEXT",
+        "profile_synced_at": "DATETIME",
+    },
 }
 
 

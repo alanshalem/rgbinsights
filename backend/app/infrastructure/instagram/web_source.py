@@ -23,7 +23,15 @@ from urllib.parse import unquote
 
 import requests
 
-from app.domain.entities import Comment, DmMessage, DmThread, IgUser, Post
+from app.domain.entities import (
+    Comment,
+    DmMessage,
+    DmThread,
+    Friendship,
+    IgUser,
+    Post,
+    ProfileInfo,
+)
 from app.infrastructure.config.settings import Settings
 from app.infrastructure.instagram.errors import (
     ChallengeRequiredError,
@@ -281,6 +289,12 @@ class WebInstagramSource:
 
     def send_dm(self, user_pk: str, text: str) -> None:
         raise SendNotSupportedError("La fuente 'web' no envía DMs; usá IG_SOURCE=playwright.")
+
+    def get_friendships(self, user_pks: list[str]) -> dict[str, Friendship]:
+        raise SendNotSupportedError("La fuente 'web' no trae relaciones; usá IG_SOURCE=playwright.")
+
+    def get_profile(self, username: str) -> ProfileInfo:
+        raise SendNotSupportedError("La fuente 'web' no enriquece; usá IG_SOURCE=playwright.")
 
     def current_user_pk(self) -> str:
         return pk_from_sessionid(self._settings.ig_sessionid)

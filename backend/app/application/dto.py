@@ -56,7 +56,16 @@ class UserView:
     thread_id: str | None
     action_url: str
     last_message_at: datetime | None
-    engagement_count: int = 0  # distinct posts engaged (fan-score)
+    engagement_count: int = 0  # distinct posts engaged (fan-score, global)
+    follows_us: bool | None = None
+    we_follow: bool | None = None
+    follower_count: int | None = None
+    is_verified: bool = False
+    is_business: bool = False
+    biography: str | None = None
+    event_engaged: int = 0  # posts of THIS fiesta this user engaged
+    event_posts_total: int = 0  # posts in THIS fiesta
+    last_engaged_at: datetime | None = None
     engagements: list[UserEngagement] = field(default_factory=list)
 
 

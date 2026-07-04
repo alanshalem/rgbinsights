@@ -17,7 +17,15 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from app.domain.entities import Comment, DmMessage, DmThread, IgUser, Post
+from app.domain.entities import (
+    Comment,
+    DmMessage,
+    DmThread,
+    Friendship,
+    IgUser,
+    Post,
+    ProfileInfo,
+)
 from app.infrastructure.config.settings import Settings
 from app.infrastructure.instagram.errors import (
     ChallengeRequiredError,
@@ -148,6 +156,31 @@ class InstagrapiInstagramSource:
             client.direct_send(text, user_ids=[int(user_pk)])
         except Exception as exc:
             raise SendBlockedError(f"envío rechazado: {exc}") from exc
+
+    def get_friendships(self, user_pks: list[str]) -> dict[str, Friendship]:
+        client = self._login()
+        self._budget.spend()
+        raw = client.friendships_show_many([int(pk) for pk in user_pks])
+        return {
+            str(pk): Friendship(following=bool(st.following), followed_by=bool(st.followed_by))
+            for pk, st in raw.items()
+        }
+
+    def get_profile(self, username: str) -> ProfileInfo:
+        client = self._login()
+        self._budget.spend()
+        u = client.user_info_by_username(username)
+        return ProfileInfo(
+            pk=str(u.pk),
+            username=u.username,
+            full_name=u.full_name or "",
+            follower_count=u.follower_count,
+            is_verified=bool(u.is_verified),
+            is_business=bool(getattr(u, "is_business", False)),
+            biography=u.biography or "",
+            is_private=bool(u.is_private),
+            profile_pic_url=str(u.profile_pic_url) if u.profile_pic_url else None,
+        )
 
     def current_user_pk(self) -> str:
         client = self._login()

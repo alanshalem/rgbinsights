@@ -53,6 +53,29 @@ class DmMessage:
 
 
 @dataclass(frozen=True, slots=True)
+class Friendship:
+    """Follow relationship with a user, from our account's perspective."""
+
+    following: bool  # we follow them
+    followed_by: bool  # they follow us
+
+
+@dataclass(frozen=True, slots=True)
+class ProfileInfo:
+    """Richer profile fields (follower count, verified, bio) for prioritizing."""
+
+    pk: str
+    username: str
+    full_name: str
+    follower_count: int | None
+    is_verified: bool
+    is_business: bool
+    biography: str
+    is_private: bool
+    profile_pic_url: str | None
+
+
+@dataclass(frozen=True, slots=True)
 class DmThread:
     """A DM thread with the *other* participant and its messages.
 

@@ -10,7 +10,7 @@ from datetime import datetime
 
 from sqlmodel import Session, col, select
 
-from app.domain.entities import EngagementType, IgUser, Post
+from app.domain.entities import EngagementType, Friendship, IgUser, Post, ProfileInfo
 from app.infrastructure.persistence import models
 
 
@@ -42,6 +42,39 @@ class UserRepository:
         row.last_seen_at = now
         self.session.add(row)
         return False
+
+    def all_pks(self) -> list[str]:
+        return list(self.session.exec(select(models.User.pk)))
+
+    def set_friendships(self, rels: dict[str, Friendship]) -> None:
+        for pk, fr in rels.items():
+            row = self.session.get(models.User, pk)
+            if row is not None:
+                row.follows_us = fr.followed_by
+                row.we_follow = fr.following
+                self.session.add(row)
+
+    def set_profile(self, pk: str, profile: ProfileInfo, now: datetime) -> None:
+        row = self.session.get(models.User, pk)
+        if row is None:
+            return
+        row.follower_count = profile.follower_count
+        row.is_verified = profile.is_verified
+        row.is_business = profile.is_business
+        row.biography = profile.biography
+        if profile.profile_pic_url:
+            row.profile_pic_url = profile.profile_pic_url
+        row.profile_synced_at = now
+        self.session.add(row)
+
+    def unenriched(self, pks: list[str]) -> list[models.User]:
+        """Users (from the given pks) whose profile hasn't been fetched yet."""
+        rows = []
+        for pk in pks:
+            row = self.session.get(models.User, pk)
+            if row is not None and row.profile_synced_at is None:
+                rows.append(row)
+        return rows
 
 
 class PostRepository:

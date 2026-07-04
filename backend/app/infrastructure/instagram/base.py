@@ -9,7 +9,14 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
-from app.domain.entities import Comment, DmThread, IgUser, Post
+from app.domain.entities import (
+    Comment,
+    DmThread,
+    Friendship,
+    IgUser,
+    Post,
+    ProfileInfo,
+)
 
 
 @runtime_checkable
@@ -33,4 +40,12 @@ class InstagramSource(Protocol):
     def send_dm(self, user_pk: str, text: str) -> None:
         """Send a DM. Raises SendBlockedError if Instagram refuses (spam /
         feedback_required), SendNotSupportedError if the source can't send."""
+        ...
+
+    def get_friendships(self, user_pks: list[str]) -> dict[str, Friendship]:
+        """Follow status for many users at once (empty if unavailable)."""
+        ...
+
+    def get_profile(self, username: str) -> ProfileInfo:
+        """Richer profile fields (follower count, verified, bio)."""
         ...

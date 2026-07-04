@@ -17,8 +17,10 @@ from app.domain.entities import (
     Comment,
     DmMessage,
     DmThread,
+    Friendship,
     IgUser,
     Post,
+    ProfileInfo,
 )
 from app.infrastructure.instagram.errors import PostNotFoundError
 
@@ -58,6 +60,27 @@ class FakeInstagramSource:
 
     def send_dm(self, user_pk: str, text: str) -> None:
         self.sent.append((user_pk, text))
+
+    def get_friendships(self, user_pks: list[str]) -> dict[str, Friendship]:
+        # lucia follows us; tomas is mutual; others neither.
+        rel = {
+            "101": Friendship(following=False, followed_by=True),
+            "102": Friendship(following=True, followed_by=True),
+        }
+        return {pk: rel.get(pk, Friendship(following=False, followed_by=False)) for pk in user_pks}
+
+    def get_profile(self, username: str) -> ProfileInfo:
+        return ProfileInfo(
+            pk="0",
+            username=username,
+            full_name=username.title(),
+            follower_count=1234,
+            is_verified=False,
+            is_business=False,
+            biography="dj / productor",
+            is_private=False,
+            profile_pic_url=None,
+        )
 
     def current_user_pk(self) -> str:
         return _OUR_PK

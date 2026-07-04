@@ -221,9 +221,46 @@ class SyncDmsUseCase:
                 synced_at=now,
             )
 
+        # Follow relationship for everyone we know, batched (cheap) — powers the
+        # "te sigue / mutuo" chip and the safer followers-first campaigns.
+        try:
+            pks = self._users.all_pks()
+            if pks:
+                self._users.set_friendships(self._source.get_friendships(pks))
+        except InstagramError as exc:
+            logger.warning("friendship sync skipped: %s", exc)
+
         self._session.commit()
         logger.info("synced %d DM threads", len(threads))
         return Ok(SyncResult(threads_synced=len(threads), users_touched=len(threads)))
+
+
+class EnrichProfilesUseCase:
+    """Fetch richer profile fields (follower count, verified, bio) per user.
+
+    Costly (one call per user), so it only touches users not yet enriched and is
+    throttled by the source. Meant to run on demand for a fiesta's users.
+    """
+
+    def __init__(self, source: InstagramSource, session: Session) -> None:
+        self._source = source
+        self._session = session
+        self._users = UserRepository(session)
+
+    def execute(self, pks: list[str], limit: int = 200) -> Result[int]:
+        pending = self._users.unenriched(pks)[:limit]
+        now = _now()
+        enriched = 0
+        for user in pending:
+            try:
+                profile = self._source.get_profile(user.username)
+            except InstagramError as exc:
+                logger.warning("enrich failed for @%s: %s", user.username, exc)
+                return _map_error(exc)
+            self._users.set_profile(user.pk, profile, now)
+            enriched += 1
+        self._session.commit()
+        return Ok(enriched)
 
 
 def _naive(dt: datetime | None) -> datetime | None:
@@ -249,10 +286,11 @@ class ListUsersUseCase:
         status: TrafficLight | None = None,
         search: str | None = None,
         order: str = "status",
+        follows: bool | None = None,
         limit: int | None = None,
         offset: int = 0,
     ) -> list[UserView]:
-        views = self._sort(self._build(event, post, status, search), order)
+        views = self._sort(self._build(event, post, status, search, follows), order)
         views = views[offset:]
         if limit is not None:
             views = views[:limit]
@@ -263,8 +301,9 @@ class ListUsersUseCase:
         event: int | None = None,
         post: str | None = None,
         search: str | None = None,
+        follows: bool | None = None,
     ) -> StatusCounts:
-        views = self._build(event, post, None, search)
+        views = self._build(event, post, None, search, follows)
         by = {"red": 0, "yellow": 0, "green": 0}
         for v in views:
             by[v.traffic_light.value] += 1
@@ -278,9 +317,11 @@ class ListUsersUseCase:
         post: str | None,
         status: TrafficLight | None,
         search: str | None,
+        follows: bool | None = None,
     ) -> list[UserView]:
         cutoff = self._cutoff(event)
         post_filter = self._post_filter(event, post)
+        event_posts_total = len(post_filter) if event is not None and post_filter is not None else 0
         engagements = self._load_engagements(post_filter)
         if not engagements:
             return []
@@ -299,6 +340,9 @@ class ListUsersUseCase:
             ).lower():
                 continue
 
+            if follows is True and user.follows_us is not True:
+                continue
+
             thread = threads.get(user_pk)
             light = _thread_light(thread, cutoff)
             if status is not None and light != status:
@@ -309,6 +353,7 @@ class ListUsersUseCase:
                 if thread is not None
                 else f"https://instagram.com/{user.username}/"
             )
+            engaged_times = [e.created_at for e in rows if e.created_at is not None]
             views.append(
                 UserView(
                     pk=user.pk,
@@ -321,6 +366,15 @@ class ListUsersUseCase:
                     action_url=action_url,
                     last_message_at=thread.last_message_at if thread is not None else None,
                     engagement_count=fan.get(user_pk, 0),
+                    follows_us=user.follows_us,
+                    we_follow=user.we_follow,
+                    follower_count=user.follower_count,
+                    is_verified=user.is_verified,
+                    is_business=user.is_business,
+                    biography=user.biography,
+                    event_engaged=len({e.post_media_pk for e in rows}),
+                    event_posts_total=event_posts_total,
+                    last_engaged_at=max(engaged_times) if engaged_times else None,
                     engagements=[
                         UserEngagement(
                             post_media_pk=e.post_media_pk,
@@ -372,6 +426,8 @@ class ListUsersUseCase:
         rank = {TrafficLight.RED: 0, TrafficLight.YELLOW: 1, TrafficLight.GREEN: 2}
         if order == "fans":
             return sorted(views, key=lambda v: (-v.engagement_count, v.username.lower()))
+        if order == "followers":
+            return sorted(views, key=lambda v: (-(v.follower_count or 0), v.username.lower()))
         if order == "username":
             return sorted(views, key=lambda v: v.username.lower())
         return sorted(views, key=lambda v: (rank[v.traffic_light], v.username.lower()))

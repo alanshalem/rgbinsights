@@ -26,7 +26,7 @@ from concurrent.futures import Future
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlencode
 
-from app.domain.entities import Comment, DmThread, IgUser, Post
+from app.domain.entities import Comment, DmThread, Friendship, IgUser, Post, ProfileInfo
 from app.infrastructure.config.settings import Settings
 from app.infrastructure.instagram.chrome_cdp import (
     cdp_url,
@@ -206,6 +206,35 @@ def _send_dm(page: Page, user_pk: str, text: str) -> None:
     raise SendBlockedError(str(data.get("message") or f"status {status}"))
 
 
+def _friendship_job(csv: str) -> _Job:
+    return lambda page: _show_many(page, csv)
+
+
+def _show_many(page: Page, user_ids_csv: str) -> dict[str, Any]:
+    """POST friendships/show_many/ for a batch of user ids."""
+    result = page.evaluate(
+        """async ({ csv, appId }) => {
+            const headers = {
+                'X-IG-App-ID': appId,
+                'content-type': 'application/x-www-form-urlencoded',
+            };
+            const m = document.cookie.match(/csrftoken=([^;]+)/);
+            if (m) headers['X-CSRFToken'] = m[1];
+            const r = await fetch('/api/v1/friendships/show_many/', {
+                method: 'POST', headers, credentials: 'include',
+                body: 'user_ids=' + encodeURIComponent(csv),
+            });
+            const body = await r.text();
+            return { ct: r.headers.get('content-type') || '', body };
+        }""",
+        {"csv": user_ids_csv, "appId": _WEB_APP_ID},
+    )
+    if "json" not in str(result["ct"]):
+        return {}
+    data: dict[str, Any] = json.loads(str(result["body"]))
+    return data
+
+
 class PlaywrightInstagramSource:
     """InstagramSource backed by a logged-in headless browser."""
 
@@ -237,6 +266,36 @@ class PlaywrightInstagramSource:
 
     def send_dm(self, user_pk: str, text: str) -> None:
         self._worker.submit(lambda page: _send_dm(page, user_pk, text))
+
+    def get_friendships(self, user_pks: list[str]) -> dict[str, Friendship]:
+        out: dict[str, Friendship] = {}
+        for i in range(0, len(user_pks), 100):
+            csv = ",".join(user_pks[i : i + 100])
+            self._throttle()
+            data = self._worker.submit(_friendship_job(csv))
+            statuses = data.get("friendship_statuses") or {}
+            for pk, st in statuses.items():
+                out[str(pk)] = Friendship(
+                    following=bool(st.get("following")),
+                    followed_by=bool(st.get("followed_by")),
+                )
+        return out
+
+    def get_profile(self, username: str) -> ProfileInfo:
+        data = self._get("/api/v1/users/web_profile_info/", {"username": username})
+        user = (data.get("data") or {}).get("user") or {}
+        followed_by = user.get("edge_followed_by") or {}
+        return ProfileInfo(
+            pk=str(user.get("id", "")),
+            username=str(user.get("username", username)),
+            full_name=str(user.get("full_name", "") or ""),
+            follower_count=followed_by.get("count"),
+            is_verified=bool(user.get("is_verified")),
+            is_business=bool(user.get("is_business_account")),
+            biography=str(user.get("biography", "") or ""),
+            is_private=bool(user.get("is_private")),
+            profile_pic_url=user.get("profile_pic_url_hd") or user.get("profile_pic_url"),
+        )
 
     def current_user_pk(self) -> str:
         def read_pk(page: Page) -> str:

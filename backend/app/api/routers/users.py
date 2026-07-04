@@ -17,7 +17,8 @@ def list_users(
     post: str | None = Query(default=None, description="filter to a post media_pk"),
     status: TrafficLight | None = Query(default=None),
     search: str | None = Query(default=None, description="username / full name contains"),
-    order: str = Query(default="status", pattern="^(username|status|fans)$"),
+    order: str = Query(default="status", pattern="^(username|status|fans|followers)$"),
+    follows: bool | None = Query(default=None, description="true = solo los que te siguen"),
     limit: int | None = Query(default=None, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
     session: Session = Depends(session_dep),
@@ -28,6 +29,7 @@ def list_users(
         status=status,
         search=search,
         order=order,
+        follows=follows,
         limit=limit,
         offset=offset,
     )
@@ -39,7 +41,10 @@ def user_counts(
     event: int | None = Query(default=None),
     post: str | None = Query(default=None),
     search: str | None = Query(default=None),
+    follows: bool | None = Query(default=None),
     session: Session = Depends(session_dep),
 ) -> StatusCountsOut:
-    counts = ListUsersUseCase(session).counts(event=event, post=post, search=search)
+    counts = ListUsersUseCase(session).counts(
+        event=event, post=post, search=search, follows=follows
+    )
     return StatusCountsOut.model_validate(counts, from_attributes=True)

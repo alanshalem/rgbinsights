@@ -23,6 +23,15 @@ class User(SQLModel, table=True):
     is_private: bool = False
     first_seen_at: datetime
     last_seen_at: datetime
+    # Follow relationship (from show_many, filled on sync).
+    follows_us: bool | None = None
+    we_follow: bool | None = None
+    # Richer profile (from get_profile, filled by the enrich step).
+    follower_count: int | None = None
+    is_verified: bool = False
+    is_business: bool = False
+    biography: str | None = None
+    profile_synced_at: datetime | None = None
 
 
 class Event(SQLModel, table=True):

@@ -153,6 +153,22 @@ def test_semaforo_per_fiesta_cutoff(session: Session) -> None:
     assert counts.total == len(fiesta_views)
 
 
+def test_follow_status_synced_and_filtered(session: Session) -> None:
+    source = FakeInstagramSource()
+    ScanPostUseCase(source, session).execute(POST_A_URL)
+    ScanPostUseCase(source, session).execute("https://instagram.com/p/Cdef456/")
+    SyncDmsUseCase(source, session).execute()  # also fills follow status
+
+    views = {v.username: v for v in ListUsersUseCase(session).execute()}
+    assert views["lucia.dj"].follows_us is True
+    assert views["tomas_beats"].follows_us is True and views["tomas_beats"].we_follow is True
+    assert views["sofi.raver"].follows_us is False
+
+    followers = {v.username for v in ListUsersUseCase(session).execute(follows=True)}
+    assert "lucia.dj" in followers  # follows us
+    assert "sofi.raver" not in followers  # doesn't
+
+
 def test_scan_by_date_range(session: Session) -> None:
     source = FakeInstagramSource()
     use_case = ScanPostsUseCase(source, session, recent_limit=50)

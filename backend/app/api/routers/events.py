@@ -7,6 +7,7 @@ from sqlmodel import Session
 
 from app.api.deps import raise_for_err, session_dep, source_dep
 from app.api.schemas import (
+    EnrichResultOut,
     EventCreate,
     EventOut,
     EventRefreshOut,
@@ -14,7 +15,12 @@ from app.api.schemas import (
     ScanBatchResultOut,
     SyncResultOut,
 )
-from app.application.use_cases import RescanEventUseCase, SyncDmsUseCase
+from app.application.use_cases import (
+    EnrichProfilesUseCase,
+    ListUsersUseCase,
+    RescanEventUseCase,
+    SyncDmsUseCase,
+)
 from app.domain.result import Err
 from app.infrastructure.config.settings import Settings, get_settings
 from app.infrastructure.instagram.base import InstagramSource
@@ -109,3 +115,19 @@ def refresh_event(
         scan=ScanBatchResultOut.model_validate(scan.value, from_attributes=True),
         sync=SyncResultOut.model_validate(sync.value, from_attributes=True),
     )
+
+
+@router.post("/{event_id}/enrich", response_model=EnrichResultOut)
+def enrich_event(
+    event_id: int,
+    session: Session = Depends(session_dep),
+    source: InstagramSource = Depends(source_dep),
+) -> EnrichResultOut:
+    """Fetch follower count / verified / bio for the fiesta's users (slow, opt-in)."""
+    if EventRepository(session).get(event_id) is None:
+        raise HTTPException(status_code=404, detail={"code": "not_found", "message": "fiesta"})
+    pks = [u.pk for u in ListUsersUseCase(session).execute(event=event_id)]
+    result = EnrichProfilesUseCase(source, session).execute(pks)
+    if isinstance(result, Err):
+        raise_for_err(result)
+    return EnrichResultOut(enriched=result.value)
