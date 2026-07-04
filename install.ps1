@@ -1,10 +1,10 @@
-# RGB Semáforo — instalador de un click para Windows.
+# RGB Semaforo - instalador de un click para Windows.
 #
-# Para el cliente: bajás ESTE archivo, click derecho -> "Ejecutar con PowerShell".
-# La primera vez clona el proyecto desde GitHub; después lo actualiza. Al final
-# levanta la app (start.ps1). No necesitás saber programar.
+# Para el cliente: bajas ESTE archivo, click derecho -> "Ejecutar con PowerShell".
+# La primera vez clona el proyecto desde GitHub; despues lo actualiza. Al final
+# levanta la app (start.ps1). No necesitas saber programar.
 #
-# Para actualizar más adelante también podés simplemente correr start.ps1:
+# Para actualizar mas adelante tambien podes simplemente correr start.ps1:
 # arranca haciendo 'git pull' solo.
 
 $ErrorActionPreference = 'Stop'
@@ -19,23 +19,23 @@ function Die($m) {
   exit 1
 }
 
-Write-Host "RGB Semáforo — instalador" -ForegroundColor Magenta
+Write-Host "RGB Semaforo - instalador" -ForegroundColor Magenta
 
 # ---------------------------------------------------------------- Git
 Step "Chequeando Git"
 if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
-  Info "No hay Git. Intento instalarlo con winget…"
+  Info "No hay Git. Intento instalarlo con winget..."
   try {
     winget install --id Git.Git -e --source winget --accept-package-agreements --accept-source-agreements
   } catch { }
   if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
-    Die "No pude instalar Git. Instalalo a mano desde https://git-scm.com/download/win y volvé a correr esto."
+    Die "No pude instalar Git. Instalalo a mano desde https://git-scm.com/download/win y volve a correr esto."
   }
 }
 Ok "Git disponible"
 
 # ---------------------------------------------------------------- Clonar / actualizar
-# Si este instalador ya está dentro del repo, lo usamos tal cual; si no, clonamos
+# Si este instalador ya esta dentro del repo, lo usamos tal cual; si no, clonamos
 # en una subcarpeta 'rgbinsights' al lado del instalador.
 if (Test-Path "$PSScriptRoot\.git") {
   $dir = $PSScriptRoot
@@ -55,6 +55,6 @@ Ok "Proyecto en: $dir"
 
 # ---------------------------------------------------------------- Arrancar
 $start = Join-Path $dir 'start.ps1'
-if (-not (Test-Path $start)) { Die "No encontré start.ps1 en $dir." }
-Step "Levantando la app…"
+if (-not (Test-Path $start)) { Die "No encontre start.ps1 en $dir." }
+Step "Levantando la app..."
 & powershell -ExecutionPolicy Bypass -File $start

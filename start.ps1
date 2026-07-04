@@ -1,14 +1,14 @@
-# RGB Semáforo — launcher para Windows.
+# RGB Semaforo - launcher para Windows.
 #
 # Chequea requisitos, se actualiza desde el repo, instala lo que falte y
 # levanta backend + frontend. Al apretar Enter, cierra TODO (las dos ventanas
-# que abrió) y te deja en la carpeta del proyecto.
+# que abrio) y te deja en la carpeta del proyecto.
 #
 # Uso:
 #   Click derecho -> "Ejecutar con PowerShell"
 #   o en una terminal:  powershell -ExecutionPolicy Bypass -File start.ps1
 #
-# No necesitás saber programar: si falta algo, te dice qué instalar.
+# No necesitas saber programar: si falta algo, te dice que instalar.
 
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
@@ -21,18 +21,18 @@ function Ok($m) { Write-Host "OK  $m" -ForegroundColor Green }
 function Step($m) { Write-Host "`n=> $m" -ForegroundColor Cyan }
 function Fail($m) {
   Write-Host "`nX  $m" -ForegroundColor Red
-  Write-Host "`nArreglá eso y volvé a correr start.ps1." -ForegroundColor Yellow
+  Write-Host "`nArregla eso y volve a correr start.ps1." -ForegroundColor Yellow
   Set-Location $root
   Read-Host "`n(Enter para cerrar)"
   exit 1
 }
 
-Write-Host "RGB Semáforo — arranque" -ForegroundColor Magenta
+Write-Host "RGB Semaforo - arranque" -ForegroundColor Magenta
 
 # ---------------------------------------------------------------- Auto-update
-# Traer la última versión del repo. Si no hay git o no hay 'origin', se saltea
-# sin romper: seguís con el código que ya tenés.
-Step "Buscando actualizaciones del código"
+# Traer la ultima version del repo. Si no hay git o no hay 'origin', se saltea
+# sin romper: seguis con el codigo que ya tenes.
+Step "Buscando actualizaciones del codigo"
 if ((Get-Command git -ErrorAction SilentlyContinue) -and (Test-Path "$root\.git")) {
   try {
     $before = (git -C $root rev-parse HEAD 2>$null)
@@ -40,15 +40,15 @@ if ((Get-Command git -ErrorAction SilentlyContinue) -and (Test-Path "$root\.git"
     $after = (git -C $root rev-parse HEAD 2>$null)
     if ($before -and $after -and ($before -ne $after)) {
       $updated = $true
-      Ok "Código actualizado a la última versión."
+      Ok "Codigo actualizado a la ultima version."
     } else {
-      Ok "Ya estabas al día."
+      Ok "Ya estabas al dia."
     }
   } catch {
-    Info "No se pudo actualizar (seguimos con la versión actual)."
+    Info "No se pudo actualizar (seguimos con la version actual)."
   }
 } else {
-  Info "Sin git o sin repo remoto — salteo la actualización."
+  Info "Sin git o sin repo remoto - salteo la actualizacion."
 }
 
 # ---------------------------------------------------------------- Python
@@ -66,7 +66,7 @@ foreach ($cand in @('python', 'py -3')) {
   } catch { }
 }
 if (-not $python) {
-  Fail "No hay Python >= $MIN_PY. Instalalo desde https://www.python.org/downloads/ (tildá 'Add Python to PATH')."
+  Fail "No hay Python >= $MIN_PY. Instalalo desde https://www.python.org/downloads/ (tilda 'Add Python to PATH')."
 }
 $pyExe, $pyArg = $python.Split(' ')
 
@@ -74,11 +74,11 @@ $pyExe, $pyArg = $python.Split(' ')
 Step "Chequeando Node.js (>= $MIN_NODE) y npm"
 try { $nodeVer = (node -v) 2>&1 } catch { $nodeVer = '' }
 if ($nodeVer -notmatch 'v(\d+)\.') {
-  Fail "No hay Node.js. Instalá la version LTS desde https://nodejs.org/"
+  Fail "No hay Node.js. Instala la version LTS desde https://nodejs.org/"
 }
 $nodeMajor = [int]$Matches[1]
 if ($nodeMajor -lt $MIN_NODE) {
-  Fail "Node.js $nodeVer es viejo. Necesito >= $MIN_NODE. Actualizá desde https://nodejs.org/"
+  Fail "Node.js $nodeVer es viejo. Necesito >= $MIN_NODE. Actualiza desde https://nodejs.org/"
 }
 try { $npmVer = (npm -v) 2>&1 } catch { Fail "npm no esta disponible (viene con Node.js)." }
 Ok "Node $nodeVer, npm $npmVer"
@@ -88,10 +88,10 @@ Step "Preparando backend"
 Set-Location "$root\backend"
 $venvPy = "$root\backend\.venv\Scripts\python.exe"
 if (-not (Test-Path $venvPy)) {
-  Info "Creando entorno virtual (.venv)…"
+  Info "Creando entorno virtual (.venv)..."
   & $pyExe $pyArg -m venv .venv
 }
-Info "Instalando dependencias de Python…"
+Info "Instalando dependencias de Python..."
 & $venvPy -m pip install --quiet --upgrade pip
 & $venvPy -m pip install --quiet -r requirements.txt
 if (-not (Test-Path "$root\backend\.env")) {
@@ -105,7 +105,7 @@ Step "Preparando frontend"
 Set-Location "$root\frontend"
 # Reinstalar si faltan deps o si el auto-update trajo cambios (package.json nuevo).
 if ((-not (Test-Path "$root\frontend\node_modules")) -or $updated) {
-  Info "Instalando dependencias de Node (npm install)…"
+  Info "Instalando dependencias de Node (npm install)..."
   npm install --no-fund --no-audit
 }
 Ok "Frontend listo"
@@ -117,7 +117,7 @@ $backendProc = Start-Process powershell -PassThru -ArgumentList @(
   "cd '$root\backend'; & '$venvPy' -m uvicorn app.main:app --port 8000"
 )
 
-Info "Esperando a que el backend responda…"
+Info "Esperando a que el backend responda..."
 $ready = $false
 foreach ($i in 1..30) {
   try {
@@ -141,15 +141,15 @@ Write-Host "`n----------------------------------------------" -ForegroundColor M
 Ok "Todo levantado."
 Info "Frontend:  http://localhost:5173"
 Info "Backend:   http://127.0.0.1:8000  (docs en /docs)"
-Info "Enter acá abajo cierra TODO (backend, frontend y sus ventanas)."
+Info "Enter aca abajo cierra TODO (backend, frontend y sus ventanas)."
 Set-Location $root
 Read-Host "`n(Enter para cerrar todo)"
 
 # ---------------------------------------------------------------- Cierre
-Step "Cerrando la app…"
+Step "Cerrando la app..."
 foreach ($p in @($backendProc, $frontendProc)) {
   if ($p -and -not $p.HasExited) {
-    # /T mata también los hijos (uvicorn / node), /F fuerza el cierre.
+    # /T mata tambien los hijos (uvicorn / node), /F fuerza el cierre.
     taskkill /PID $p.Id /T /F 2>$null | Out-Null
   }
 }
