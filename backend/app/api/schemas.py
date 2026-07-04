@@ -210,6 +210,14 @@ class PresetOut(BaseModel):
     hour_end: int
 
 
+class ResetIn(BaseModel):
+    confirm: str
+
+
+class ResetOut(BaseModel):
+    deleted: dict[str, int]
+
+
 class CampaignOut(BaseModel):
     id: int
     event_id: int

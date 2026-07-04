@@ -163,4 +163,10 @@ export const api = {
   activeCampaign: () => request<Campaign | null>('/campaigns/active'),
 
   listActivity: () => request<Activity[]>('/activity'),
+
+  resetAll: (confirm: string) =>
+    request<{ deleted: Record<string, number> }>('/reset', {
+      method: 'POST',
+      body: JSON.stringify({ confirm }),
+    }),
 };

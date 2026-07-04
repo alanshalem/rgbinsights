@@ -1,4 +1,6 @@
+import { useState } from 'react';
 import { useActivity } from '../api/hooks';
+import { ResetModal } from './ResetModal';
 
 const KIND_LABEL: Record<string, string> = {
   scan: 'Escaneo',
@@ -20,6 +22,7 @@ function fmtTime(iso: string): string {
 export function ActivityPage({ onBack }: { onBack: () => void }) {
   const activity = useActivity();
   const rows = activity.data ?? [];
+  const [showReset, setShowReset] = useState(false);
 
   return (
     <div className="mx-auto max-w-4xl p-4 md:p-6">
@@ -65,6 +68,23 @@ export function ActivityPage({ onBack }: { onBack: () => void }) {
           ))}
         </ul>
       )}
+
+      {/* danger zone */}
+      <div className="mt-10 flex flex-col gap-2 rounded-2xl border border-[var(--color-red)]/40 bg-[var(--color-red)]/5 p-4">
+        <h2 className="font-semibold text-[var(--color-red)]">Zona peligrosa</h2>
+        <p className="text-xs text-[var(--color-muted)]">
+          Borrar todos los datos (fiestas, DMs, relaciones, perfiles, campañas). Empezás de cero. No
+          se puede deshacer.
+        </p>
+        <button
+          onClick={() => setShowReset(true)}
+          className="self-start rounded-lg border border-[var(--color-red)]/60 px-3 py-1.5 text-sm font-semibold text-[var(--color-red)] hover:bg-[var(--color-red)]/10"
+        >
+          Borrar todo…
+        </button>
+      </div>
+
+      {showReset && <ResetModal onClose={() => setShowReset(false)} />}
     </div>
   );
 }

@@ -144,3 +144,12 @@ export function useActivity() {
     refetchInterval: 5000,
   });
 }
+
+/** Danger zone: wipe all data, then refresh every view. */
+export function useResetAll() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (confirm: string) => api.resetAll(confirm),
+    onSuccess: () => void qc.invalidateQueries(),
+  });
+}
