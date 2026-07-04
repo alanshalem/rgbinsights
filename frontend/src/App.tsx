@@ -122,8 +122,9 @@ export default function App() {
             >
               {error.isChallenge ? (
                 <>
-                  <strong>Instagram pide verificación.</strong> La sesión del navegador se venció:
-                  corré <code>python -m app.login_browser</code> y reintentá. {error.message}
+                  <strong>Instagram pide verificación.</strong> La sesión se venció: reconectá desde
+                  el chip <b>IG</b> arriba a la derecha (se abre una ventana para loguearte) y
+                  reintentá. {error.message}
                 </>
               ) : (
                 <>Error: {error.message}</>

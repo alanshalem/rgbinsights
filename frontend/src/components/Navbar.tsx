@@ -1,5 +1,6 @@
 import type { TrafficLight } from '../api/client';
 import { LIGHT_LABEL, LIGHTS } from '../lib/user';
+import { IgSession } from './IgSession';
 import { TrafficDot } from './TrafficChip';
 
 export type Page = 'app' | 'activity' | 'help';
@@ -26,6 +27,7 @@ export function Navbar({
           <img src="/logo.png" alt="RGB Collective" className="h-12 w-auto md:h-16" />
         </button>
         <div className="flex items-center gap-4">
+          <IgSession />
           {page === 'app' && (
             <div className="hidden gap-3 text-sm sm:flex">
               {LIGHTS.map((l) => (

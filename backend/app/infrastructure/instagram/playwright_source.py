@@ -87,6 +87,19 @@ class _BrowserWorker:
         self._queue.put((job, fut))
         return fut.result()
 
+    def stop(self) -> None:
+        """Break the loop, close the browser and kill its Chrome, then join.
+
+        Needed to free the locked profile before a headed login can open it.
+        """
+        with self._lock:
+            thread = self._thread
+            self._thread = None
+        if thread is None:
+            return
+        self._queue.put(None)
+        thread.join(timeout=15)
+
     def _ensure_started(self) -> None:
         with self._lock:
             if self._thread is None:
@@ -228,6 +241,10 @@ class PlaywrightInstagramSource:
 
     def reset_budget(self) -> None:
         self._budget.reset()
+
+    def dispose(self) -> None:
+        """Shut the browser down (used before an in-app login re-opens the profile)."""
+        self._worker.stop()
 
     def _get(self, base: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         self._budget.spend()

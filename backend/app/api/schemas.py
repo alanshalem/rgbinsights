@@ -192,6 +192,20 @@ class StatusOut(BaseModel):
     dms_synced_at: datetime | None
 
 
+class IgStatusOut(BaseModel):
+    """Instagram session health, for the connection chip + reconnect banner."""
+
+    state: str  # connected | disconnected | logging_in
+    pk: str | None
+    last_ok_at: datetime | None
+    demo: bool  # fake source (no real Instagram)
+
+
+class IgLoginOut(BaseModel):
+    opened: bool  # a headed login window is open
+    logged_in: bool  # login completed
+
+
 class EstimateOut(BaseModel):
     per_day: int
     days: int

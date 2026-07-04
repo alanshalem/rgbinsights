@@ -37,6 +37,9 @@ export type Task =
 export type Activity =
   paths['/activity']['get']['responses']['200']['content']['application/json'][number];
 export type Status = paths['/status']['get']['responses']['200']['content']['application/json'];
+export type IgStatus =
+  paths['/ig/status']['get']['responses']['200']['content']['application/json'];
+export type IgLogin = paths['/ig/login']['post']['responses']['200']['content']['application/json'];
 
 type ApiErrorDetail = { code: string; message: string };
 
@@ -134,6 +137,10 @@ export const api = {
   syncDms: (force = false) => request<SyncResult>(`/sync/dms${qs({ force })}`, { method: 'POST' }),
 
   getStatus: () => request<Status>('/status'),
+
+  igStatus: () => request<IgStatus>('/ig/status'),
+  igLogin: () => request<IgLogin>('/ig/login', { method: 'POST' }),
+  igLoginFinish: () => request<IgLogin>('/ig/login/finish', { method: 'POST' }),
 
   listPresets: () => request<Preset[]>('/campaigns/presets'),
 

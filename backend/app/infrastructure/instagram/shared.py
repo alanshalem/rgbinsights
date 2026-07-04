@@ -9,7 +9,24 @@ from app.infrastructure.config.settings import get_settings
 from app.infrastructure.instagram.base import InstagramSource
 from app.infrastructure.instagram.factory import build_source
 
+_current: InstagramSource | None = None
+
 
 @lru_cache
 def get_shared_source(source: str) -> InstagramSource:
-    return build_source(get_settings())
+    global _current
+    _current = build_source(get_settings())
+    return _current
+
+
+def reset_shared_source() -> None:
+    """Dispose the shared browser and forget it, so the next call rebuilds a
+    fresh one. Used around an in-app login: free the locked profile, then let
+    the next Instagram op reconnect to the now-authenticated session."""
+    global _current
+    if _current is not None:
+        dispose = getattr(_current, "dispose", None)
+        if callable(dispose):
+            dispose()
+    _current = None
+    get_shared_source.cache_clear()

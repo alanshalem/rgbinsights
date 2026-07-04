@@ -40,6 +40,15 @@ export function useStatus() {
   return useQuery({ queryKey: ['status'], queryFn: () => api.getStatus() });
 }
 
+/** Instagram session health for the connection chip + reconnect banner. */
+export function useIgStatus() {
+  return useQuery({
+    queryKey: ['ig-status'],
+    queryFn: () => api.igStatus(),
+    refetchInterval: 20000,
+  });
+}
+
 export function useCreateEvent() {
   const refresh = useRefreshAll();
   return useMutation({
