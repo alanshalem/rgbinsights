@@ -243,6 +243,9 @@ class PlaywrightInstagramSource:
         self._worker = _BrowserWorker(settings)
         self._request_count = 0
 
+    def reset_budget(self) -> None:
+        self._request_count = 0
+
     def _throttle(self) -> None:
         """Randomized pause + hard cap per run — be a good citizen."""
         self._request_count += 1

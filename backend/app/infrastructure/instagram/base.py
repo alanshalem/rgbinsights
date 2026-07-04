@@ -49,3 +49,8 @@ class InstagramSource(Protocol):
     def get_profile(self, username: str) -> ProfileInfo:
         """Richer profile fields (follower count, verified, bio)."""
         ...
+
+    def reset_budget(self) -> None:
+        """Reset the per-run request counter. Called at the start of each
+        top-level operation so the cap is per-operation, not per-process."""
+        ...

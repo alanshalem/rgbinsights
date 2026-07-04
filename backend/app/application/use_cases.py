@@ -77,6 +77,7 @@ class ScanPostUseCase:
         self._engagements = EngagementRepository(session)
 
     def execute(self, url: str, event_id: int | None = None) -> Result[ScanResult]:
+        self._source.reset_budget()
         try:
             post = self._source.get_post(url)
             comments = self._source.get_comments(post.media_pk)
@@ -190,6 +191,7 @@ class SyncDmsUseCase:
         self._threads = DmThreadRepository(session)
 
     def execute(self) -> Result[SyncResult]:
+        self._source.reset_budget()
         try:
             our_pk = self._source.current_user_pk()
             threads = self._source.get_dm_threads()
@@ -248,6 +250,7 @@ class EnrichProfilesUseCase:
         self._users = UserRepository(session)
 
     def execute(self, pks: list[str], limit: int = 200) -> Result[int]:
+        self._source.reset_budget()
         pending = self._users.unenriched(pks)[:limit]
         now = _now()
         enriched = 0

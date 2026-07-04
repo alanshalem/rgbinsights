@@ -58,6 +58,9 @@ class FakeInstagramSource:
     def __init__(self) -> None:
         self.sent: list[tuple[str, str]] = []  # (user_pk, text) for tests
 
+    def reset_budget(self) -> None:
+        pass
+
     def send_dm(self, user_pk: str, text: str) -> None:
         self.sent.append((user_pk, text))
 

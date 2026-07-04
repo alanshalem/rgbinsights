@@ -52,6 +52,9 @@ class _RequestBudget:
         self._max_requests = max_requests
         self._count = 0
 
+    def reset(self) -> None:
+        self._count = 0
+
     def spend(self) -> None:
         self._count += 1
         if self._count > self._max_requests:
@@ -148,6 +151,9 @@ class InstagrapiInstagramSource:
         )
 
     # -- port methods ----------------------------------------------------
+
+    def reset_budget(self) -> None:
+        self._budget.reset()
 
     def send_dm(self, user_pk: str, text: str) -> None:
         client = self._login()
