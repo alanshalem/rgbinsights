@@ -19,6 +19,7 @@ from datetime import UTC, datetime
 
 from sqlmodel import Session, select
 
+from app.application import tasks
 from app.infrastructure.config.settings import get_settings
 from app.infrastructure.instagram.errors import (
     ChallengeRequiredError,
@@ -108,6 +109,9 @@ def _run(campaign_id: int) -> None:
                 campaign.status = "done"
                 session.add(campaign)
                 session.commit()
+                tasks.log_activity(
+                    "campaign", "done", f"campaña terminada ({campaign.sent_today} hoy)"
+                )
                 return
 
             delay = random.uniform(campaign.delay_min, campaign.delay_max)
@@ -120,6 +124,7 @@ def _run(campaign_id: int) -> None:
             outcome, error = "sent", None
         except (SendBlockedError, ChallengeRequiredError) as exc:
             _mark_blocked(campaign_id, str(exc))
+            tasks.log_activity("campaign", "error", f"campaña frenada: {exc}")
             logger.warning("campaign %d blocked: %s", campaign_id, exc)
             return
         except InstagramError as exc:

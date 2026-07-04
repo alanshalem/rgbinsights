@@ -67,6 +67,7 @@ class _Registry:
                 task.status = "done"
         finally:
             task.finished_at = datetime.now(UTC)
+            _log_activity(task)
 
     def list(self) -> list[Task]:
         with self._lock:
@@ -86,3 +87,31 @@ class _Registry:
 
 
 registry = _Registry()
+
+
+def _summary(result: dict[str, Any]) -> str:
+    return " · ".join(f"{v} {k}" for k, v in result.items())
+
+
+def log_activity(kind: str, status: str, message: str) -> None:
+    """Persist one activity row (best-effort; never breaks the caller)."""
+    from sqlmodel import Session
+
+    from app.infrastructure.persistence import models
+    from app.infrastructure.persistence.db import engine
+
+    try:
+        with Session(engine) as session:
+            session.add(
+                models.ActivityLog(
+                    kind=kind, status=status, message=message, created_at=datetime.now(UTC)
+                )
+            )
+            session.commit()
+    except Exception:  # noqa: BLE001 — logging must not break the operation
+        pass
+
+
+def _log_activity(task: Task) -> None:
+    message = task.error or _summary(task.result) or task.label
+    log_activity(task.kind, task.status, message)

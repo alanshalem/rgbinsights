@@ -47,4 +47,4 @@ app.include_router(scan.router)
 app.include_router(sync.router)
 app.include_router(users.router)
 app.include_router(posts.router)
-app.include_router(tasks.router)
+app.include_router(tasks.router)  # /tasks + /activity

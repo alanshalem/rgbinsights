@@ -110,6 +110,19 @@ class Campaign(SQLModel, table=True):
     created_at: datetime
 
 
+class ActivityLog(SQLModel, table=True):
+    """One row per finished operation (scan/sync/enrich/campaign) — the history
+    shown in the Actividad view, so you can see what ran without the terminal."""
+
+    __tablename__ = "activity_log"
+
+    id: int | None = Field(default=None, primary_key=True)
+    kind: str
+    status: str  # done | error
+    message: str
+    created_at: datetime
+
+
 class CampaignTarget(SQLModel, table=True):
     __tablename__ = "campaign_targets"
 

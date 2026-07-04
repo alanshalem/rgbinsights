@@ -151,6 +151,14 @@ class TaskOut(BaseModel):
     error: str | None
 
 
+class ActivityOut(BaseModel):
+    id: int
+    kind: str
+    status: str
+    message: str
+    created_at: datetime
+
+
 # -- campaigns (bulk DM) ------------------------------------------------
 
 
