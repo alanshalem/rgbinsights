@@ -34,6 +34,26 @@ os_name() { case "$(uname -s)" in Darwin) echo macOS;; Linux) echo Linux;; *) ec
 
 printf "${C_MAGENTA}RGB Semáforo — arranque (%s)${C_OFF}\n" "$(os_name)"
 
+# ---------------------------------------------------------------- Auto-update
+# Traer la última versión del repo. Sin git / sin 'origin' se saltea sin romper.
+UPDATED=0
+step "Buscando actualizaciones del código"
+if command -v git >/dev/null 2>&1 && [ -d "$ROOT/.git" ]; then
+  before="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo '')"
+  if git -C "$ROOT" pull --ff-only 2>&1 | sed 's/^/  /'; then
+    after="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo '')"
+    if [ -n "$before" ] && [ -n "$after" ] && [ "$before" != "$after" ]; then
+      UPDATED=1; ok "Código actualizado a la última versión."
+    else
+      ok "Ya estabas al día."
+    fi
+  else
+    info "No se pudo actualizar (seguimos con la versión actual)."
+  fi
+else
+  info "Sin git o sin repo remoto — salteo la actualización."
+fi
+
 # ---------------------------------------------------------------- Python
 step "Chequeando Python (>= ${MIN_PY_MAJOR}.${MIN_PY_MINOR})"
 PYTHON=""
@@ -89,7 +109,8 @@ ok "Backend listo"
 # ---------------------------------------------------------------- Frontend setup
 step "Preparando frontend"
 cd "$ROOT/frontend"
-if [ ! -d "$ROOT/frontend/node_modules" ]; then
+# Reinstalar si faltan deps o si el auto-update trajo cambios (package.json nuevo).
+if [ ! -d "$ROOT/frontend/node_modules" ] || [ "$UPDATED" = "1" ]; then
   info "Instalando dependencias de Node (npm install)…"
   npm install --no-fund --no-audit
 fi
@@ -103,6 +124,7 @@ cleanup() {
   if [ -n "$BACKEND_PID" ] && kill -0 "$BACKEND_PID" 2>/dev/null; then
     kill "$BACKEND_PID" 2>/dev/null || true
   fi
+  cd "$ROOT" 2>/dev/null || true  # volver a la raíz del proyecto
 }
 trap cleanup INT TERM EXIT
 
