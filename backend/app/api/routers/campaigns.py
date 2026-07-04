@@ -173,6 +173,16 @@ def create_campaign(
     return _to_out(session, campaign)
 
 
+@router.get("/campaigns/active", response_model=CampaignOut | None)
+def active_campaign(session: Session = Depends(session_dep)) -> CampaignOut | None:
+    campaign = session.exec(
+        select(models.Campaign)
+        .where(col(models.Campaign.status).in_(["running", "paused", "blocked"]))
+        .order_by(col(models.Campaign.id).desc())
+    ).first()
+    return _to_out(session, campaign) if campaign is not None else None
+
+
 @router.get("/events/{event_id}/campaign", response_model=CampaignOut | None)
 def latest_campaign(
     event_id: int, session: Session = Depends(session_dep)

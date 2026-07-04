@@ -7,6 +7,7 @@ never raised, so the API can map them to clean HTTP responses.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from datetime import UTC, datetime
 
 from sqlmodel import Session, col, select
@@ -40,6 +41,8 @@ from app.infrastructure.persistence.repositories import (
 )
 
 logger = logging.getLogger(__name__)
+
+ProgressFn = Callable[..., None]
 
 
 def _now() -> datetime:
@@ -128,8 +131,15 @@ class ScanPostsUseCase:
         self._recent_limit = recent_limit
         self._single = ScanPostUseCase(source, session)
 
-    def by_urls(self, urls: list[str], event_id: int | None = None) -> Result[ScanBatchResult]:
-        return self._run([self._single.execute(u, event_id) for u in urls])
+    def by_urls(
+        self, urls: list[str], event_id: int | None = None, progress: ProgressFn | None = None
+    ) -> Result[ScanBatchResult]:
+        results = []
+        for i, url in enumerate(urls, 1):
+            if progress is not None:
+                progress(i - 1, len(urls), f"post {i}/{len(urls)}")
+            results.append(self._single.execute(url, event_id))
+        return self._run(results)
 
     def by_date_range(
         self, date_from: datetime, date_to: datetime, event_id: int | None = None
@@ -175,12 +185,14 @@ class RescanEventUseCase:
         self._session = session
         self._batch = ScanPostsUseCase(source, session, recent_limit)
 
-    def execute(self, event_id: int) -> Result[ScanBatchResult]:
+    def execute(
+        self, event_id: int, progress: ProgressFn | None = None
+    ) -> Result[ScanBatchResult]:
         posts = PostRepository(self._session).list_all(event_id=event_id)
         urls = [p.url for p in posts]
         if not urls:
             return Ok(ScanBatchResult(results=[], total_users_found=0, total_new_users=0))
-        return self._batch.by_urls(urls, event_id=event_id)
+        return self._batch.by_urls(urls, event_id=event_id, progress=progress)
 
 
 class SyncDmsUseCase:
@@ -190,11 +202,11 @@ class SyncDmsUseCase:
         self._users = UserRepository(session)
         self._threads = DmThreadRepository(session)
 
-    def execute(self) -> Result[SyncResult]:
+    def execute(self, progress: ProgressFn | None = None) -> Result[SyncResult]:
         self._source.reset_budget()
         try:
             our_pk = self._source.current_user_pk()
-            threads = self._source.get_dm_threads()
+            threads = self._source.get_dm_threads(progress)
         except InstagramError as exc:
             logger.warning("dm sync failed: %s", exc)
             return _map_error(exc)
@@ -228,6 +240,8 @@ class SyncDmsUseCase:
         try:
             pks = self._users.all_pks()
             if pks:
+                if progress is not None:
+                    progress(len(threads), len(threads), "trayendo relaciones (te sigue)…")
                 self._users.set_friendships(self._source.get_friendships(pks))
         except InstagramError as exc:
             logger.warning("friendship sync skipped: %s", exc)
@@ -249,12 +263,17 @@ class EnrichProfilesUseCase:
         self._session = session
         self._users = UserRepository(session)
 
-    def execute(self, pks: list[str], limit: int = 200) -> Result[int]:
+    def execute(
+        self, pks: list[str], limit: int = 200, progress: ProgressFn | None = None
+    ) -> Result[int]:
         self._source.reset_budget()
         pending = self._users.unenriched(pks)[:limit]
+        total = len(pending)
         now = _now()
         enriched = 0
         for user in pending:
+            if progress is not None:
+                progress(enriched, total, f"@{user.username}")
             try:
                 profile = self._source.get_profile(user.username)
             except InstagramError as exc:

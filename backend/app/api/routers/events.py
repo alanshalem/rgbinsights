@@ -15,6 +15,7 @@ from app.api.schemas import (
     ScanBatchResultOut,
     SyncResultOut,
 )
+from app.application.tasks import registry as tasks
 from app.application.use_cases import (
     EnrichProfilesUseCase,
     ListUsersUseCase,
@@ -105,16 +106,27 @@ def refresh_event(
     if EventRepository(session).get(event_id) is None:
         raise HTTPException(status_code=404, detail={"code": "not_found", "message": "fiesta"})
 
-    scan = RescanEventUseCase(source, session, settings.recent_posts_limit).execute(event_id)
-    if isinstance(scan, Err):
-        raise_for_err(scan)
-    sync = SyncDmsUseCase(source, session).execute()
-    if isinstance(sync, Err):
-        raise_for_err(sync)
-    return EventRefreshOut(
-        scan=ScanBatchResultOut.model_validate(scan.value, from_attributes=True),
-        sync=SyncResultOut.model_validate(sync.value, from_attributes=True),
-    )
+    with tasks.track("refresh", "Actualizando fiesta") as task:
+        scan = RescanEventUseCase(source, session, settings.recent_posts_limit).execute(
+            event_id, task.progress
+        )
+        if isinstance(scan, Err):
+            task.fail(scan.message or scan.code.value)
+            raise_for_err(scan)
+        sync = SyncDmsUseCase(source, session).execute(task.progress)
+        if isinstance(sync, Err):
+            task.fail(sync.message or sync.code.value)
+            raise_for_err(sync)
+        task.result = {
+            "posts": len(scan.value.results),
+            "usuarios": scan.value.total_users_found,
+            "hilos": sync.value.threads_synced,
+        }
+        out = EventRefreshOut(
+            scan=ScanBatchResultOut.model_validate(scan.value, from_attributes=True),
+            sync=SyncResultOut.model_validate(sync.value, from_attributes=True),
+        )
+    return out
 
 
 @router.post("/{event_id}/enrich", response_model=EnrichResultOut)
@@ -127,7 +139,10 @@ def enrich_event(
     if EventRepository(session).get(event_id) is None:
         raise HTTPException(status_code=404, detail={"code": "not_found", "message": "fiesta"})
     pks = [u.pk for u in ListUsersUseCase(session).execute(event=event_id)]
-    result = EnrichProfilesUseCase(source, session).execute(pks)
-    if isinstance(result, Err):
-        raise_for_err(result)
+    with tasks.track("enrich", "Enriqueciendo perfiles") as task:
+        result = EnrichProfilesUseCase(source, session).execute(pks, progress=task.progress)
+        if isinstance(result, Err):
+            task.fail(result.message or result.code.value)
+            raise_for_err(result)
+        task.result = {"enriquecidos": result.value}
     return EnrichResultOut(enriched=result.value)

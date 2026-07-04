@@ -10,6 +10,7 @@ from app.api.schemas import (
     ScanPostsRequest,
     ScanResultOut,
 )
+from app.application.tasks import registry as tasks
 from app.application.use_cases import ScanPostsUseCase, ScanPostUseCase
 from app.domain.result import Err
 from app.infrastructure.config.settings import Settings, get_settings
@@ -38,14 +39,23 @@ def scan_posts(
     settings: Settings = Depends(get_settings),
 ) -> ScanBatchResultOut:
     use_case = ScanPostsUseCase(source, session, settings.recent_posts_limit)
-    if body.urls:
-        result = use_case.by_urls(body.urls, body.event_id)
-    elif body.date_from and body.date_to:
-        result = use_case.by_date_range(body.date_from, body.date_to, body.event_id)
-    else:
-        raise HTTPException(
-            status_code=422, detail={"code": "bad_request", "message": "provide urls or from+to"}
-        )
-    if isinstance(result, Err):
-        raise_for_err(result)
-    return ScanBatchResultOut.model_validate(result.value, from_attributes=True)
+    with tasks.track("scan", "Escaneando posts") as task:
+        if body.urls:
+            result = use_case.by_urls(body.urls, body.event_id, task.progress)
+        elif body.date_from and body.date_to:
+            result = use_case.by_date_range(body.date_from, body.date_to, body.event_id)
+        else:
+            raise HTTPException(
+                status_code=422,
+                detail={"code": "bad_request", "message": "provide urls or from+to"},
+            )
+        if isinstance(result, Err):
+            task.fail(result.message or result.code.value)
+            raise_for_err(result)
+        task.result = {
+            "posts": len(result.value.results),
+            "usuarios": result.value.total_users_found,
+            "nuevos": result.value.total_new_users,
+        }
+        out = ScanBatchResultOut.model_validate(result.value, from_attributes=True)
+    return out

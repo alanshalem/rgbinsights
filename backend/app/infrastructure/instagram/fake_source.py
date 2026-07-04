@@ -114,7 +114,7 @@ class FakeInstagramSource:
             return [Comment(user=_LUCIA, text="ahí estaré", created_at=_dt(21))]
         return []
 
-    def get_dm_threads(self) -> list[DmThread]:
+    def get_dm_threads(self, progress: object | None = None) -> list[DmThread]:
         return [
             # lucia answered us -> GREEN
             DmThread(

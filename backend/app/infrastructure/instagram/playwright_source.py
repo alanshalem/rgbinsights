@@ -341,13 +341,15 @@ class PlaywrightInstagramSource:
             params = {"min_id": next_min_id}
         return comments
 
-    def get_dm_threads(self) -> list[DmThread]:
+    def get_dm_threads(self, progress: Any = None) -> list[DmThread]:
         our_pk = self.current_user_pk()
         threads: list[DmThread] = []
         params: dict[str, Any] = {"thread_message_limit": 20, "limit": 20}
         for _ in range(20):
             data = self._get("/api/v1/direct_v2/inbox/", params)
             threads.extend(parse_inbox(data, our_pk))
+            if progress is not None:
+                progress(len(threads), None, f"{len(threads)} hilos de DM")
             inbox = data.get("inbox") or {}
             if not inbox.get("has_older"):
                 break

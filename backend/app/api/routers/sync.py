@@ -5,6 +5,7 @@ from sqlmodel import Session
 
 from app.api.deps import raise_for_err, session_dep, source_dep
 from app.api.schemas import SyncResultOut
+from app.application.tasks import registry as tasks
 from app.application.use_cases import SyncDmsUseCase
 from app.domain.result import Err
 from app.infrastructure.instagram.base import InstagramSource
@@ -17,7 +18,11 @@ def sync_dms(
     session: Session = Depends(session_dep),
     source: InstagramSource = Depends(source_dep),
 ) -> SyncResultOut:
-    result = SyncDmsUseCase(source, session).execute()
-    if isinstance(result, Err):
-        raise_for_err(result)
-    return SyncResultOut.model_validate(result.value, from_attributes=True)
+    with tasks.track("sync", "Sincronizando DMs") as task:
+        result = SyncDmsUseCase(source, session).execute(task.progress)
+        if isinstance(result, Err):
+            task.fail(result.message or result.code.value)
+            raise_for_err(result)
+        task.result = {"hilos": result.value.threads_synced}
+        out = SyncResultOut.model_validate(result.value, from_attributes=True)
+    return out

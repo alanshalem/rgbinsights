@@ -7,6 +7,7 @@ implementation is InstagrapiInstagramSource; tests use FakeInstagramSource.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Protocol, runtime_checkable
 
 from app.domain.entities import (
@@ -17,6 +18,8 @@ from app.domain.entities import (
     Post,
     ProfileInfo,
 )
+
+ProgressFn = Callable[..., None]
 
 
 @runtime_checkable
@@ -35,7 +38,7 @@ class InstagramSource(Protocol):
 
     def get_comments(self, media_pk: str) -> list[Comment]: ...
 
-    def get_dm_threads(self) -> list[DmThread]: ...
+    def get_dm_threads(self, progress: ProgressFn | None = None) -> list[DmThread]: ...
 
     def send_dm(self, user_pk: str, text: str) -> None:
         """Send a DM. Raises SendBlockedError if Instagram refuses (spam /

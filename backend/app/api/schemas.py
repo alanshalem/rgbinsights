@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -136,6 +137,18 @@ class HealthOut(BaseModel):
 class ErrorOut(BaseModel):
     code: str
     message: str
+
+
+class TaskOut(BaseModel):
+    id: str
+    kind: str
+    label: str
+    status: str  # running | done | error
+    current: int
+    total: int
+    message: str
+    result: dict[str, Any]
+    error: str | None
 
 
 # -- campaigns (bulk DM) ------------------------------------------------

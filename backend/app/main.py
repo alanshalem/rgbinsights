@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routers import campaigns, events, health, posts, scan, sync, users
+from app.api.routers import campaigns, events, health, posts, scan, sync, tasks, users
 from app.application import campaign_sender
 from app.infrastructure.persistence.db import create_db_and_tables
 
@@ -47,3 +47,4 @@ app.include_router(scan.router)
 app.include_router(sync.router)
 app.include_router(users.router)
 app.include_router(posts.router)
+app.include_router(tasks.router)
