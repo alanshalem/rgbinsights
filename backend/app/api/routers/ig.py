@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -12,10 +13,10 @@ from app.api.schemas import IgLoginOut, IgStatusOut
 from app.infrastructure.config.settings import Settings, get_settings
 from app.infrastructure.instagram import ig_login
 from app.infrastructure.instagram.base import InstagramSource
-from app.infrastructure.instagram.errors import InstagramError
 from app.infrastructure.instagram.shared import get_shared_source
 from app.infrastructure.persistence.repositories import AppStateRepository
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/ig", tags=["instagram"])
 
 _LAST_OK = "ig_last_ok_at"
@@ -46,7 +47,11 @@ def ig_status(
     pk: str | None = None
     try:
         pk = _source(settings).current_user_pk()
-    except InstagramError:
+    except Exception:  # noqa: BLE001 — status must never 500: any fault = disconnected
+        # Not just InstagramError: a dead/unreachable browser raises Playwright/OS
+        # errors here. If those escaped, /ig/status would 500 and the IG chip would
+        # vanish from the UI entirely (it hides when status can't load).
+        logger.warning("ig_status: could not read session, reporting disconnected", exc_info=True)
         pk = None
     connected = bool(pk)
     if connected:

@@ -94,13 +94,29 @@ Ok "Node $nodeVer, npm $npmVer"
 Step "Preparando backend"
 Set-Location "$root\backend"
 $venvPy = "$root\backend\.venv\Scripts\python.exe"
+$venvFresh = $false
 if (-not (Test-Path $venvPy)) {
   Info "Creando entorno virtual (.venv)..."
   & $pyExe $pyArg -m venv .venv
+  $venvFresh = $true
 }
-Info "Instalando dependencias de Python..."
-& $venvPy -m pip install --quiet --upgrade pip
-& $venvPy -m pip install --quiet -r requirements.txt
+
+# Instalar deps SOLO si hace falta: venv nuevo, el auto-update trajo cambios, o
+# requirements.txt cambio desde la ultima instalacion (comparamos un hash). Asi
+# no reinstala al pedo en cada arranque (era lento y a veces colgaba pip).
+$reqFile  = "$root\backend\requirements.txt"
+$stamp    = "$root\backend\.venv\.requirements.sha256"
+$reqHash  = (Get-FileHash $reqFile -Algorithm SHA256).Hash
+$prevHash = if (Test-Path $stamp) { (Get-Content $stamp -Raw).Trim() } else { '' }
+if ($venvFresh -or $updated -or ($reqHash -ne $prevHash)) {
+  Info "Instalando dependencias de Python..."
+  if ($venvFresh) { & $venvPy -m pip install --upgrade pip --disable-pip-version-check }
+  & $venvPy -m pip install -r requirements.txt --disable-pip-version-check
+  if ($LASTEXITCODE -ne 0) { Fail "Fallo instalar dependencias de Python. Mira el error de arriba." }
+  Set-Content -Path $stamp -Value $reqHash -NoNewline
+} else {
+  Info "Dependencias de Python ya instaladas (sin cambios) - salteo."
+}
 if (-not (Test-Path "$root\backend\.env")) {
   Copy-Item "$root\backend\.env.example" "$root\backend\.env"
   Info ".env creado desde .env.example (modo demo con datos de ejemplo)."
