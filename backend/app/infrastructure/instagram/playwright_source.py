@@ -172,9 +172,20 @@ def _fetch_json(page: Page, path: str) -> dict[str, Any]:
     message = str(data.get("message", ""))
     if message == "checkpoint_required" or data.get("require_login"):
         raise ChallengeRequiredError("Instagram requested verification (checkpoint).")
+    # IG's own backend (TAO/MySQL) sometimes times out: 400 + status "fail" +
+    # a NodeTaoSystemException/tao_errno message. That is NOT a dead session —
+    # retrying works — so don't send the user to reconnect. Surface as transient.
+    if _is_transient_ig_error(message):
+        raise InstagramError(f"Instagram lento/caído, reintentá ({path} -> {status})")
     if status in (401, 403) or data.get("status") == "fail":
         raise LoginRequiredError(f"{path} -> status {status}: {snippet}")
     return data
+
+
+def _is_transient_ig_error(message: str) -> bool:
+    """True for IG-side backend blips (their DB/timeout), not our session."""
+    m = message.lower()
+    return any(s in m for s in ("nodetao", "tao_errno", "timed out", "please wait a few minutes"))
 
 
 def _path(base: str, params: dict[str, Any] | None = None) -> str:
@@ -209,8 +220,17 @@ def _send_dm(page: Page, user_pk: str, text: str) -> None:
     )
     status = int(result["status"])
     body = str(result["body"])
+    snippet = " ".join(body[:200].split())
     if "json" not in str(result["ct"]):
-        raise SendBlockedError(f"respuesta no-JSON al enviar (status {status})")
+        # 200 + HTML almost always means IG served a login/checkpoint page
+        # instead of the API JSON: the session needs reconnecting, not a spam
+        # block. Distinguish so the user gets the right fix (and see the body).
+        low = body[:500].lower()
+        if "<html" in low or "checkpoint" in low or "login" in low:
+            raise ChallengeRequiredError(
+                f"sesión no válida para enviar (status {status}): {snippet}"
+            )
+        raise SendBlockedError(f"respuesta no-JSON al enviar (status {status}): {snippet}")
     data = json.loads(body)
     if data.get("status") == "ok":
         return

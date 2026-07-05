@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -27,6 +28,7 @@ from app.infrastructure.instagram.errors import InstagramError
 from app.infrastructure.persistence import models
 from app.infrastructure.persistence.repositories import EventRepository
 
+logger = logging.getLogger(__name__)
 router = APIRouter(tags=["campaigns"])
 
 
@@ -134,6 +136,12 @@ def test_send(
         source.send_dm(target.pk, message)
     except InstagramError as exc:
         raise_for_err(Err(ErrorCode.CHALLENGE_REQUIRED, str(exc)))
+    except Exception as exc:  # noqa: BLE001 — browser/Playwright faults would 500 raw otherwise
+        logger.exception("test_send failed for @%s", target.username)
+        raise HTTPException(
+            status_code=502,
+            detail={"code": "unknown", "message": f"{type(exc).__name__}: {exc}"},
+        ) from exc
     return MessageSample(username=target.username, message=message)
 
 
