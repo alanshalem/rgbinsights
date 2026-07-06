@@ -1,7 +1,7 @@
-import type { UserOut } from '../api/client';
-import { followLabel, formatCount, summarize } from '../lib/user';
-import { Avatar } from './Avatar';
-import { PostLink } from './PostLink';
+import type { UserOut } from '../../api/client';
+import { followLabel, formatCount, summarize } from '../../lib/user';
+import { Avatar } from '../ui/Avatar';
+import { PostLink } from '../ui/PostLink';
 
 const CHIP_CLS = 'rounded-full border border-border bg-panel-2 px-2 py-0.5 text-[11px] text-muted';
 

@@ -1,4 +1,4 @@
-import type { ApiError } from '../api/client';
+import type { ApiError } from '../../api/client';
 
 /** The dismissable-looking error strip under the toolbar. A challenge/expired
  * session gets the amber "reconnect" copy; everything else is a red error. */

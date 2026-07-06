@@ -1,6 +1,6 @@
-import type { Order, TrafficLight } from '../api/client';
-import { INPUT_CLS } from '../lib/ui';
-import { LIGHTS, LIGHT_LABEL } from '../lib/user';
+import type { Order, TrafficLight } from '../../api/client';
+import { INPUT_CLS } from '../../lib/ui';
+import { LIGHTS, LIGHT_LABEL } from '../../lib/user';
 
 type View = 'board' | 'table';
 

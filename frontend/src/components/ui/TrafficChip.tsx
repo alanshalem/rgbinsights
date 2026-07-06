@@ -1,5 +1,5 @@
-import type { TrafficLight } from '../api/client';
-import { LIGHT_LABEL } from '../lib/user';
+import type { TrafficLight } from '../../api/client';
+import { LIGHT_LABEL } from '../../lib/user';
 
 const DOT: Record<TrafficLight, string> = {
   red: 'bg-red text-red',

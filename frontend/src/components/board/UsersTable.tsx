@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react';
-import type { Order, TrafficLight } from '../api/client';
-import { useUsers } from '../api/hooks';
-import { summarize } from '../lib/user';
-import { Avatar } from './Avatar';
-import { PostLink } from './PostLink';
-import { TrafficChip } from './TrafficChip';
+import type { Order, TrafficLight } from '../../api/client';
+import { useUsers } from '../../api/hooks';
+import { summarize } from '../../lib/user';
+import { Avatar } from '../ui/Avatar';
+import { PostLink } from '../ui/PostLink';
+import { TrafficChip } from '../ui/TrafficChip';
 
 const PAGE = 50;
 

@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { BASE, type UserOut } from '../api/client';
-import { initials } from '../lib/user';
+import { BASE, type UserOut } from '../../api/client';
+import { initials } from '../../lib/user';
 
 export function Avatar({ user, size = 40 }: { user: UserOut; size?: number }) {
   const [broken, setBroken] = useState(false);

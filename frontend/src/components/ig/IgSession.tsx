@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { api, toApiError } from '../api/client';
-import { useIgStatus } from '../api/hooks';
-import { Modal } from './Modal';
+import { api, toApiError } from '../../api/client';
+import { useIgStatus } from '../../api/hooks';
+import { Modal } from '../ui/Modal';
 
 function ago(iso: string | null | undefined): string {
   if (!iso) return 'nunca';

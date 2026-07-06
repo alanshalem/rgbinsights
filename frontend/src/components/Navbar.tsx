@@ -1,7 +1,7 @@
 import type { TrafficLight } from '../api/client';
 import { LIGHT_LABEL, LIGHTS } from '../lib/user';
-import { IgSession } from './IgSession';
-import { TrafficDot } from './TrafficChip';
+import { IgSession } from './ig/IgSession';
+import { TrafficDot } from './ui/TrafficChip';
 
 export type Page = 'app' | 'activity' | 'help';
 

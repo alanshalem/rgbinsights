@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import type { Order, TrafficLight } from '../api/client';
-import { useUsers } from '../api/hooks';
-import { LIGHT_HINT, LIGHT_LABEL } from '../lib/user';
+import type { Order, TrafficLight } from '../../api/client';
+import { useUsers } from '../../api/hooks';
+import { LIGHT_HINT, LIGHT_LABEL } from '../../lib/user';
 import { UserCard } from './UserCard';
 
 const PAGE = 20;

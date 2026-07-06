@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { toApiError } from '../api/client';
 import { useResetAll } from '../api/hooks';
-import { Modal } from './Modal';
+import { Modal } from './ui/Modal';
 
 const PHRASE = 'BORRAR TODO';
 

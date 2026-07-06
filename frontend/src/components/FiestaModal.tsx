@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useCreateEvent } from '../api/hooks';
 import { ApiError } from '../api/client';
-import { Modal } from './Modal';
+import { Modal } from './ui/Modal';
 
 export function FiestaModal({
   onClose,
