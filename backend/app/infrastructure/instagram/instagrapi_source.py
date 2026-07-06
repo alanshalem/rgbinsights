@@ -181,12 +181,22 @@ class InstagrapiInstagramSource:
             raise SendBlockedError(f"envío rechazado: {exc}") from exc
 
     def get_friendships(self, user_pks: list[str]) -> dict[str, Friendship]:
+        # friendships/show_many only reports who WE follow (no `followed_by`), so
+        # to know "te sigue" we read our own followers/following lists and test
+        # membership. Heavy + paginated — this is the slow, opt-in enrich step.
         client = self._login()
         self._budget.spend()
-        raw = client.friendships_show_many([int(pk) for pk in user_pks])
+        our_id = str(client.user_id)
+        followers = {str(pk) for pk in client.user_followers(our_id, amount=0)}
+        following = {str(pk) for pk in client.user_following(our_id, amount=0)}
+        # A logged-in account always has some followers/following. Both empty
+        # means the read was blocked — refuse rather than overwrite good "te
+        # sigue" data with all-False.
+        if not followers and not following:
+            raise InstagramError("no se pudo leer seguidores/seguidos (bloqueado?)")
         return {
-            str(pk): Friendship(following=bool(st.following), followed_by=bool(st.followed_by))
-            for pk, st in raw.items()
+            str(pk): Friendship(following=str(pk) in following, followed_by=str(pk) in followers)
+            for pk in set(user_pks)
         }
 
     def get_profile(self, username: str) -> ProfileInfo:
