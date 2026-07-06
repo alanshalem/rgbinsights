@@ -11,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routers import (
     admin,
+    avatars,
     campaigns,
     events,
     health,
@@ -60,4 +61,5 @@ app.include_router(users.router)
 app.include_router(posts.router)
 app.include_router(tasks.router)  # /tasks + /activity
 app.include_router(admin.router)  # /reset (danger zone)
-app.include_router(ig.router)  # /ig/status + /ig/login (session)
+app.include_router(ig.router)  # /ig/status + reconnect (session)
+app.include_router(avatars.router)  # /avatar/{pk} — cached profile pics

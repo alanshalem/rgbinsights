@@ -2,7 +2,7 @@
 // (produced by `npm run gen:api` from the backend OpenAPI) — type-safe end to end.
 import type { paths } from './generated';
 
-const BASE = '/api';
+export const BASE = '/api';
 
 export type TrafficLight = 'red' | 'yellow' | 'green';
 export type Order = 'status' | 'username' | 'fans' | 'followers';

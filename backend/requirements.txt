@@ -4,6 +4,7 @@ uvicorn[standard]>=0.30
 sqlmodel>=0.0.22
 pydantic-settings>=2.5
 instagrapi>=2.1
+requests>=2.32
 
 # Dev tooling
 ruff>=0.6

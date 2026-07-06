@@ -9,6 +9,10 @@ backend/ig_cookies.json
 *.db
 *.db-journal
 
+# Cached profile pics (proxied from Instagram's expiring CDN)
+avatar_cache/
+backend/avatar_cache/
+
 # Python
 .venv/
 __pycache__/

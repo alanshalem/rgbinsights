@@ -1,9 +1,11 @@
 import { useState } from 'react';
-import type { UserOut } from '../api/client';
+import { BASE, type UserOut } from '../api/client';
 import { initials } from '../lib/user';
 
 export function Avatar({ user, size = 40 }: { user: UserOut; size?: number }) {
   const [broken, setBroken] = useState(false);
+  // Only try the image when IG gave us a pic URL at all; the backend proxy
+  // caches it so it survives the CDN link expiring. On any failure → initials.
   const showImg = user.profile_pic_url && !broken;
 
   return (
@@ -13,10 +15,10 @@ export function Avatar({ user, size = 40 }: { user: UserOut; size?: number }) {
     >
       {showImg ? (
         <img
-          src={user.profile_pic_url ?? ''}
+          src={`${BASE}/avatar/${user.pk}`}
           alt={user.username}
           className="h-full w-full object-cover"
-          referrerPolicy="no-referrer"
+          loading="lazy"
           onError={() => setBroken(true)}
         />
       ) : (
