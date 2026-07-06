@@ -144,7 +144,64 @@ export function IgSession() {
               </div>
             )}
 
-            {connected && !success ? (
+            {showPaste ? (
+              // Paste a fresh sessionid — available whether connected or not, so
+              // a "connected" session that can't send can still be refreshed.
+              <>
+                <div className="flex flex-col gap-2">
+                  <p className="font-semibold">Pegá tu sesión de Instagram</p>
+                  <ol className="flex list-decimal flex-col gap-1 pl-5 text-xs text-muted">
+                    <li>
+                      Abrí <b>instagram.com</b> en tu navegador, logueado a la cuenta del crew.
+                    </li>
+                    <li>
+                      Apretá <b>F12</b> (abre las herramientas del navegador).
+                    </li>
+                    <li>
+                      Arriba, entrá a la pestaña <b>Application</b> (o “Aplicación”).
+                    </li>
+                    <li>
+                      A la izquierda: <b>Cookies</b> → <b>https://www.instagram.com</b>.
+                    </li>
+                    <li>
+                      Buscá la fila <b>sessionid</b>, copiá el texto de la columna <b>Value</b>.
+                    </li>
+                    <li>Pegalo acá abajo y dale Guardar:</li>
+                  </ol>
+                  <textarea
+                    value={sessionid}
+                    onChange={(e) => setSessionid(e.target.value)}
+                    placeholder="Pegá acá el sessionid (empieza con 70564…%3A…)"
+                    rows={3}
+                    className="w-full resize-none rounded-lg border border-border bg-panel px-3 py-2 font-mono text-xs"
+                  />
+                </div>
+                <div className="flex justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowPaste(false)}
+                    className="mr-auto rounded-lg border border-border px-4 py-2"
+                  >
+                    ← Volver
+                  </button>
+                  <button
+                    type="button"
+                    onClick={close}
+                    className="rounded-lg border border-border px-4 py-2"
+                  >
+                    Cerrar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={saveSessionid}
+                    disabled={busy || !sessionid.trim()}
+                    className="rounded-lg bg-blue px-4 py-2 font-semibold text-bg disabled:opacity-50"
+                  >
+                    {busy ? 'Guardando…' : 'Guardar y conectar'}
+                  </button>
+                </div>
+              </>
+            ) : connected && !success ? (
               <>
                 <p className="text-muted">
                   <b className="text-green">Todo listo.</b> La app está conectada a tu Instagram y
@@ -153,9 +210,19 @@ export function IgSession() {
                 <div className="flex items-center justify-end gap-3">
                   <button
                     type="button"
+                    onClick={() => {
+                      setShowPaste(true);
+                      setError(null);
+                    }}
+                    className="mr-auto text-xs text-muted underline hover:text-ink"
+                  >
+                    Pegar otra sesión
+                  </button>
+                  <button
+                    type="button"
                     onClick={reauth}
                     disabled={busy}
-                    className="mr-auto text-xs text-muted underline hover:text-ink disabled:opacity-50"
+                    className="text-xs text-muted underline hover:text-ink disabled:opacity-50"
                   >
                     Reconectar igual
                   </button>
@@ -171,15 +238,13 @@ export function IgSession() {
             ) : (
               !success && (
                 <>
-                  {!showPaste && (
-                    <p className="text-muted">
-                      {s.has_credentials
-                        ? 'Instagram cerró la sesión. Reconectá en un paso:'
-                        : 'Pegá el sessionid de tu navegador para conectar.'}
-                    </p>
-                  )}
+                  <p className="text-muted">
+                    {s.has_credentials
+                      ? 'Instagram cerró la sesión. Reconectá en un paso:'
+                      : 'Pegá el sessionid de tu navegador para conectar.'}
+                  </p>
 
-                  {!showPaste && s.has_credentials && (
+                  {s.has_credentials && (
                     <button
                       type="button"
                       onClick={reauth}
@@ -193,60 +258,20 @@ export function IgSession() {
                     </button>
                   )}
 
-                  {!showPaste ? (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setShowPaste(true);
-                        setError(null);
-                      }}
-                      className="text-xs text-muted underline hover:text-ink"
-                    >
-                      {s.has_credentials
-                        ? '¿No anduvo o te pide un código? Pegá tu sesión →'
-                        : 'Pegá tu sesión de Instagram →'}
-                    </button>
-                  ) : (
-                    <div className="flex flex-col gap-2">
-                      <p className="font-semibold">Pegá tu sesión de Instagram</p>
-                      <ol className="flex list-decimal flex-col gap-1 pl-5 text-xs text-muted">
-                        <li>
-                          Abrí <b>instagram.com</b> en tu navegador, logueado a la cuenta del crew.
-                        </li>
-                        <li>
-                          Apretá <b>F12</b> (abre las herramientas del navegador).
-                        </li>
-                        <li>
-                          Arriba, entrá a la pestaña <b>Application</b> (o “Aplicación”).
-                        </li>
-                        <li>
-                          A la izquierda: <b>Cookies</b> → <b>https://www.instagram.com</b>.
-                        </li>
-                        <li>
-                          Buscá la fila <b>sessionid</b>, copiá el texto de la columna <b>Value</b>.
-                        </li>
-                        <li>Pegalo acá abajo y dale Guardar:</li>
-                      </ol>
-                      <textarea
-                        value={sessionid}
-                        onChange={(e) => setSessionid(e.target.value)}
-                        placeholder="Pegá acá el sessionid (empieza con 70564…%3A…)"
-                        rows={3}
-                        className="w-full resize-none rounded-lg border border-border bg-panel px-3 py-2 font-mono text-xs"
-                      />
-                    </div>
-                  )}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowPaste(true);
+                      setError(null);
+                    }}
+                    className="text-xs text-muted underline hover:text-ink"
+                  >
+                    {s.has_credentials
+                      ? '¿No anduvo o te pide un código? Pegá tu sesión →'
+                      : 'Pegá tu sesión de Instagram →'}
+                  </button>
 
                   <div className="flex justify-end gap-2">
-                    {showPaste && (
-                      <button
-                        type="button"
-                        onClick={() => setShowPaste(false)}
-                        className="mr-auto rounded-lg border border-border px-4 py-2"
-                      >
-                        ← Volver
-                      </button>
-                    )}
                     <button
                       type="button"
                       onClick={close}
@@ -254,16 +279,6 @@ export function IgSession() {
                     >
                       Cerrar
                     </button>
-                    {showPaste && (
-                      <button
-                        type="button"
-                        onClick={saveSessionid}
-                        disabled={busy || !sessionid.trim()}
-                        className="rounded-lg bg-blue px-4 py-2 font-semibold text-bg disabled:opacity-50"
-                      >
-                        {busy ? 'Guardando…' : 'Guardar y conectar'}
-                      </button>
-                    )}
                   </div>
                 </>
               )
