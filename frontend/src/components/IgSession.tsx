@@ -14,8 +14,8 @@ function ago(iso: string | null | undefined): string {
 }
 
 const DOT: Record<string, string> = {
-  connected: 'bg-[var(--color-green)]',
-  disconnected: 'bg-[var(--color-red)]',
+  connected: 'bg-green',
+  disconnected: 'bg-red',
 };
 const LABEL: Record<string, string> = {
   connected: 'IG conectado',
@@ -36,7 +36,7 @@ export function IgSession() {
   if (!s) return null;
   if (s.demo) {
     return (
-      <span className="rounded-full border border-[var(--color-border)] px-2 py-0.5 text-[11px] text-[var(--color-muted)]">
+      <span className="rounded-full border border-border px-2 py-0.5 text-[11px] text-muted">
         demo · sin IG
       </span>
     );
@@ -102,7 +102,7 @@ export function IgSession() {
       <button
         onClick={() => setOpen(true)}
         title={`Instagram · última conexión ${ago(s.last_ok_at)}`}
-        className="flex items-center gap-1.5 rounded-full border border-[var(--color-border)] px-2.5 py-1 text-[11px] font-medium hover:bg-[var(--color-panel)]"
+        className="flex items-center gap-1.5 rounded-full border border-border px-2.5 py-1 text-[11px] font-medium hover:bg-panel"
       >
         <span className={`h-2 w-2 rounded-full ${DOT[s.state] ?? DOT.disconnected}`} />
         <span className="hidden sm:inline">{LABEL[s.state] ?? 'IG'}</span>
@@ -119,7 +119,7 @@ export function IgSession() {
             </div>
 
             {success && (
-              <div className="rounded-xl border border-[var(--color-green)]/40 bg-[var(--color-green)]/10 p-3 text-[var(--color-green)]">
+              <div className="rounded-xl border border-green/40 bg-green/10 p-3 text-green">
                 <p className="font-semibold">✓ ¡Conectado!</p>
                 <p className="text-xs opacity-90">
                   Ya podés escanear posts y enviar los DMs de tu campaña.
@@ -128,35 +128,35 @@ export function IgSession() {
             )}
 
             {busy && (
-              <p className="flex items-center gap-2 text-[var(--color-yellow)]">
-                <span className="h-2 w-2 animate-pulse rounded-full bg-[var(--color-yellow)]" />
+              <p className="flex items-center gap-2 text-yellow">
+                <span className="h-2 w-2 animate-pulse rounded-full bg-yellow" />
                 Conectando con Instagram… esperá unos segundos.
               </p>
             )}
 
             {error && (
-              <div className="rounded-lg border border-[var(--color-red)]/40 bg-[var(--color-red)]/10 p-2.5 text-xs text-[var(--color-red)]">
+              <div className="rounded-lg border border-red/40 bg-red/10 p-2.5 text-xs text-red">
                 {error}
               </div>
             )}
 
             {connected && !success ? (
               <>
-                <p className="text-[var(--color-muted)]">
-                  <b className="text-[var(--color-green)]">Todo listo.</b> La app está conectada a tu
-                  Instagram y puede escanear y enviar DMs. Última conexión {ago(s.last_ok_at)}.
+                <p className="text-muted">
+                  <b className="text-green">Todo listo.</b> La app está conectada a tu Instagram y
+                  puede escanear y enviar DMs. Última conexión {ago(s.last_ok_at)}.
                 </p>
                 <div className="flex items-center justify-end gap-3">
                   <button
                     onClick={reauth}
                     disabled={busy}
-                    className="mr-auto text-xs text-[var(--color-muted)] underline hover:text-[var(--color-ink)] disabled:opacity-50"
+                    className="mr-auto text-xs text-muted underline hover:text-ink disabled:opacity-50"
                   >
                     Reconectar igual
                   </button>
                   <button
                     onClick={close}
-                    className="rounded-lg bg-[var(--color-green)] px-4 py-2 font-semibold text-[var(--color-bg)]"
+                    className="rounded-lg bg-green px-4 py-2 font-semibold text-bg"
                   >
                     Listo
                   </button>
@@ -166,7 +166,7 @@ export function IgSession() {
               !success && (
                 <>
                   {!showPaste && (
-                    <p className="text-[var(--color-muted)]">
+                    <p className="text-muted">
                       {s.has_credentials
                         ? 'Instagram cerró la sesión. Reconectá en un paso:'
                         : 'Pegá el sessionid de tu navegador para conectar.'}
@@ -177,7 +177,7 @@ export function IgSession() {
                     <button
                       onClick={reauth}
                       disabled={busy}
-                      className="rounded-xl bg-[var(--color-blue)] px-4 py-3 text-center font-semibold text-[var(--color-bg)] disabled:opacity-50"
+                      className="rounded-xl bg-blue px-4 py-3 text-center font-semibold text-bg disabled:opacity-50"
                     >
                       {busy ? 'Conectando…' : '🔄  Reconectar con Instagram'}
                       <span className="mt-0.5 block text-xs font-normal opacity-80">
@@ -192,7 +192,7 @@ export function IgSession() {
                         setShowPaste(true);
                         setError(null);
                       }}
-                      className="text-xs text-[var(--color-muted)] underline hover:text-[var(--color-ink)]"
+                      className="text-xs text-muted underline hover:text-ink"
                     >
                       {s.has_credentials
                         ? '¿No anduvo o te pide un código? Pegá tu sesión →'
@@ -201,7 +201,7 @@ export function IgSession() {
                   ) : (
                     <div className="flex flex-col gap-2">
                       <p className="font-semibold">Pegá tu sesión de Instagram</p>
-                      <ol className="flex list-decimal flex-col gap-1 pl-5 text-xs text-[var(--color-muted)]">
+                      <ol className="flex list-decimal flex-col gap-1 pl-5 text-xs text-muted">
                         <li>
                           Abrí <b>instagram.com</b> en tu navegador, logueado a la cuenta del crew.
                         </li>
@@ -224,7 +224,7 @@ export function IgSession() {
                         onChange={(e) => setSessionid(e.target.value)}
                         placeholder="Pegá acá el sessionid (empieza con 70564…%3A…)"
                         rows={3}
-                        className="w-full resize-none rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] px-3 py-2 font-mono text-xs"
+                        className="w-full resize-none rounded-lg border border-border bg-panel px-3 py-2 font-mono text-xs"
                       />
                     </div>
                   )}
@@ -233,22 +233,19 @@ export function IgSession() {
                     {showPaste && (
                       <button
                         onClick={() => setShowPaste(false)}
-                        className="mr-auto rounded-lg border border-[var(--color-border)] px-4 py-2"
+                        className="mr-auto rounded-lg border border-border px-4 py-2"
                       >
                         ← Volver
                       </button>
                     )}
-                    <button
-                      onClick={close}
-                      className="rounded-lg border border-[var(--color-border)] px-4 py-2"
-                    >
+                    <button onClick={close} className="rounded-lg border border-border px-4 py-2">
                       Cerrar
                     </button>
                     {showPaste && (
                       <button
                         onClick={saveSessionid}
                         disabled={busy || !sessionid.trim()}
-                        className="rounded-lg bg-[var(--color-blue)] px-4 py-2 font-semibold text-[var(--color-bg)] disabled:opacity-50"
+                        className="rounded-lg bg-blue px-4 py-2 font-semibold text-bg disabled:opacity-50"
                       >
                         {busy ? 'Guardando…' : 'Guardar y conectar'}
                       </button>

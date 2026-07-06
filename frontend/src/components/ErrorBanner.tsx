@@ -9,8 +9,8 @@ export function ErrorBanner({ error }: { error: ApiError | null }) {
       role="alert"
       className={`rounded-xl border px-4 py-3 text-sm ${
         error.isChallenge
-          ? 'border-[var(--color-yellow)]/50 bg-[var(--color-yellow)]/10 text-[var(--color-yellow)]'
-          : 'border-[var(--color-red)]/50 bg-[var(--color-red)]/10 text-[var(--color-red)]'
+          ? 'border-yellow/50 bg-yellow/10 text-yellow'
+          : 'border-red/50 bg-red/10 text-red'
       }`}
     >
       {error.isChallenge ? (

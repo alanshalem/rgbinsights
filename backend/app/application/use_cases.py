@@ -432,6 +432,7 @@ class ListUsersUseCase:
         fan = self._fan_scores()
         threads = DmThreadRepository(self._session).by_user_pk()
         users_by_pk = self._users_by_pk(list(engagements))
+        post_urls = self._post_urls()
         needle = search.lower() if search else None
 
         views: list[UserView] = []
@@ -486,6 +487,7 @@ class ListUsersUseCase:
                             post_media_pk=e.post_media_pk,
                             type=EngagementType(e.type),
                             comment_text=e.comment_text,
+                            post_url=post_urls.get(e.post_media_pk),
                         )
                         for e in rows
                     ],
@@ -528,6 +530,15 @@ class ListUsersUseCase:
             ):
                 out[user.pk] = user
         return out
+
+    def _post_urls(self) -> dict[str, str]:
+        """media_pk -> post URL, so each engagement can link to its post."""
+        return {
+            media_pk: url
+            for media_pk, url in self._session.exec(
+                select(models.Post.media_pk, models.Post.url)
+            )
+        }
 
     def _fan_scores(self) -> dict[str, int]:
         """user_pk -> distinct posts engaged (global loyalty signal).

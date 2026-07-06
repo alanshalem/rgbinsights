@@ -58,7 +58,7 @@ export function Modal({
         role="dialog"
         aria-modal="true"
         tabIndex={-1}
-        className={`w-full ${width} rounded-2xl border border-[var(--color-border)] bg-[var(--color-panel)] shadow-2xl shadow-black/40 outline-none ${panel}`}
+        className={`anim-pop w-full ${width} rounded-2xl border border-border bg-panel shadow-2xl shadow-black/40 outline-none ${panel}`}
         onMouseDown={(e) => e.stopPropagation()}
       >
         {children}

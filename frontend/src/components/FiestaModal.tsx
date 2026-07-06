@@ -39,57 +39,57 @@ export function FiestaModal({
   return (
     <Modal onClose={onClose} center>
       <h2 className="mb-1 text-lg font-bold">Nueva fiesta</h2>
-      <p className="mb-4 text-xs text-[var(--color-muted)]">
+      <p className="mb-4 text-xs text-muted">
         El <b>inicio de campaña</b> es el corte del semáforo: los DMs anteriores (de otra fiesta) no
         cuentan.
       </p>
       <div className="flex flex-col gap-3 text-sm">
         <label className="flex flex-col gap-1">
-          <span className="text-[var(--color-muted)]">Nombre</span>
+          <span className="text-muted">Nombre</span>
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="RGB 09.07 @ tcqlub"
-            className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 outline-none"
+            className="rounded-lg border border-border bg-bg px-3 py-2 outline-none"
           />
         </label>
         <div className="flex gap-3">
           <label className="flex flex-1 flex-col gap-1">
-            <span className="text-[var(--color-muted)]">Inicio de campaña</span>
+            <span className="text-muted">Inicio de campaña</span>
             <input
               type="date"
               value={promoStart}
               onChange={(e) => setPromoStart(e.target.value)}
-              className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 outline-none"
+              className="rounded-lg border border-border bg-bg px-3 py-2 outline-none"
             />
           </label>
           <label className="flex flex-1 flex-col gap-1">
-            <span className="text-[var(--color-muted)]">Fecha del evento</span>
+            <span className="text-muted">Fecha del evento</span>
             <input
               type="date"
               value={eventDate}
               onChange={(e) => setEventDate(e.target.value)}
-              className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 outline-none"
+              className="rounded-lg border border-border bg-bg px-3 py-2 outline-none"
             />
           </label>
         </div>
         <label className="flex flex-col gap-1">
-          <span className="text-[var(--color-muted)]">Notas (opcional)</span>
+          <span className="text-muted">Notas (opcional)</span>
           <input
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
-            className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 outline-none"
+            className="rounded-lg border border-border bg-bg px-3 py-2 outline-none"
           />
         </label>
-        {error && <p className="text-xs text-[var(--color-red)]">{error}</p>}
+        {error && <p className="text-xs text-red">{error}</p>}
         <div className="mt-1 flex justify-end gap-2">
-          <button onClick={onClose} className="rounded-lg px-3 py-2 text-[var(--color-muted)]">
+          <button onClick={onClose} className="rounded-lg px-3 py-2 text-muted">
             Cancelar
           </button>
           <button
             onClick={submit}
             disabled={!canSave || create.isPending}
-            className="rounded-lg bg-[var(--color-green)] px-4 py-2 font-semibold text-[var(--color-bg)] disabled:opacity-40"
+            className="rounded-lg bg-green px-4 py-2 font-semibold text-bg disabled:opacity-40"
           >
             {create.isPending ? 'Creando…' : 'Crear fiesta'}
           </button>

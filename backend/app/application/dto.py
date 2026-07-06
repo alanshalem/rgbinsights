@@ -52,6 +52,7 @@ class UserEngagement:
     post_media_pk: str
     type: EngagementType
     comment_text: str | None
+    post_url: str | None = None  # link to the post (opens the comment/like in context)
 
 
 @dataclass(frozen=True, slots=True)

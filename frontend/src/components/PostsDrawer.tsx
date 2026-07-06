@@ -31,7 +31,7 @@ export function PostsDrawer({
   };
 
   return (
-    <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-panel)] p-3">
+    <div className="rounded-2xl border border-border bg-panel p-3">
       <div className="mb-2 flex items-center justify-between">
         <h3 className="text-sm font-semibold">
           Posts {event === undefined ? '(todos)' : 'de la fiesta'} · {rows.length}
@@ -40,14 +40,14 @@ export function PostsDrawer({
           <button
             onClick={handleRescan}
             disabled={rescan.isPending || rows.length === 0}
-            className="rounded-lg bg-[var(--color-panel-2)] px-3 py-1 text-xs font-medium hover:bg-[var(--color-border)] disabled:opacity-40"
+            className="rounded-lg bg-panel-2 px-3 py-1 text-xs font-medium hover:bg-border disabled:opacity-40"
           >
             {rescan.isPending ? 'Re-escaneando…' : '↻ Re-escanear fiesta'}
           </button>
         )}
       </div>
       {rows.length === 0 ? (
-        <p className="py-4 text-center text-xs text-[var(--color-muted)]">
+        <p className="py-4 text-center text-xs text-muted">
           Sin posts. Escaneá URLs {event !== undefined && 'con esta fiesta seleccionada'}.
         </p>
       ) : (
@@ -55,7 +55,7 @@ export function PostsDrawer({
           {rows.map((p) => (
             <li
               key={p.media_pk}
-              className="flex items-center justify-between gap-2 rounded-lg bg-[var(--color-bg)] px-3 py-2 text-sm"
+              className="flex items-center justify-between gap-2 rounded-lg bg-bg px-3 py-2 text-sm"
             >
               <a
                 href={p.url}
@@ -63,18 +63,16 @@ export function PostsDrawer({
                 rel="noreferrer"
                 className="min-w-0 flex-1 truncate hover:underline"
               >
-                <span className="text-[var(--color-muted)]">/{p.shortcode}</span>{' '}
+                <span className="text-muted">/{p.shortcode}</span>{' '}
                 {p.caption.slice(0, 60) || 'sin caption'}
               </a>
-              <span className="shrink-0 text-xs text-[var(--color-muted)]">
-                {timeAgo(p.last_scanned_at)}
-              </span>
+              <span className="shrink-0 text-xs text-muted">{timeAgo(p.last_scanned_at)}</span>
             </li>
           ))}
         </ul>
       )}
       {rescan.isSuccess && (
-        <p className="mt-2 text-xs text-[var(--color-muted)]">
+        <p className="mt-2 text-xs text-muted">
           Re-escaneado: {rescan.data.total_users_found} usuarios ({rescan.data.total_new_users}{' '}
           nuevos).
         </p>

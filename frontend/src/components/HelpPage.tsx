@@ -16,7 +16,7 @@ function Section({ id, title, children }: { id: string; title: string; children:
   return (
     <section id={id} className="mb-8 scroll-mt-20">
       <h2 className="display mb-2 text-lg font-black tracking-tight uppercase">{title}</h2>
-      <div className="flex flex-col gap-2 text-sm text-[var(--color-ink)]/85">{children}</div>
+      <div className="flex flex-col gap-2 text-sm text-ink/85">{children}</div>
     </section>
   );
 }
@@ -30,7 +30,7 @@ export function HelpPage({ onBack }: { onBack: () => void }) {
         </h1>
         <button
           onClick={onBack}
-          className="rounded-lg border border-[var(--color-border)] px-3 py-1.5 text-sm hover:bg-[var(--color-panel)]"
+          className="rounded-lg border border-border px-3 py-1.5 text-sm hover:bg-panel"
         >
           ← Volver al panel
         </button>
@@ -43,7 +43,7 @@ export function HelpPage({ onBack }: { onBack: () => void }) {
               <li key={s.id}>
                 <a
                   href={`#${s.id}`}
-                  className="block rounded px-2 py-1 text-[var(--color-muted)] hover:bg-[var(--color-panel)] hover:text-[var(--color-ink)]"
+                  className="block rounded px-2 py-1 text-muted hover:bg-panel hover:text-ink"
                 >
                   {s.title}
                 </a>
@@ -157,7 +157,7 @@ export function HelpPage({ onBack }: { onBack: () => void }) {
               Tildá <b>seguidores primero</b> o <b>solo a los que me siguen</b> — DMs a seguidores
               son <b>mucho menos riesgosos</b>. Se frena solo si Instagram avisa.
             </p>
-            <p className="text-[var(--color-red)]">
+            <p className="text-red">
               Enviar masivo es la acción más riesgosa de Instagram. Empezá con máxima cautela y no
               lo hagas todos los días.
             </p>

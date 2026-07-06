@@ -64,15 +64,13 @@ export function ActionsMenu({
     <button
       onClick={onClick}
       disabled={disabled}
-      className="flex w-full flex-col gap-0.5 px-3 py-2 text-left hover:bg-[var(--color-panel-2)] disabled:opacity-40"
+      className="flex w-full flex-col gap-0.5 px-3 py-2 text-left hover:bg-panel-2 disabled:opacity-40"
     >
       <span className="flex items-center justify-between gap-4 text-sm">
         <span className="font-medium">{label}</span>
-        <span className="text-xs text-[var(--color-muted)]">{hint}</span>
+        <span className="text-xs text-muted">{hint}</span>
       </span>
-      {freshness && (
-        <span className="mono text-[10px] text-[var(--color-muted)]">actualizado {freshness}</span>
-      )}
+      {freshness && <span className="mono text-[10px] text-muted">actualizado {freshness}</span>}
     </button>
   );
 
@@ -81,12 +79,12 @@ export function ActionsMenu({
       <button
         onClick={() => setOpen((o) => !o)}
         disabled={busy}
-        className="rounded-lg bg-[var(--color-blue)] px-3 py-1.5 text-sm font-semibold text-[var(--color-bg)] shadow-[0_0_24px_-6px_var(--color-blue)] transition-opacity hover:opacity-90 disabled:opacity-50"
+        className="rounded-lg bg-blue px-3 py-1.5 text-sm font-semibold text-bg shadow-[0_0_24px_-6px_var(--color-blue)] transition-opacity hover:opacity-90 disabled:opacity-50"
       >
         {busy ? '↻ Actualizando…' : '↻ Actualizar ▾'}
       </button>
       {open && (
-        <div className="absolute z-20 mt-1 w-72 overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] shadow-xl">
+        <div className="absolute z-20 mt-1 w-72 overflow-hidden rounded-lg border border-border bg-panel shadow-xl">
           <Item
             label="Sincronizar DMs"
             hint="rápido"
@@ -107,11 +105,11 @@ export function ActionsMenu({
             disabled={event === undefined}
             onClick={() => event !== undefined && run(enrich, { id: event, force })}
           />
-          <label className="flex items-center gap-2 border-t border-[var(--color-border)] px-3 py-2 text-xs text-[var(--color-muted)]">
+          <label className="flex items-center gap-2 border-t border-border px-3 py-2 text-xs text-muted">
             <input type="checkbox" checked={force} onChange={(e) => setForce(e.target.checked)} />
             <span>
               Forzar (ignorar caché) — más lento, más pedidos a IG.{' '}
-              <span className="text-[var(--color-muted)]">
+              <span className="text-muted">
                 Normalmente reusa lo reciente para evitar bloqueos.
               </span>
             </span>

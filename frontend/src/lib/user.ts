@@ -4,20 +4,31 @@ export type EngagementSummary = {
   commented: boolean;
   liked: boolean;
   commentPreview: string | null;
+  commentUrl: string | null; // post of the shown comment — opens it in context
+  likeUrl: string | null; // a post this user liked
 };
 
 export function summarize(user: UserOut): EngagementSummary {
   let commented = false;
   let liked = false;
   let commentPreview: string | null = null;
+  let commentUrl: string | null = null;
+  let likeUrl: string | null = null;
   for (const e of user.engagements) {
     if (e.type === 'comment') {
       commented = true;
-      if (!commentPreview && e.comment_text) commentPreview = e.comment_text;
+      if (!commentUrl) commentUrl = e.post_url ?? null;
+      if (!commentPreview && e.comment_text) {
+        commentPreview = e.comment_text;
+        commentUrl = e.post_url ?? commentUrl;
+      }
     }
-    if (e.type === 'like') liked = true;
+    if (e.type === 'like') {
+      liked = true;
+      if (!likeUrl) likeUrl = e.post_url ?? null;
+    }
   }
-  return { commented, liked, commentPreview };
+  return { commented, liked, commentPreview, commentUrl, likeUrl };
 }
 
 export function initials(user: UserOut): string {

@@ -31,7 +31,7 @@ function fmtDur(ms: number): string {
 
 function Spinner() {
   return (
-    <span className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-[var(--color-blue)] border-t-transparent" />
+    <span className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-blue border-t-transparent" />
   );
 }
 
@@ -46,18 +46,15 @@ function StatChips({ kind, result }: { kind: string; result: Record<string, unkn
 
   return (
     <>
-      {quiet && <p className="mono mt-1.5 text-xs text-[var(--color-muted)]">sin novedades ·</p>}
+      {quiet && <p className="mono mt-1.5 text-xs text-muted">sin novedades ·</p>}
       {entries.length === 0 ? (
-        !quiet && <p className="mono mt-1 text-xs text-[var(--color-green)]">listo</p>
+        !quiet && <p className="mono mt-1 text-xs text-green">listo</p>
       ) : (
         <div className="mt-1.5 flex flex-wrap gap-1.5">
           {entries.map(([k, v]) => (
-            <span
-              key={k}
-              className="rounded-md bg-[var(--color-panel-2)] px-2 py-0.5 text-xs whitespace-nowrap"
-            >
+            <span key={k} className="rounded-md bg-panel-2 px-2 py-0.5 text-xs whitespace-nowrap">
               <b style={{ color: CHIP_COLOR[k] ?? 'var(--color-ink)' }}>{String(v)}</b>{' '}
-              <span className="text-[var(--color-muted)]">{k}</span>
+              <span className="text-muted">{k}</span>
             </span>
           ))}
         </div>
@@ -81,21 +78,21 @@ function TaskToast({ task }: { task: Task }) {
 
   return (
     <div
-      className="rounded-xl border border-[var(--color-border)] bg-[var(--color-panel)] p-3 shadow-lg"
+      className="anim-toast rounded-xl border border-border bg-panel p-3 shadow-lg"
       style={{ borderLeft: `3px solid ${accent}` }}
     >
       <div className="flex items-center gap-2">
         {task.status === 'running' ? (
           <Spinner />
         ) : task.status === 'done' ? (
-          <span className="text-[var(--color-green)]">✓</span>
+          <span className="text-green">✓</span>
         ) : (
-          <span className="text-[var(--color-red)]">✕</span>
+          <span className="text-red">✕</span>
         )}
         <span className="flex-1 truncate text-sm font-semibold">
           {meta.icon} {meta.title}
         </span>
-        <span className="mono shrink-0 text-xs text-[var(--color-muted)]">
+        <span className="mono shrink-0 text-xs text-muted">
           {task.status === 'running'
             ? task.total > 0
               ? `${task.current}/${task.total}`
@@ -105,23 +102,21 @@ function TaskToast({ task }: { task: Task }) {
       </div>
 
       {task.status === 'running' && task.total > 0 && (
-        <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-[var(--color-panel-2)]">
+        <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-panel-2">
           <div
-            className="h-full rounded-full bg-[var(--color-blue)] transition-all"
+            className="h-full rounded-full bg-blue transition-all"
             style={{ width: `${pct}%` }}
           />
         </div>
       )}
 
       {task.status === 'running' && task.message && (
-        <p className="mono mt-1.5 truncate text-xs text-[var(--color-muted)]">{task.message}</p>
+        <p className="mono mt-1.5 truncate text-xs text-muted">{task.message}</p>
       )}
       {task.status === 'done' && (
         <StatChips kind={task.kind} result={task.result as Record<string, unknown>} />
       )}
-      {task.status === 'error' && (
-        <p className="mt-1 text-xs text-[var(--color-red)]">{task.error}</p>
-      )}
+      {task.status === 'error' && <p className="mt-1 text-xs text-red">{task.error}</p>}
     </div>
   );
 }
@@ -133,48 +128,40 @@ function CampaignToast({ c }: { c: Campaign }) {
   const eta = c.status === 'running' && c.pending > 0 ? estimateFor(c.pending, c).days : null;
   return (
     <div
-      className="rounded-xl border border-[var(--color-border)] bg-[var(--color-panel)] p-3 shadow-lg"
+      className="anim-toast rounded-xl border border-border bg-panel p-3 shadow-lg"
       style={{ borderLeft: '3px solid var(--color-red)' }}
     >
       <div className="flex items-center gap-2">
         {c.status === 'running' && <Spinner />}
         <span className="flex-1 truncate text-sm font-semibold">✉ Campaña de DMs</span>
-        <span className="mono shrink-0 text-xs text-[var(--color-muted)]">
+        <span className="mono shrink-0 text-xs text-muted">
           {eta ? `~${eta} día${eta === 1 ? '' : 's'} · ` : ''}
           {c.sent}/{c.total}
         </span>
       </div>
-      <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-[var(--color-panel-2)]">
-        <div
-          className="h-full rounded-full bg-[var(--color-red)] transition-all"
-          style={{ width: `${pct}%` }}
-        />
+      <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-panel-2">
+        <div className="h-full rounded-full bg-red transition-all" style={{ width: `${pct}%` }} />
       </div>
       <div className="mt-2 flex flex-wrap gap-1.5 text-xs">
-        <span className="rounded-md bg-[var(--color-panel-2)] px-2 py-0.5">
-          <b className="text-[var(--color-green)]">{c.sent}</b>{' '}
-          <span className="text-[var(--color-muted)]">enviados</span>
+        <span className="rounded-md bg-panel-2 px-2 py-0.5">
+          <b className="text-green">{c.sent}</b> <span className="text-muted">enviados</span>
         </span>
         {c.failed > 0 && (
-          <span className="rounded-md bg-[var(--color-panel-2)] px-2 py-0.5">
-            <b className="text-[var(--color-red)]">{c.failed}</b>{' '}
-            <span className="text-[var(--color-muted)]">fallidos</span>
+          <span className="rounded-md bg-panel-2 px-2 py-0.5">
+            <b className="text-red">{c.failed}</b> <span className="text-muted">fallidos</span>
           </span>
         )}
-        <span className="rounded-md bg-[var(--color-panel-2)] px-2 py-0.5">
-          <b className="text-[var(--color-ink)]">{c.pending}</b>{' '}
-          <span className="text-[var(--color-muted)]">pendientes</span>
+        <span className="rounded-md bg-panel-2 px-2 py-0.5">
+          <b className="text-ink">{c.pending}</b> <span className="text-muted">pendientes</span>
         </span>
-        <span className="rounded-md bg-[var(--color-panel-2)] px-2 py-0.5">
-          <b className="text-[var(--color-ink)]">
+        <span className="rounded-md bg-panel-2 px-2 py-0.5">
+          <b className="text-ink">
             {c.sent_today}/{c.daily_cap}
           </b>{' '}
-          <span className="text-[var(--color-muted)]">hoy</span>
+          <span className="text-muted">hoy</span>
         </span>
       </div>
-      {c.status === 'blocked' && (
-        <p className="mono mt-1.5 text-xs text-[var(--color-red)]">frenada: {c.error}</p>
-      )}
+      {c.status === 'blocked' && <p className="mono mt-1.5 text-xs text-red">frenada: {c.error}</p>}
     </div>
   );
 }

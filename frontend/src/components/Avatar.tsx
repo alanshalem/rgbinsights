@@ -10,7 +10,7 @@ export function Avatar({ user, size = 40 }: { user: UserOut; size?: number }) {
 
   return (
     <div
-      className="flex shrink-0 items-center justify-center overflow-hidden rounded-full bg-[var(--color-panel-2)] text-sm font-semibold text-[var(--color-muted)]"
+      className="flex shrink-0 items-center justify-center overflow-hidden rounded-full bg-panel-2 text-sm font-semibold text-muted"
       style={{ width: size, height: size }}
     >
       {showImg ? (

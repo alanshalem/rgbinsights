@@ -175,11 +175,11 @@ export function CampaignModal({
         <div className="mb-5 flex items-start justify-between gap-3">
           <div className="flex flex-col gap-0.5">
             <h2 className="display text-xl font-black tracking-tight uppercase">Campaña de DMs</h2>
-            <span className="mono text-xs text-[var(--color-muted)]">{eventName}</span>
+            <span className="mono text-xs text-muted">{eventName}</span>
           </div>
           <button
             onClick={onClose}
-            className="shrink-0 rounded-lg bg-[var(--color-panel-2)] px-3 py-1 text-sm hover:bg-[var(--color-border)]"
+            className="shrink-0 rounded-lg bg-panel-2 px-3 py-1 text-sm hover:bg-border"
           >
             Cerrar
           </button>
@@ -243,28 +243,28 @@ function Progress({
   const done = c.sent + c.failed;
   const pct = c.total ? Math.round((done / c.total) * 100) : 0;
   const badge: Record<string, string> = {
-    running: 'text-[var(--color-green)]',
-    paused: 'text-[var(--color-yellow)]',
-    blocked: 'text-[var(--color-red)]',
-    done: 'text-[var(--color-muted)]',
+    running: 'text-green',
+    paused: 'text-yellow',
+    blocked: 'text-red',
+    done: 'text-muted',
   };
   return (
     <div className="flex flex-col gap-3 text-sm">
       <div className="flex items-center gap-2">
         <span className={`mono font-bold uppercase ${badge[c.status]}`}>{c.status}</span>
-        <span className="mono text-[var(--color-muted)]">
+        <span className="mono text-muted">
           {c.sent} enviados · {c.pending} pendientes · {c.failed} fallidos
         </span>
       </div>
-      <div className="h-2 overflow-hidden rounded-full bg-[var(--color-panel-2)]">
-        <div className="h-full rounded-full bg-[var(--color-green)]" style={{ width: `${pct}%` }} />
+      <div className="h-2 overflow-hidden rounded-full bg-panel-2">
+        <div className="h-full rounded-full bg-green" style={{ width: `${pct}%` }} />
       </div>
-      <p className="mono text-xs text-[var(--color-muted)]">
+      <p className="mono text-xs text-muted">
         hoy {c.sent_today}/{c.daily_cap} · 1 cada {c.delay_min}-{c.delay_max}s · {c.hour_start}-
         {c.hour_end}h
       </p>
       {c.status === 'blocked' && (
-        <p className="rounded-lg border border-[var(--color-red)]/50 bg-[var(--color-red)]/10 px-3 py-2 text-xs text-[var(--color-red)]">
+        <p className="rounded-lg border border-red/50 bg-red/10 px-3 py-2 text-xs text-red">
           Instagram frenó el envío: {c.error}. Esperá un rato (horas), y si querés reanudá.
         </p>
       )}
@@ -273,7 +273,7 @@ function Progress({
           <button
             onClick={onStop}
             disabled={busy}
-            className="rounded-lg border border-[var(--color-border)] px-4 py-2 font-semibold disabled:opacity-40"
+            className="rounded-lg border border-border px-4 py-2 font-semibold disabled:opacity-40"
           >
             Pausar
           </button>
@@ -281,13 +281,13 @@ function Progress({
           <button
             onClick={onResume}
             disabled={busy || c.pending === 0}
-            className="rounded-lg bg-[var(--color-green)] px-4 py-2 font-semibold text-[var(--color-bg)] disabled:opacity-40"
+            className="rounded-lg bg-green px-4 py-2 font-semibold text-bg disabled:opacity-40"
           >
             Reanudar
           </button>
         )}
       </div>
-      <p className="text-xs text-[var(--color-muted)]">
+      <p className="text-xs text-muted">
         La campaña sigue en segundo plano mientras el backend esté corriendo. Podés cerrar esta
         ventana.
       </p>
@@ -361,7 +361,7 @@ function Setup(props: {
       <div className="flex min-w-0 flex-col gap-6">
         {/* message variants */}
         <div className="flex flex-col gap-2">
-          <span className="text-[var(--color-muted)]">
+          <span className="text-muted">
             Mensaje ({variants.length} variante{variants.length === 1 ? '' : 's'}) — usá{' '}
             <code>{'{nombre}'}</code> y <code>{'{usuario}'}</code>. Varias variantes = menos spam.
           </span>
@@ -376,11 +376,11 @@ function Setup(props: {
               }}
               rows={2}
               placeholder={i === 0 ? 'Mensaje principal…' : 'Variante (opcional)…'}
-              className="w-full resize-none rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 outline-none"
+              className="w-full resize-none rounded-lg border border-border bg-bg px-3 py-2 outline-none"
             />
           ))}
           {variants.length > 0 && !usesName && (
-            <p className="text-xs text-[var(--color-yellow)]">
+            <p className="text-xs text-yellow">
               ⚠ Sin <code>{'{nombre}'}</code> todos reciben el mismo texto exacto — más señal de
               spam.
             </p>
@@ -389,14 +389,12 @@ function Setup(props: {
 
         {/* audience — follow-status filter, explained */}
         <div className="flex flex-col gap-1.5">
-          <span className="text-[var(--color-muted)]">¿A quién le mando?</span>
+          <span className="text-muted">¿A quién le mando?</span>
           {AUDIENCE.map((a) => (
             <label
               key={a.key}
               className={`flex cursor-pointer gap-2 rounded-lg border px-3 py-2 ${
-                audience === a.key
-                  ? 'border-[var(--color-blue)] bg-[var(--color-blue)]/10'
-                  : 'border-[var(--color-border)]'
+                audience === a.key ? 'border-blue bg-blue/10' : 'border-border'
               }`}
             >
               <input
@@ -408,7 +406,7 @@ function Setup(props: {
               />
               <span>
                 <span className="font-semibold">{a.label}</span>
-                <span className="block text-xs text-[var(--color-muted)]">{a.hint}</span>
+                <span className="block text-xs text-muted">{a.hint}</span>
               </span>
             </label>
           ))}
@@ -416,7 +414,7 @@ function Setup(props: {
 
         {/* cautela presets — each card shows its knobs + ETA */}
         <div className="flex flex-col gap-1.5">
-          <span className="text-[var(--color-muted)]">Cautela (ritmo de envío)</span>
+          <span className="text-muted">Cautela (ritmo de envío)</span>
           <div className="grid gap-2 sm:grid-cols-2">
             {/* the first card is the auto-computed sweet spot */}
             {cards.map((name) => {
@@ -428,13 +426,11 @@ function Setup(props: {
                   key={name}
                   onClick={() => applyPreset(name)}
                   className={`flex flex-col gap-1 rounded-lg border px-3 py-2 text-left ${
-                    selected
-                      ? 'border-[var(--color-blue)] bg-[var(--color-blue)]/10'
-                      : 'border-[var(--color-border)] hover:border-[var(--color-muted)]'
+                    selected ? 'border-blue bg-blue/10' : 'border-border hover:border-muted'
                   }`}
                 >
                   <span className="font-semibold">{PRESET_LABEL[name] ?? name}</span>
-                  <span className="mono text-xs text-[var(--color-muted)]">
+                  <span className="mono text-xs text-muted">
                     {p.delay_min}–{p.delay_max}s · {p.daily_cap}/día · {p.hour_start}–{p.hour_end}h
                   </span>
                   <span className="mono text-xs">
@@ -444,7 +440,7 @@ function Setup(props: {
               );
             })}
           </div>
-          <span className="text-xs text-[var(--color-muted)]">
+          <span className="text-xs text-muted">
             <b>Óptimo</b>: la app calcula el ritmo más seguro que igual termina en ~2-3 días, según
             cuántos rojos haya. Si son muchos, respeta un tope diario y puede tardar un poco más.
           </span>
@@ -493,23 +489,23 @@ function Setup(props: {
 
       {/* ================= RIGHT: revisar + lanzar ================= */}
       <aside className="flex min-w-0 flex-col gap-3">
-        <div className="rounded-xl border border-[var(--color-red)]/40 bg-[var(--color-red)]/10 px-3 py-2 text-xs text-[var(--color-red)]">
+        <div className="rounded-xl border border-red/40 bg-red/10 px-3 py-2 text-xs text-red">
           <b>Riesgo:</b> el envío masivo es lo más riesgoso de Instagram (action-block / ban). Se
           frena solo si IG avisa — empezá con <b>Óptimo</b> o Máxima cautela.
         </div>
 
         {/* summary card — big count, ETA, and the follower / non-follower split */}
-        <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-4">
+        <div className="rounded-xl border border-border bg-bg p-4">
           {preview ? (
             <>
               <div className="flex items-center justify-between">
-                <span className="text-[11px] font-semibold uppercase tracking-wider text-[var(--color-muted)]">
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-muted">
                   Se enviarán
                 </span>
                 <button
                   onClick={recalc}
                   disabled={recalcBusy}
-                  className="rounded-lg border border-[var(--color-border)] px-2.5 py-1 text-xs hover:bg-[var(--color-panel)] disabled:opacity-40"
+                  className="rounded-lg border border-border px-2.5 py-1 text-xs hover:bg-panel disabled:opacity-40"
                 >
                   {recalcBusy ? '…' : 'Recalcular'}
                 </button>
@@ -518,11 +514,9 @@ function Setup(props: {
                 <span className="display text-4xl leading-none font-black">
                   {preview.targets_count}
                 </span>
-                <span className="text-[var(--color-muted)]">
-                  mensaje{preview.targets_count === 1 ? '' : 's'}
-                </span>
+                <span className="text-muted">mensaje{preview.targets_count === 1 ? '' : 's'}</span>
               </div>
-              <p className="mono mt-2 text-xs text-[var(--color-muted)]">
+              <p className="mono mt-2 text-xs text-muted">
                 ~{preview.estimate.days} día{preview.estimate.days === 1 ? '' : 's'} ·{' '}
                 {preview.estimate.per_day}/día · 1 cada {fmtGap(preview.estimate.avg_delay_seconds)}{' '}
                 · franja {params.hour_start}–{params.hour_end}h
@@ -530,18 +524,17 @@ function Setup(props: {
               {/* follower split — green = safest (already follow you) */}
               {preview.targets_count > 0 && (
                 <div className="mt-3">
-                  <div className="flex h-2 overflow-hidden rounded-full bg-[var(--color-panel-2)]">
+                  <div className="flex h-2 overflow-hidden rounded-full bg-panel-2">
                     <div
-                      className="h-full bg-[var(--color-green)]"
+                      className="h-full bg-green"
                       style={{
                         width: `${Math.round((preview.follower_targets / preview.targets_count) * 100)}%`,
                       }}
                     />
                   </div>
-                  <div className="mt-1.5 flex justify-between text-xs text-[var(--color-muted)]">
+                  <div className="mt-1.5 flex justify-between text-xs text-muted">
                     <span>
-                      <span className="text-[var(--color-green)]">●</span>{' '}
-                      {preview.follower_targets} te siguen
+                      <span className="text-green">●</span> {preview.follower_targets} te siguen
                     </span>
                     <span>{preview.targets_count - preview.follower_targets} no te siguen</span>
                   </div>
@@ -549,30 +542,28 @@ function Setup(props: {
               )}
             </>
           ) : (
-            <span className="mono text-sm text-[var(--color-muted)]">Calculando resumen…</span>
+            <span className="mono text-sm text-muted">Calculando resumen…</span>
           )}
           {preview && preview.samples.length > 0 && (
-            <ul className="mt-3 flex flex-col gap-1.5 border-t border-[var(--color-border)] pt-3 text-xs text-[var(--color-muted)]">
+            <ul className="mt-3 flex flex-col gap-1.5 border-t border-border pt-3 text-xs text-muted">
               {preview.samples.map((s) => (
                 <li key={s.username} className="truncate">
-                  <b className="text-[var(--color-ink)]">@{s.username}:</b> {s.message}
+                  <b className="text-ink">@{s.username}:</b> {s.message}
                 </li>
               ))}
             </ul>
           )}
         </div>
 
-        {error && <p className="text-xs text-[var(--color-red)]">{error}</p>}
+        {error && <p className="text-xs text-red">{error}</p>}
         {testedTo && (
-          <p className="text-xs text-[var(--color-green)]">
-            ✓ Mensaje de prueba enviado a @{testedTo}.
-          </p>
+          <p className="text-xs text-green">✓ Mensaje de prueba enviado a @{testedTo}.</p>
         )}
 
         {/* test send — one DM to check it lands before the batch */}
-        <div className="flex flex-col gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-3">
+        <div className="flex flex-col gap-2 rounded-xl border border-border bg-bg p-3">
           <label className="flex flex-col gap-1 text-xs">
-            <span className="text-[var(--color-muted)]">
+            <span className="text-muted">
               Probá primero: mandá 1 DM (por defecto, al primero de la lista)
             </span>
             <input
@@ -580,7 +571,7 @@ function Setup(props: {
               value={testTarget}
               onChange={(e) => setTestTarget(e.target.value)}
               placeholder={redUsers[0] ? `@${redUsers[0].username}` : '@usuario'}
-              className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] px-3 py-2 outline-none"
+              className="w-full rounded-lg border border-border bg-panel px-3 py-2 outline-none"
             />
             <datalist id="test-targets">
               {redUsers.slice(0, 500).map((u) => (
@@ -593,7 +584,7 @@ function Setup(props: {
           <button
             onClick={onTest}
             disabled={testBusy || count === 0}
-            className="w-full rounded-lg border border-[var(--color-border)] px-4 py-2 font-semibold hover:bg-[var(--color-panel)] disabled:opacity-40"
+            className="w-full rounded-lg border border-border px-4 py-2 font-semibold hover:bg-panel disabled:opacity-40"
           >
             {testBusy ? 'Enviando…' : 'Enviar 1 de prueba'}
           </button>
@@ -602,7 +593,7 @@ function Setup(props: {
         <button
           onClick={onLaunch}
           disabled={launchBusy || count === 0}
-          className="w-full rounded-xl bg-[var(--color-red)] px-4 py-3 font-semibold text-[var(--color-bg)] shadow-[0_0_28px_-8px_var(--color-red)] transition hover:brightness-110 disabled:opacity-40"
+          className="w-full rounded-xl bg-red px-4 py-3 font-semibold text-bg shadow-[0_0_28px_-8px_var(--color-red)] transition hover:brightness-110 disabled:opacity-40"
         >
           {launchBusy ? 'Lanzando…' : `Lanzar campaña · ${count} DMs`}
         </button>
@@ -626,14 +617,14 @@ function Field({
 }) {
   return (
     <label className="flex flex-col gap-1 text-xs">
-      <span className="text-[var(--color-muted)]">{label}</span>
+      <span className="text-muted">{label}</span>
       <input
         type="number"
         value={value}
         min={min}
         max={max}
         onChange={(e) => onChange(Number(e.target.value))}
-        className="mono w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-2 py-1.5 outline-none"
+        className="mono w-full rounded-lg border border-border bg-bg px-2 py-1.5 outline-none"
       />
     </label>
   );

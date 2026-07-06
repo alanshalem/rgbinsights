@@ -90,6 +90,7 @@ class UserEngagementOut(BaseModel):
     post_media_pk: str
     type: EngagementType
     comment_text: str | None
+    post_url: str | None
 
 
 class UserOut(BaseModel):

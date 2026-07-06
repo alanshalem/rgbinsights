@@ -3,6 +3,7 @@ import type { Order, TrafficLight } from '../api/client';
 import { useUsers } from '../api/hooks';
 import { summarize } from '../lib/user';
 import { Avatar } from './Avatar';
+import { PostLink } from './PostLink';
 import { TrafficChip } from './TrafficChip';
 
 const PAGE = 50;
@@ -26,7 +27,7 @@ export function UsersTable({ query, total }: { query: TableQuery; total: number 
 
   if (total === 0) {
     return (
-      <p className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-panel)] py-12 text-center text-sm text-[var(--color-muted)]">
+      <p className="rounded-2xl border border-border bg-panel py-12 text-center text-sm text-muted">
         Sin usuarios. Escaneá un post para empezar.
       </p>
     );
@@ -34,9 +35,9 @@ export function UsersTable({ query, total }: { query: TableQuery; total: number 
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="overflow-x-auto rounded-2xl border border-[var(--color-border)] bg-[var(--color-panel)]">
+      <div className="overflow-x-auto rounded-2xl border border-border bg-panel">
         <table className="w-full min-w-[680px] text-left text-sm">
-          <thead className="border-b border-[var(--color-border)] text-xs text-[var(--color-muted)]">
+          <thead className="border-b border-border text-xs text-muted">
             <tr>
               <th className="px-4 py-3 font-medium">Usuario</th>
               <th className="px-4 py-3 font-medium">Estado</th>
@@ -48,36 +49,61 @@ export function UsersTable({ query, total }: { query: TableQuery; total: number 
           </thead>
           <tbody>
             {rows.map((u) => {
-              const { commented, liked, commentPreview } = summarize(u);
+              const { commented, liked, commentPreview, commentUrl, likeUrl } = summarize(u);
               return (
-                <tr key={u.pk} className="border-b border-[var(--color-border)]/50 last:border-0">
+                <tr key={u.pk} className="border-b border-border/50 last:border-0">
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2.5">
                       <Avatar user={u} size={32} />
                       <div className="min-w-0">
                         <div className="truncate font-medium">@{u.username}</div>
-                        <div className="truncate text-xs text-[var(--color-muted)]">
-                          {u.full_name}
-                        </div>
+                        <div className="truncate text-xs text-muted">{u.full_name}</div>
                       </div>
                     </div>
                   </td>
                   <td className="px-4 py-3">
                     <TrafficChip light={u.traffic_light} />
                   </td>
-                  <td className="px-4 py-3 text-[var(--color-muted)]">{u.engagement_count}</td>
-                  <td className="px-4 py-3 text-[var(--color-muted)]">
-                    {[commented && 'comentó', liked && 'likeó'].filter(Boolean).join(' · ') || '—'}
+                  <td className="px-4 py-3 text-muted">{u.engagement_count}</td>
+                  <td className="px-4 py-3 text-muted">
+                    <span className="flex flex-wrap items-center gap-x-1.5">
+                      {commented && (
+                        <PostLink
+                          url={commentUrl}
+                          title="Abrir el comentario en Instagram"
+                          className="hover:text-ink hover:underline"
+                        >
+                          comentó
+                        </PostLink>
+                      )}
+                      {commented && liked && <span>·</span>}
+                      {liked && (
+                        <PostLink
+                          url={likeUrl}
+                          title="Abrir el post que likeó"
+                          className="hover:text-ink hover:underline"
+                        >
+                          likeó
+                        </PostLink>
+                      )}
+                      {!commented && !liked && '—'}
+                    </span>
                   </td>
-                  <td className="max-w-[240px] px-4 py-3 text-[var(--color-muted)]">
-                    <span className="line-clamp-1">{commentPreview ?? '—'}</span>
+                  <td className="max-w-[240px] px-4 py-3 text-muted">
+                    <PostLink
+                      url={commentUrl}
+                      title="Abrir el comentario en Instagram"
+                      className="line-clamp-1 hover:text-ink hover:underline"
+                    >
+                      {commentPreview ?? '—'}
+                    </PostLink>
                   </td>
                   <td className="px-4 py-3">
                     <a
                       href={u.action_url}
                       target="_blank"
                       rel="noreferrer"
-                      className="font-medium text-[var(--color-ink)] hover:underline"
+                      className="font-medium text-ink hover:underline"
                     >
                       {u.thread_id !== null ? 'Abrir DM' : 'Ver perfil'}
                     </a>
@@ -93,17 +119,17 @@ export function UsersTable({ query, total }: { query: TableQuery; total: number 
           <button
             disabled={page === 0}
             onClick={() => setPage((p) => p - 1)}
-            className="rounded-lg border border-[var(--color-border)] px-3 py-1 disabled:opacity-40"
+            className="rounded-lg border border-border px-3 py-1 disabled:opacity-40"
           >
             ← Anterior
           </button>
-          <span className="text-[var(--color-muted)]">
+          <span className="text-muted">
             Página {page + 1} de {pages}
           </span>
           <button
             disabled={page + 1 >= pages}
             onClick={() => setPage((p) => p + 1)}
-            className="rounded-lg border border-[var(--color-border)] px-3 py-1 disabled:opacity-40"
+            className="rounded-lg border border-border px-3 py-1 disabled:opacity-40"
           >
             Siguiente →
           </button>

@@ -29,7 +29,7 @@ function Column({
   const rows = users.data ?? [];
 
   return (
-    <section className="flex min-w-0 flex-1 flex-col rounded-2xl border border-[var(--color-border)] bg-[var(--color-panel)]/40">
+    <section className="anim-fade-up flex min-w-0 flex-1 flex-col rounded-2xl border border-border bg-panel/40">
       <header
         className="rounded-t-2xl border-t-2 px-4 py-3"
         style={{
@@ -40,27 +40,27 @@ function Column({
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <span
-              className="h-2.5 w-2.5 rounded-full"
-              style={{ backgroundColor: ACCENT[light], boxShadow: `0 0 9px ${ACCENT[light]}` }}
+              className="dot-glow anim-dot-pulse h-2.5 w-2.5 rounded-full"
+              style={{ backgroundColor: ACCENT[light], color: ACCENT[light] }}
             />
             <h2 className="display text-lg font-black tracking-tight uppercase">
               {LIGHT_LABEL[light]}
             </h2>
           </div>
-          <span className="mono text-sm text-[var(--color-muted)]">{total}</span>
+          <span className="mono text-sm text-muted">{total}</span>
         </div>
-        <p className="mt-0.5 text-xs text-[var(--color-muted)]">{LIGHT_HINT[light]}</p>
+        <p className="mt-0.5 text-xs text-muted">{LIGHT_HINT[light]}</p>
       </header>
       <div className="flex flex-col gap-2.5 overflow-y-auto p-3">
         {total === 0 ? (
-          <p className="py-8 text-center text-sm text-[var(--color-muted)]">—</p>
+          <p className="py-8 text-center text-sm text-muted">—</p>
         ) : (
           rows.map((u) => <UserCard key={u.pk} user={u} />)
         )}
         {rows.length < total && (
           <button
             onClick={() => setPages((p) => p + 1)}
-            className="rounded-lg border border-[var(--color-border)] py-1.5 text-sm text-[var(--color-muted)] hover:text-[var(--color-ink)]"
+            className="rounded-lg border border-border py-1.5 text-sm text-muted hover:text-ink"
           >
             Cargar más ({rows.length}/{total})
           </button>

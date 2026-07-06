@@ -36,16 +36,14 @@ export function FilterBar({
 }) {
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <div className="flex overflow-hidden rounded-lg border border-[var(--color-border)]">
+      <div className="flex overflow-hidden rounded-lg border border-border">
         {(['board', 'table'] as const).map((v) => (
           <button
             key={v}
             onClick={() => onView(v)}
-            aria-pressed={view === v}
+            aria-pressed={view === v ? 'true' : 'false'}
             className={`px-3 py-1.5 text-sm font-medium ${
-              view === v
-                ? 'bg-[var(--color-panel-2)] text-[var(--color-ink)]'
-                : 'text-[var(--color-muted)] hover:text-[var(--color-ink)]'
+              view === v ? 'bg-panel-2 text-ink' : 'text-muted hover:text-ink'
             }`}
           >
             {v === 'board' ? 'Board' : 'Tabla'}
@@ -58,7 +56,7 @@ export function FilterBar({
         onChange={(e) => onSearch(e.target.value)}
         placeholder="Buscar @usuario o nombre…"
         aria-label="Buscar usuario"
-        className={`${INPUT_CLS} placeholder:text-[var(--color-muted)]`}
+        className={`${INPUT_CLS} placeholder:text-muted`}
       />
 
       {view === 'table' && (
@@ -91,12 +89,12 @@ export function FilterBar({
 
       <button
         onClick={onToggleFollowers}
-        aria-pressed={onlyFollowers}
+        aria-pressed={onlyFollowers ? 'true' : 'false'}
         title="Mostrar solo los que te siguen (más seguros para escribir)"
         className={`rounded-lg border px-3 py-1.5 text-sm font-medium ${
           onlyFollowers
-            ? 'border-[var(--color-blue)] bg-[var(--color-blue)]/15 text-[var(--color-blue)]'
-            : 'border-[var(--color-border)] text-[var(--color-muted)] hover:text-[var(--color-ink)]'
+            ? 'border-blue bg-blue/15 text-blue'
+            : 'border-border text-muted hover:text-ink'
         }`}
       >
         {onlyFollowers ? '✓ Solo seguidores' : 'Solo seguidores'}
@@ -104,7 +102,7 @@ export function FilterBar({
 
       <button
         onClick={onTogglePosts}
-        className="rounded-lg border border-[var(--color-border)] px-3 py-1.5 text-sm hover:bg-[var(--color-panel)]"
+        className="rounded-lg border border-border px-3 py-1.5 text-sm hover:bg-panel"
       >
         {showPosts ? 'Ocultar posts' : 'Ver posts'}
       </button>

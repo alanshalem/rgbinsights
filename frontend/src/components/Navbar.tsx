@@ -21,7 +21,7 @@ export function Navbar({
   onNav: (p: Page) => void;
 }) {
   return (
-    <nav className="sticky top-0 z-30 border-b border-[var(--color-border)] bg-[var(--color-bg)]/80 backdrop-blur">
+    <nav className="sticky top-0 z-30 border-b border-border bg-bg/80 backdrop-blur">
       <div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-4 py-2.5 md:px-6">
         <button onClick={() => onNav('app')} className="flex items-center gap-3">
           <img src="/logo.png" alt="RGB Collective" className="h-12 w-auto md:h-16" />
@@ -34,22 +34,18 @@ export function Navbar({
                 <div key={l} className="flex items-center gap-1.5">
                   <TrafficDot light={l} />
                   <span className="mono font-semibold">{counts[l]}</span>
-                  <span className="hidden text-[var(--color-muted)] md:inline">
-                    {LIGHT_LABEL[l]}
-                  </span>
+                  <span className="hidden text-muted md:inline">{LIGHT_LABEL[l]}</span>
                 </div>
               ))}
             </div>
           )}
-          <div className="flex overflow-hidden rounded-lg border border-[var(--color-border)]">
+          <div className="flex overflow-hidden rounded-lg border border-border">
             {NAV.map((n) => (
               <button
                 key={n.page}
                 onClick={() => onNav(n.page)}
                 className={`px-3 py-1.5 text-sm font-medium ${
-                  page === n.page
-                    ? 'bg-[var(--color-panel-2)] text-[var(--color-ink)]'
-                    : 'text-[var(--color-muted)] hover:text-[var(--color-ink)]'
+                  page === n.page ? 'bg-panel-2 text-ink' : 'text-muted hover:text-ink'
                 }`}
               >
                 {n.label}

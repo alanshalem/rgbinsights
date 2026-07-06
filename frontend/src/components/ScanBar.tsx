@@ -32,7 +32,7 @@ export function ScanBar({
   };
 
   return (
-    <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-panel)] p-3">
+    <div className="rounded-2xl border border-border bg-panel p-3">
       <div className="flex flex-col gap-2 sm:flex-row">
         <input
           value={raw}
@@ -41,18 +41,18 @@ export function ScanBar({
           placeholder={
             event ? `Pegá URLs de posts para "${eventName}"…` : 'Pegá una o varias URLs de posts…'
           }
-          className="flex-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm outline-none placeholder:text-[var(--color-muted)] focus:border-[var(--color-muted)]"
+          className="flex-1 rounded-lg border border-border bg-bg px-3 py-2 text-sm outline-none placeholder:text-muted focus:border-muted"
         />
         <button
           onClick={handleScan}
           disabled={scan.isPending || parseUrls(raw).length === 0}
-          className="rounded-lg bg-[var(--color-green)] px-4 py-2 text-sm font-semibold text-[var(--color-bg)] shadow-[0_0_24px_-6px_var(--color-green)] transition-opacity hover:opacity-90 disabled:opacity-40"
+          className="rounded-lg bg-green px-4 py-2 text-sm font-semibold text-bg shadow-[0_0_24px_-6px_var(--color-green)] transition-opacity hover:opacity-90 disabled:opacity-40"
         >
           {scan.isPending ? 'Escaneando…' : 'Escanear'}
         </button>
       </div>
       {!event && (
-        <p className="mt-2 text-xs text-[var(--color-muted)]">
+        <p className="mt-2 text-xs text-muted">
           Sin fiesta seleccionada: los posts quedan sin asignar. Elegí o creá una fiesta arriba para
           agruparlos.
         </p>

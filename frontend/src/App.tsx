@@ -5,6 +5,7 @@ import { ActionsMenu } from './components/ActionsMenu';
 import { ActivityPage } from './components/ActivityPage';
 import { Board } from './components/Board';
 import { CampaignModal } from './components/CampaignModal';
+import { Cursor } from './components/Cursor';
 import { ErrorBanner } from './components/ErrorBanner';
 import { FiestaModal } from './components/FiestaModal';
 import { FilterBar } from './components/FilterBar';
@@ -69,7 +70,7 @@ export default function App() {
               value={event ?? ''}
               onChange={(e) => setEvent(e.target.value ? Number(e.target.value) : undefined)}
               aria-label="Elegir fiesta"
-              className="rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] px-3 py-1.5 text-sm font-medium outline-none"
+              className="rounded-lg border border-border bg-panel px-3 py-1.5 text-sm font-medium outline-none"
             >
               <option value="">Todas las fiestas</option>
               {(events.data ?? []).map((e) => (
@@ -80,7 +81,7 @@ export default function App() {
             </select>
             <button
               onClick={() => setShowFiesta(true)}
-              className="rounded-lg bg-[var(--color-panel-2)] px-3 py-1.5 text-sm font-medium hover:bg-[var(--color-border)]"
+              className="rounded-lg bg-panel-2 px-3 py-1.5 text-sm font-medium hover:bg-border"
             >
               + Nueva fiesta
             </button>
@@ -94,22 +95,19 @@ export default function App() {
                 <button
                   onClick={() => setShowCampaign(true)}
                   title="Enviar un mensaje a los rojos de la fiesta, con envío lento y seguro"
-                  className="rounded-lg border border-[var(--color-red)]/60 px-3 py-1.5 text-sm font-semibold text-[var(--color-red)] hover:bg-[var(--color-red)]/10"
+                  className="rounded-lg border border-red/60 px-3 py-1.5 text-sm font-semibold text-red hover:bg-red/10"
                 >
                   ✉ Campaña de DMs
                 </button>
-                <span className="mono text-xs text-[var(--color-muted)]">
+                <span className="mono text-xs text-muted">
                   campaña {fmtDate(selected.promo_start)} → evento {fmtDate(selected.event_date)}{' '}
                   {new Date(selected.event_date) < new Date() ? '· ya pasó' : '· próxima'}
                 </span>
                 <div className="flex min-w-[180px] flex-1 items-center gap-2">
-                  <div className="h-2 flex-1 overflow-hidden rounded-full bg-[var(--color-panel-2)]">
-                    <div
-                      className="h-full rounded-full bg-[var(--color-green)]"
-                      style={{ width: `${pct}%` }}
-                    />
+                  <div className="h-2 flex-1 overflow-hidden rounded-full bg-panel-2">
+                    <div className="h-full rounded-full bg-green" style={{ width: `${pct}%` }} />
                   </div>
-                  <span className="mono shrink-0 text-xs text-[var(--color-muted)]">
+                  <span className="mono shrink-0 text-xs text-muted">
                     contactaste {contacted}/{c.total}
                   </span>
                 </div>
@@ -140,7 +138,7 @@ export default function App() {
 
           <main className="flex-1">
             {counts.isError ? (
-              <p className="py-12 text-center text-sm text-[var(--color-red)]">
+              <p className="py-12 text-center text-sm text-red">
                 No se pudo cargar. ¿Está corriendo el backend en :8000?
               </p>
             ) : view === 'board' ? (
@@ -184,6 +182,7 @@ export default function App() {
         />
       )}
       <Toasts />
+      <Cursor />
     </>
   );
 }
