@@ -128,7 +128,9 @@ class _BrowserWorker:
                 browser = p.chromium.connect_over_cdp(cdp_url(port))
                 context = browser.contexts[0] if browser.contexts else browser.new_context()
                 page = context.pages[0] if context.pages else context.new_page()
+                _mask_headless_ua(page)
                 page.goto(_HOME, wait_until="domcontentloaded")
+                _seed_from_store(page)
                 while True:
                     item = self._queue.get()
                     if item is None:
@@ -142,6 +144,51 @@ class _BrowserWorker:
         finally:
             if proc is not None:
                 _safe_terminate(proc)
+
+
+_COOKIE_KEYS = ("name", "value", "domain", "path", "expires", "httpOnly", "secure", "sameSite")
+
+
+def _seed_from_store(page: Page) -> None:
+    """Re-seed this headless browser from the saved login cookies, if needed.
+
+    Runs at every worker startup so a single human login survives app restarts:
+    if the live context has no sessionid, load the ones saved by ig_login.finish()
+    and inject them. A dead/expired stored session is simply cleared by Instagram
+    on the reload — harmless. Local import avoids an import cycle with ig_login.
+    """
+    from app.infrastructure.instagram import ig_login
+
+    if any(c.get("name") == "sessionid" for c in page.context.cookies()):
+        return
+    saved = ig_login.load_saved_cookies()
+    if not saved:
+        return
+    cleaned = [{k: c[k] for k in _COOKIE_KEYS if k in c} for c in saved]
+    with contextlib.suppress(Exception):  # best-effort; never wedge startup
+        page.context.add_cookies(cleaned)
+        page.goto(_HOME, wait_until="domcontentloaded")
+        logger.info("seeded %d saved login cookies into the headless browser", len(cleaned))
+
+
+def _mask_headless_ua(page: Page) -> None:
+    """Drop the 'Headless' marker from the browser's user-agent.
+
+    Headless Chrome sends 'HeadlessChrome/…' in its UA. Instagram flags that as a
+    bot and INVALIDATES the session (sessionid gets cleared on the next request),
+    so a freshly-logged-in session dies instantly. Override the UA to the normal
+    Chrome string before we touch instagram.com, keeping the session alive.
+    """
+    try:
+        ua = str(page.evaluate("() => navigator.userAgent"))
+        if "Headless" not in ua:
+            return
+        clean = ua.replace("HeadlessChrome", "Chrome").replace("Headless", "")
+        cdp = page.context.new_cdp_session(page)
+        cdp.send("Network.setUserAgentOverride", {"userAgent": clean})
+        logger.info("masked headless UA -> %s", clean)
+    except Exception:  # noqa: BLE001 — best-effort; never block startup on this
+        logger.warning("could not mask headless UA", exc_info=True)
 
 
 def _fetch_json(page: Page, path: str) -> dict[str, Any]:
@@ -326,15 +373,20 @@ class PlaywrightInstagramSource:
 
     def current_user_pk(self) -> str:
         def read_pk(page: Page) -> str:
-            for cookie in page.context.cookies():
-                if cookie.get("name") == "ds_user_id":
-                    return str(cookie.get("value", ""))
-            return ""
+            # Require BOTH cookies. ds_user_id persists after logout, but the
+            # actual login lives in sessionid — without it, GETs may still work
+            # yet authed reads/DM sends bounce to a login page (200 HTML). So a
+            # ds_user_id with no sessionid is NOT a live session; report none,
+            # else /ig/status shows a false "connected" and sends fail opaquely.
+            names = {c.get("name"): str(c.get("value", "")) for c in page.context.cookies()}
+            if not names.get("sessionid"):
+                return ""
+            return names.get("ds_user_id", "")
 
         pk: str = self._worker.submit(read_pk)
         if not pk:
             raise LoginRequiredError(
-                "no logged-in browser session — run: python -m app.login_browser"
+                "sesión de Instagram no iniciada (falta sessionid) — reconectá desde el chip IG"
             )
         return pk
 

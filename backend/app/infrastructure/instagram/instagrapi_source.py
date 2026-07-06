@@ -56,6 +56,16 @@ class InstagrapiInstagramSource:
     # -- login / session -------------------------------------------------
 
     def _login(self) -> Client:
+        """Authenticate, trying the cheapest/lowest-risk path first.
+
+        1. A saved session.json (reuses the device; no network login) — validated.
+        2. IG_SESSIONID from a real browser (low ban risk; recommended bootstrap).
+        3. username/password (+ TOTP) — auto-renews when the session finally dies.
+
+        Every success is persisted to session.json so the next start reuses it and
+        the account keeps a stable device. This is what makes the login survive
+        restarts and self-heal on expiry.
+        """
         if self._client is not None:
             return self._client
 
@@ -68,38 +78,69 @@ class InstagrapiInstagramSource:
 
         client = build_client(self._settings, self._challenge_code_handler)
         session_path = Path(self._settings.ig_session_file)
+        errors: list[str] = []
 
+        # 1. Reuse a saved session (build_client already loaded it).
+        if session_path.exists() and self._session_valid(client):
+            logger.info("reusing saved IG session")
+            self._client = client
+            return client
+
+        # 2. Bootstrap from a browser sessionid.
         sessionid = self._settings.ig_sessionid.strip()
-        try:
-            if sessionid:
-                # Reuse an existing browser session: no login flow, no challenge.
+        if sessionid:
+            try:
                 client.login_by_sessionid(sessionid)
-            else:
+                self._persist(client, session_path)
+                self._client = client
+                return client
+            except (ChallengeRequired, LoginRequired) as exc:
+                errors.append(f"sessionid vencido/rechazado: {exc}")
+            except Exception as exc:  # noqa: BLE001 — surfaced below as handled
+                errors.append(f"sessionid: {exc}")
+
+        # 3. username/password (auto-renews when the session dies).
+        if self._settings.ig_username and self._settings.ig_password:
+            try:
                 verification_code = self._totp_code(client)
                 client.login(
                     self._settings.ig_username,
                     self._settings.ig_password,
                     verification_code=verification_code,
                 )
-        except TwoFactorRequired as exc:
-            raise ChallengeRequiredError(
-                "2FA required. Set IG_2FA_SECRET in .env to resolve it automatically."
-            ) from exc
-        except ChallengeRequired as exc:
-            raise ChallengeRequiredError("Instagram requested verification (challenge).") from exc
-        except LoginRequired as exc:
-            raise LoginRequiredError(str(exc)) from exc
-        except InstagramError:
-            raise  # already a handled type (e.g. from the TOTP guard)
-        except Exception as exc:
-            # Any other instagrapi/network error is surfaced as handled, so the
-            # UI shows a message instead of the API returning a raw 500.
-            raise LoginRequiredError(f"login failed: {exc}") from exc
+                self._persist(client, session_path)
+                self._client = client
+                return client
+            except TwoFactorRequired as exc:
+                raise ChallengeRequiredError(
+                    "IG pide 2FA. Cargá IG_2FA_SECRET en .env para resolverlo solo."
+                ) from exc
+            except ChallengeRequired as exc:
+                raise ChallengeRequiredError(
+                    "Instagram pidió verificación (challenge). Reconectá con el sessionid."
+                ) from exc
+            except InstagramError:
+                raise  # already a handled type (e.g. from the TOTP guard)
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"user/pass: {exc}")
 
-        client.dump_settings(session_path)
-        logger.info("saved IG session to %s", session_path)
-        self._client = client
-        return client
+        detail = "; ".join(errors) if errors else "no hay sessionid ni user/pass en .env"
+        raise LoginRequiredError(f"no se pudo iniciar sesión de Instagram ({detail})")
+
+    def _session_valid(self, client: Client) -> bool:
+        """Cheap authed probe: True if the loaded session still works."""
+        try:
+            client.account_info()
+            return True
+        except Exception:  # noqa: BLE001 — any failure means fall through to re-login
+            return False
+
+    def _persist(self, client: Client, session_path: Path) -> None:
+        try:
+            client.dump_settings(session_path)
+            logger.info("saved IG session to %s", session_path)
+        except Exception:  # noqa: BLE001 — persistence is best-effort
+            logger.warning("could not save IG session", exc_info=True)
 
     def _totp_code(self, client: Client) -> str:
         """Generate a 2FA code from the seed, or "" if none is configured.

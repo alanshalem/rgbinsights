@@ -36,6 +36,35 @@ function Fail($m) {
 
 Write-Host "RGB Semaforo - arranque" -ForegroundColor Magenta
 
+# ---------------------------------------------------------------- Limpieza previa
+# Arranque SIEMPRE limpio: mata restos de una corrida anterior (backend/front
+# zombie, Chrome del scraper con el perfil trabado) y borra cache de build. Si
+# antes cerraste con la X en vez de Enter, o algo quedo colgado, esto lo resetea
+# para que la app NUNCA arranque en un estado roto.
+function Stop-Port($port) {
+  try {
+    Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue |
+      Select-Object -ExpandProperty OwningProcess -Unique |
+      ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue }
+  } catch { }
+}
+Step "Limpiando restos de corridas anteriores"
+Stop-Port 8000   # backend viejo
+Stop-Port 5173   # frontend viejo
+Stop-Port 9222   # Chrome de scraping (debugging port)
+# Chrome del scraper (perfil .pw-profile). NO toca tu Chrome personal: filtra por
+# el perfil de la app en la linea de comando.
+try {
+  Get-CimInstance Win32_Process -Filter "Name='chrome.exe'" -ErrorAction SilentlyContinue |
+    Where-Object { $_.CommandLine -match 'pw-profile' } |
+    ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+} catch { }
+# Cache de build del frontend: evita servir una version vieja del front.
+$viteCache = "$root\frontend\node_modules\.vite"
+if (Test-Path $viteCache) { Remove-Item -Recurse -Force $viteCache -ErrorAction SilentlyContinue }
+Start-Sleep -Milliseconds 500
+Ok "Limpio - arranque desde cero"
+
 # ---------------------------------------------------------------- Auto-update
 # Traer la ultima version del repo. Si no hay git o no hay 'origin', se saltea
 # sin romper: seguis con el codigo que ya tenes.

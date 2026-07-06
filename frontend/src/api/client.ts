@@ -141,6 +141,9 @@ export const api = {
   igStatus: () => request<IgStatus>('/ig/status'),
   igLogin: () => request<IgLogin>('/ig/login', { method: 'POST' }),
   igLoginFinish: () => request<IgLogin>('/ig/login/finish', { method: 'POST' }),
+  igReauth: () => request<IgStatus>('/ig/reauth', { method: 'POST' }),
+  igSetSessionid: (sessionid: string) =>
+    request<IgStatus>('/ig/sessionid', { method: 'POST', body: JSON.stringify({ sessionid }) }),
 
   listPresets: () => request<Preset[]>('/campaigns/presets'),
 

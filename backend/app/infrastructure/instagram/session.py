@@ -8,6 +8,7 @@ instagrapi is imported lazily to keep it optional at import time.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from collections.abc import Callable
 from pathlib import Path
@@ -47,11 +48,15 @@ def build_client(settings: Settings, challenge_handler: ChallengeHandler) -> Cli
     if settings.ig_country:
         client.set_country(settings.ig_country)
 
-    # When authenticating by sessionid, start clean: a stale session.json could
-    # carry an old/expired cookie that overrides the fresh sessionid.
+    # Always load a saved session if present: it carries the device identifiers
+    # (UUIDs) that keep us looking like the same phone across restarts — the
+    # single biggest factor in avoiding challenges. A stale cookie here is safe:
+    # the adapter validates the loaded session and falls back to sessionid or
+    # user/pass if it's dead (see InstagrapiInstagramSource._login).
     session_path = Path(settings.ig_session_file)
-    if session_path.exists() and not settings.ig_sessionid.strip():
-        client.load_settings(session_path)
-        logger.info("loaded IG session from %s", session_path)
+    if session_path.exists():
+        with contextlib.suppress(Exception):  # a corrupt file must not block login
+            client.load_settings(session_path)
+            logger.info("loaded IG session (device+cookies) from %s", session_path)
 
     return client

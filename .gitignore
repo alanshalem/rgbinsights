@@ -1,6 +1,8 @@
 # Secrets / session
 .env
 session.json
+ig_cookies.json
+backend/ig_cookies.json
 .pw-profile/
 
 # Database

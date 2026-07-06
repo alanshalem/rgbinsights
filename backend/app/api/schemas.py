@@ -199,11 +199,17 @@ class IgStatusOut(BaseModel):
     pk: str | None
     last_ok_at: datetime | None
     demo: bool  # fake source (no real Instagram)
+    source: str  # fake | web | playwright | instagrapi — drives the reconnect UI
+    has_credentials: bool  # user/pass present in .env (enables the 1-click reauth)
 
 
 class IgLoginOut(BaseModel):
     opened: bool  # a headed login window is open
     logged_in: bool  # login completed
+
+
+class IgSessionIdIn(BaseModel):
+    sessionid: str
 
 
 class EstimateOut(BaseModel):

@@ -11,8 +11,10 @@ rebuilds the headless browser on the freshly authenticated session.
 from __future__ import annotations
 
 import contextlib
+import json
 import logging
 import time
+from pathlib import Path
 from typing import Any
 
 from app.infrastructure.config.settings import Settings
@@ -29,11 +31,32 @@ logger = logging.getLogger(__name__)
 
 LOGIN_URL = "https://www.instagram.com/accounts/login/"
 
+# Where the login's cookies are stashed so the headless browser can re-seed from
+# them on every startup — the human logs in ONCE and it survives app restarts
+# (until Instagram expires the session). Holds the sessionid: keep it local and
+# git-ignored (see .gitignore), same sensitivity as IG_SESSIONID in .env.
+COOKIE_STORE = Path("ig_cookies.json")
+
 _proc: Any = None  # the headed Chrome process while a login is open
 
 
 def in_progress() -> bool:
     return _proc is not None and _proc.poll() is None
+
+
+def save_cookies(cookies: list[dict[str, Any]]) -> None:
+    with contextlib.suppress(Exception):
+        COOKIE_STORE.write_text(json.dumps(cookies), encoding="utf-8")
+
+
+def load_saved_cookies() -> list[dict[str, Any]] | None:
+    """Cookies from the last successful login, or None if never logged in."""
+    with contextlib.suppress(Exception):
+        if COOKIE_STORE.exists():
+            data = json.loads(COOKIE_STORE.read_text(encoding="utf-8"))
+            if isinstance(data, list) and data:
+                return data
+    return None
 
 
 def start(settings: Settings) -> None:
@@ -55,16 +78,21 @@ def start(settings: Settings) -> None:
 def finish(settings: Settings) -> str | None:
     """Return the logged-in account pk if login is complete, else None.
 
-    On success it closes the headed window so the scraping browser can reclaim
-    the profile.
+    On success it saves the live session cookies (so the headless browser re-seeds
+    from them), then closes the headed window so the scraper can reclaim the profile.
     """
     port = settings.ig_cdp_port
     if not is_cdp_up(port):
         return None
-    pk = _read_pk(port)
-    if pk:
-        _terminate(settings)
-    return pk
+    cookies = _read_cookies(port)
+    names = {str(c.get("name")): str(c.get("value", "")) for c in cookies}
+    # Require a REAL login: sessionid (not just ds_user_id, which lingers after
+    # logout). Without this the window closes before the human finishes.
+    if not (names.get("sessionid") and names.get("ds_user_id")):
+        return None
+    save_cookies(cookies)  # persist BEFORE we kill Chrome (hard-kill may skip flush)
+    _terminate(settings)
+    return names["ds_user_id"]
 
 
 def cancel(settings: Settings) -> None:
@@ -74,20 +102,16 @@ def cancel(settings: Settings) -> None:
 # -- internals -------------------------------------------------------------
 
 
-def _read_pk(port: int) -> str | None:
+def _read_cookies(port: int) -> list[dict[str, Any]]:
     from playwright.sync_api import sync_playwright
 
     with sync_playwright() as p:
         browser = p.chromium.connect_over_cdp(cdp_url(port))
         try:
             context = browser.contexts[0] if browser.contexts else None
-            cookies = context.cookies() if context else []
+            return [dict(c) for c in context.cookies()] if context else []
         finally:
             browser.close()
-    for cookie in cookies:
-        if cookie.get("name") == "ds_user_id" and cookie.get("value"):
-            return str(cookie["value"])
-    return None
 
 
 def _terminate(settings: Settings) -> None:
