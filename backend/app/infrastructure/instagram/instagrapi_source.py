@@ -11,6 +11,7 @@ between requests, and a hard cap on requests per run.
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -175,8 +176,13 @@ class InstagrapiInstagramSource:
     def send_dm(self, user_pk: str, text: str) -> None:
         client = self._login()
         self._budget.spend()
+        # instagrapi routes any text containing "http" through the link-preview
+        # endpoint (broadcast/link/), which Instagram blocks far harder (403) than
+        # plain text. Drop the URL scheme so it goes via broadcast/text/ — IG still
+        # auto-links the bare domain, so the recipient gets a clickable link.
+        safe_text = re.sub(r"https?://", "", text)
         try:
-            client.direct_send(text, user_ids=[int(user_pk)])
+            client.direct_send(safe_text, user_ids=[int(user_pk)])
         except Exception as exc:
             raise SendBlockedError(f"envío rechazado: {exc}") from exc
 
