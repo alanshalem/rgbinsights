@@ -38,6 +38,7 @@ export function PostsDrawer({
         </h3>
         {event !== undefined && (
           <button
+            type="button"
             onClick={handleRescan}
             disabled={rescan.isPending || rows.length === 0}
             className="rounded-lg bg-panel-2 px-3 py-1 text-xs font-medium hover:bg-border disabled:opacity-40"

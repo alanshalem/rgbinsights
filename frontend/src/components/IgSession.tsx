@@ -100,6 +100,7 @@ export function IgSession() {
   return (
     <>
       <button
+        type="button"
         onClick={() => setOpen(true)}
         title={`Instagram · última conexión ${ago(s.last_ok_at)}`}
         className="flex items-center gap-1.5 rounded-full border border-border px-2.5 py-1 text-[11px] font-medium hover:bg-panel"
@@ -148,6 +149,7 @@ export function IgSession() {
                 </p>
                 <div className="flex items-center justify-end gap-3">
                   <button
+                    type="button"
                     onClick={reauth}
                     disabled={busy}
                     className="mr-auto text-xs text-muted underline hover:text-ink disabled:opacity-50"
@@ -155,6 +157,7 @@ export function IgSession() {
                     Reconectar igual
                   </button>
                   <button
+                    type="button"
                     onClick={close}
                     className="rounded-lg bg-green px-4 py-2 font-semibold text-bg"
                   >
@@ -175,6 +178,7 @@ export function IgSession() {
 
                   {!showPaste && s.has_credentials && (
                     <button
+                      type="button"
                       onClick={reauth}
                       disabled={busy}
                       className="rounded-xl bg-blue px-4 py-3 text-center font-semibold text-bg disabled:opacity-50"
@@ -188,6 +192,7 @@ export function IgSession() {
 
                   {!showPaste ? (
                     <button
+                      type="button"
                       onClick={() => {
                         setShowPaste(true);
                         setError(null);
@@ -232,17 +237,23 @@ export function IgSession() {
                   <div className="flex justify-end gap-2">
                     {showPaste && (
                       <button
+                        type="button"
                         onClick={() => setShowPaste(false)}
                         className="mr-auto rounded-lg border border-border px-4 py-2"
                       >
                         ← Volver
                       </button>
                     )}
-                    <button onClick={close} className="rounded-lg border border-border px-4 py-2">
+                    <button
+                      type="button"
+                      onClick={close}
+                      className="rounded-lg border border-border px-4 py-2"
+                    >
                       Cerrar
                     </button>
                     {showPaste && (
                       <button
+                        type="button"
                         onClick={saveSessionid}
                         disabled={busy || !sessionid.trim()}
                         className="rounded-lg bg-blue px-4 py-2 font-semibold text-bg disabled:opacity-50"

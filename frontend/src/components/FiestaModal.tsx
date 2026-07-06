@@ -83,10 +83,11 @@ export function FiestaModal({
         </label>
         {error && <p className="text-xs text-red">{error}</p>}
         <div className="mt-1 flex justify-end gap-2">
-          <button onClick={onClose} className="rounded-lg px-3 py-2 text-muted">
+          <button type="button" onClick={onClose} className="rounded-lg px-3 py-2 text-muted">
             Cancelar
           </button>
           <button
+            type="button"
             onClick={submit}
             disabled={!canSave || create.isPending}
             className="rounded-lg bg-green px-4 py-2 font-semibold text-bg disabled:opacity-40"

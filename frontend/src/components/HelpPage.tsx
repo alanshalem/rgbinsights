@@ -29,6 +29,7 @@ export function HelpPage({ onBack }: { onBack: () => void }) {
           <span className="rgb-gradient">Ayuda</span> · manual de uso
         </h1>
         <button
+          type="button"
           onClick={onBack}
           className="rounded-lg border border-border px-3 py-1.5 text-sm hover:bg-panel"
         >

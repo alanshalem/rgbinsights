@@ -38,6 +38,7 @@ export function ResetModal({ onClose }: { onClose: () => void }) {
               ))}
             </ul>
             <button
+              type="button"
               onClick={onClose}
               className="mt-1 self-end rounded-lg bg-panel-2 px-4 py-2 font-semibold"
             >
@@ -69,12 +70,14 @@ export function ResetModal({ onClose }: { onClose: () => void }) {
 
             <div className="flex justify-end gap-2">
               <button
+                type="button"
                 onClick={onClose}
                 className="rounded-lg border border-border px-4 py-2 font-semibold"
               >
                 Cancelar
               </button>
               <button
+                type="button"
                 onClick={run}
                 disabled={!armed || reset.isPending}
                 className="rounded-lg bg-red px-4 py-2 font-semibold text-bg disabled:opacity-40"

@@ -29,6 +29,7 @@ export function ActivityPage({ onBack }: { onBack: () => void }) {
       <div className="mb-4 flex items-center justify-between">
         <h1 className="display text-2xl font-black tracking-tight uppercase">Actividad</h1>
         <button
+          type="button"
           onClick={onBack}
           className="rounded-lg border border-border px-3 py-1.5 text-sm hover:bg-panel"
         >
@@ -71,6 +72,7 @@ export function ActivityPage({ onBack }: { onBack: () => void }) {
           se puede deshacer.
         </p>
         <button
+          type="button"
           onClick={() => setShowReset(true)}
           className="self-start rounded-lg border border-red/60 px-3 py-1.5 text-sm font-semibold text-red hover:bg-red/10"
         >

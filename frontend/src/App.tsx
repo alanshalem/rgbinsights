@@ -80,6 +80,7 @@ export default function App() {
               ))}
             </select>
             <button
+              type="button"
               onClick={() => setShowFiesta(true)}
               className="rounded-lg bg-panel-2 px-3 py-1.5 text-sm font-medium hover:bg-border"
             >
@@ -93,6 +94,7 @@ export default function App() {
             {selected && (
               <>
                 <button
+                  type="button"
                   onClick={() => setShowCampaign(true)}
                   title="Enviar un mensaje a los rojos de la fiesta, con envío lento y seguro"
                   className="rounded-lg border border-red/60 px-3 py-1.5 text-sm font-semibold text-red hover:bg-red/10"

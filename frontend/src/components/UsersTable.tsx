@@ -117,6 +117,7 @@ export function UsersTable({ query, total }: { query: TableQuery; total: number 
       {pages > 1 && (
         <div className="flex items-center justify-center gap-3 text-sm">
           <button
+            type="button"
             disabled={page === 0}
             onClick={() => setPage((p) => p - 1)}
             className="rounded-lg border border-border px-3 py-1 disabled:opacity-40"
@@ -127,6 +128,7 @@ export function UsersTable({ query, total }: { query: TableQuery; total: number 
             Página {page + 1} de {pages}
           </span>
           <button
+            type="button"
             disabled={page + 1 >= pages}
             onClick={() => setPage((p) => p + 1)}
             className="rounded-lg border border-border px-3 py-1 disabled:opacity-40"

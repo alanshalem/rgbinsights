@@ -40,8 +40,8 @@ export function FilterBar({
         {(['board', 'table'] as const).map((v) => (
           <button
             key={v}
+            type="button"
             onClick={() => onView(v)}
-            aria-pressed={view === v ? 'true' : 'false'}
             className={`px-3 py-1.5 text-sm font-medium ${
               view === v ? 'bg-panel-2 text-ink' : 'text-muted hover:text-ink'
             }`}
@@ -88,8 +88,8 @@ export function FilterBar({
       </select>
 
       <button
+        type="button"
         onClick={onToggleFollowers}
-        aria-pressed={onlyFollowers ? 'true' : 'false'}
         title="Mostrar solo los que te siguen (más seguros para escribir)"
         className={`rounded-lg border px-3 py-1.5 text-sm font-medium ${
           onlyFollowers
@@ -101,6 +101,7 @@ export function FilterBar({
       </button>
 
       <button
+        type="button"
         onClick={onTogglePosts}
         className="rounded-lg border border-border px-3 py-1.5 text-sm hover:bg-panel"
       >

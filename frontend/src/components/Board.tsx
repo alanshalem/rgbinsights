@@ -59,6 +59,7 @@ function Column({
         )}
         {rows.length < total && (
           <button
+            type="button"
             onClick={() => setPages((p) => p + 1)}
             className="rounded-lg border border-border py-1.5 text-sm text-muted hover:text-ink"
           >

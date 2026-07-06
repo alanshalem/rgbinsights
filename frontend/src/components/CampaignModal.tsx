@@ -178,6 +178,7 @@ export function CampaignModal({
             <span className="mono text-xs text-muted">{eventName}</span>
           </div>
           <button
+            type="button"
             onClick={onClose}
             className="shrink-0 rounded-lg bg-panel-2 px-3 py-1 text-sm hover:bg-border"
           >
@@ -271,6 +272,7 @@ function Progress({
       <div className="flex gap-2">
         {c.status === 'running' ? (
           <button
+            type="button"
             onClick={onStop}
             disabled={busy}
             className="rounded-lg border border-border px-4 py-2 font-semibold disabled:opacity-40"
@@ -279,6 +281,7 @@ function Progress({
           </button>
         ) : (
           <button
+            type="button"
             onClick={onResume}
             disabled={busy || c.pending === 0}
             className="rounded-lg bg-green px-4 py-2 font-semibold text-bg disabled:opacity-40"
@@ -423,6 +426,7 @@ function Setup(props: {
               const selected = presetName === name;
               return (
                 <button
+                  type="button"
                   key={name}
                   onClick={() => applyPreset(name)}
                   className={`flex flex-col gap-1 rounded-lg border px-3 py-2 text-left ${
@@ -503,6 +507,7 @@ function Setup(props: {
                   Se enviarán
                 </span>
                 <button
+                  type="button"
                   onClick={recalc}
                   disabled={recalcBusy}
                   className="rounded-lg border border-border px-2.5 py-1 text-xs hover:bg-panel disabled:opacity-40"
@@ -582,6 +587,7 @@ function Setup(props: {
             </datalist>
           </label>
           <button
+            type="button"
             onClick={onTest}
             disabled={testBusy || count === 0}
             className="w-full rounded-lg border border-border px-4 py-2 font-semibold hover:bg-panel disabled:opacity-40"
@@ -591,6 +597,7 @@ function Setup(props: {
         </div>
 
         <button
+          type="button"
           onClick={onLaunch}
           disabled={launchBusy || count === 0}
           className="w-full rounded-xl bg-red px-4 py-3 font-semibold text-bg shadow-[0_0_28px_-8px_var(--color-red)] transition hover:brightness-110 disabled:opacity-40"

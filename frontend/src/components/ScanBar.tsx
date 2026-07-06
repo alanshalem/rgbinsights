@@ -44,6 +44,7 @@ export function ScanBar({
           className="flex-1 rounded-lg border border-border bg-bg px-3 py-2 text-sm outline-none placeholder:text-muted focus:border-muted"
         />
         <button
+          type="button"
           onClick={handleScan}
           disabled={scan.isPending || parseUrls(raw).length === 0}
           className="rounded-lg bg-green px-4 py-2 text-sm font-semibold text-bg shadow-[0_0_24px_-6px_var(--color-green)] transition-opacity hover:opacity-90 disabled:opacity-40"

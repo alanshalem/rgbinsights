@@ -62,6 +62,7 @@ export function ActionsMenu({
     onClick: () => void;
   }) => (
     <button
+      type="button"
       onClick={onClick}
       disabled={disabled}
       className="flex w-full flex-col gap-0.5 px-3 py-2 text-left hover:bg-panel-2 disabled:opacity-40"
@@ -77,6 +78,7 @@ export function ActionsMenu({
   return (
     <div className="relative" ref={ref}>
       <button
+        type="button"
         onClick={() => setOpen((o) => !o)}
         disabled={busy}
         className="rounded-lg bg-blue px-3 py-1.5 text-sm font-semibold text-bg shadow-[0_0_24px_-6px_var(--color-blue)] transition-opacity hover:opacity-90 disabled:opacity-50"

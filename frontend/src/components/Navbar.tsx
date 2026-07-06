@@ -23,7 +23,7 @@ export function Navbar({
   return (
     <nav className="sticky top-0 z-30 border-b border-border bg-bg/80 backdrop-blur">
       <div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-4 py-2.5 md:px-6">
-        <button onClick={() => onNav('app')} className="flex items-center gap-3">
+        <button type="button" onClick={() => onNav('app')} className="flex items-center gap-3">
           <img src="/logo.png" alt="RGB Collective" className="h-12 w-auto md:h-16" />
         </button>
         <div className="flex items-center gap-4">
@@ -42,6 +42,7 @@ export function Navbar({
           <div className="flex overflow-hidden rounded-lg border border-border">
             {NAV.map((n) => (
               <button
+                type="button"
                 key={n.page}
                 onClick={() => onNav(n.page)}
                 className={`px-3 py-1.5 text-sm font-medium ${
