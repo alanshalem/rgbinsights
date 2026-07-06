@@ -36,7 +36,10 @@ export function IgSession() {
   if (!s) return null;
   if (s.demo) {
     return (
-      <span className="rounded-full border border-border px-2 py-0.5 text-[11px] text-muted">
+      <span
+        title="Modo demo (datos de ejemplo). Para usar tu Instagram real: poné USE_FAKE_INSTAGRAM=false en backend/.env y reiniciá."
+        className="cursor-help rounded-full border border-border px-2 py-0.5 text-[11px] text-muted"
+      >
         demo · sin IG
       </span>
     );

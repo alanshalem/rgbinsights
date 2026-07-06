@@ -148,7 +148,7 @@ if ($venvFresh -or $updated -or ($reqHash -ne $prevHash)) {
 }
 if (-not (Test-Path "$root\backend\.env")) {
   Copy-Item "$root\backend\.env.example" "$root\backend\.env"
-  Info ".env creado desde .env.example (modo demo con datos de ejemplo)."
+  Info ".env creado. Conectá Instagram desde el chip 'IG' (pegá tu sessionid)."
 }
 Ok "Backend listo"
 
