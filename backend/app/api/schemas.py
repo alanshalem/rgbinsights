@@ -152,6 +152,8 @@ class TaskOut(BaseModel):
     message: str
     result: dict[str, Any]
     error: str | None
+    started_at: datetime
+    finished_at: datetime | None
 
 
 class ActivityOut(BaseModel):

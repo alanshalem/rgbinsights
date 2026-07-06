@@ -96,7 +96,8 @@ export function useRefreshEvent() {
 export function useSyncDms() {
   const refresh = useRefreshAll();
   return useMutation({
-    mutationFn: (force?: boolean) => api.syncDms(force),
+    mutationFn: (arg: { force?: boolean; event?: number } = {}) =>
+      api.syncDms(arg.force, arg.event),
     onSuccess: refresh,
   });
 }

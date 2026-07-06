@@ -91,7 +91,7 @@ export function ActionsMenu({
             label="Sincronizar DMs"
             hint="rápido"
             freshness={fmtAgo(status.data?.dms_synced_at)}
-            onClick={() => run(sync, force)}
+            onClick={() => run(sync, { force, event })}
           />
           <Item
             label="Actualizar fiesta"

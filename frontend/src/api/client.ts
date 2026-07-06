@@ -133,7 +133,8 @@ export const api = {
       body: JSON.stringify({ urls, event_id: eventId ?? null }),
     }),
 
-  syncDms: (force = false) => request<SyncResult>(`/sync/dms${qs({ force })}`, { method: 'POST' }),
+  syncDms: (force = false, event?: number) =>
+    request<SyncResult>(`/sync/dms${qs({ force, event })}`, { method: 'POST' }),
 
   getStatus: () => request<Status>('/status'),
 

@@ -11,7 +11,7 @@ from app.api.schemas import (
     ScanResultOut,
 )
 from app.application.tasks import registry as tasks
-from app.application.use_cases import ScanPostsUseCase, ScanPostUseCase
+from app.application.use_cases import ScanPostsUseCase, ScanPostUseCase, event_counts
 from app.domain.result import Err
 from app.infrastructure.config.settings import Settings, get_settings
 from app.infrastructure.instagram.base import InstagramSource
@@ -40,6 +40,7 @@ def scan_posts(
 ) -> ScanBatchResultOut:
     use_case = ScanPostsUseCase(source, session, settings.recent_posts_limit)
     with tasks.track("scan", "Escaneando posts") as task:
+        before = event_counts(session, body.event_id)
         if body.urls:
             result = use_case.by_urls(body.urls, body.event_id, task.progress)
         elif body.date_from and body.date_to:
@@ -52,10 +53,13 @@ def scan_posts(
         if isinstance(result, Err):
             task.fail(result.message or result.code.value)
             raise_for_err(result)
+        # New reds = people to contact that this scan surfaced.
+        nuevos_rojos = max(0, event_counts(session, body.event_id).red - before.red)
         task.result = {
             "posts": len(result.value.results),
             "usuarios": result.value.total_users_found,
             "nuevos": result.value.total_new_users,
+            **({"rojos nuevos": nuevos_rojos} if nuevos_rojos else {}),
         }
         out = ScanBatchResultOut.model_validate(result.value, from_attributes=True)
     return out

@@ -21,8 +21,11 @@ from app.application.use_cases import (
     ListUsersUseCase,
     RescanEventUseCase,
     SyncDmsUseCase,
+    event_counts,
+    state_delta,
 )
 from app.domain.result import Err
+from app.domain.traffic_light import TrafficLight
 from app.infrastructure.config.settings import Settings, get_settings
 from app.infrastructure.instagram.base import InstagramSource
 from app.infrastructure.persistence import models
@@ -115,6 +118,7 @@ def refresh_event(
         raise HTTPException(status_code=404, detail={"code": "not_found", "message": "fiesta"})
 
     with tasks.track("refresh", "Actualizando fiesta") as task:
+        before = event_counts(session, event_id)
         scan = RescanEventUseCase(source, session, settings.recent_posts_limit).execute(
             event_id, task.progress, force=force, skip_hours=settings.rescan_skip_hours
         )
@@ -129,7 +133,8 @@ def refresh_event(
             raise_for_err(sync)
         task.result = {
             "posts": len(scan.value.results),
-            "usuarios": scan.value.total_users_found,
+            "nuevos": scan.value.total_new_users,
+            **state_delta(before, event_counts(session, event_id)),
             "hilos": sync.value.threads_synced,
         }
         out = EventRefreshOut(
@@ -162,7 +167,14 @@ def enrich_event(
             task.fail(result.message or result.code.value)
             raise_for_err(result)
         rel = "cache" if result.value.relations_cached else result.value.relations
-        task.result = {"relaciones": rel, "perfiles": result.value.enriched}
+        # Follower coverage of the reds: safest audience for the campaign.
+        reds = ListUsersUseCase(session).execute(event=event_id, status=TrafficLight.RED)
+        red_followers = sum(1 for u in reds if u.follows_us)
+        task.result = {
+            "relaciones": rel,
+            "perfiles": result.value.enriched,
+            "te siguen": f"{red_followers}/{len(reds)} rojos",
+        }
     return EnrichResultOut(
         enriched=result.value.enriched,
         relations=result.value.relations,

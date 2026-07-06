@@ -69,6 +69,26 @@ def map_instagram_error(exc: InstagramError) -> Err:
     return Err(ErrorCode.UNKNOWN, str(exc))
 
 
+def event_counts(session: Session, event: int | None) -> StatusCounts:
+    """Traffic-light snapshot for an event (or global if None) — for toast deltas."""
+    return ListUsersUseCase(session).counts(event=event)
+
+
+def state_delta(before: StatusCounts, after: StatusCounts) -> dict[str, int]:
+    """Positive state transitions between two snapshots, for the 'qué cambió' toast.
+
+    respondieron  = new greens (someone replied → green)
+    amarillos     = net new yellows (contacted, no reply yet)
+    Only positive moves are reported; a quiet sync yields an empty dict.
+    """
+    out: dict[str, int] = {}
+    if (respondieron := after.green - before.green) > 0:
+        out["respondieron"] = respondieron
+    if (amarillos := after.yellow - before.yellow) > 0:
+        out["amarillos"] = amarillos
+    return out
+
+
 def _to_scanned(post: Post) -> ScannedPost:
     return ScannedPost(
         media_pk=post.media_pk,
