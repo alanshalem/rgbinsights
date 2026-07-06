@@ -35,9 +35,13 @@ export function CampaignProgress({
         {c.hour_end}h
       </p>
       {c.status === 'blocked' && (
-        <p className="rounded-lg border border-red/50 bg-red/10 px-3 py-2 text-xs text-red">
-          Instagram frenó el envío: {c.error}. Esperá un rato (horas), y si querés reanudá.
-        </p>
+        <div className="rounded-lg border border-yellow/50 bg-yellow/10 px-3 py-2 text-xs text-yellow">
+          <p className="font-semibold">⚠ Instagram frenó el envío (action-block)</p>
+          <p className="mt-1 opacity-90">{c.error}</p>
+          <p className="mt-1 font-medium">
+            No reanudes hasta que pase el bloqueo (12-48h). Reintentar ahora lo alarga.
+          </p>
+        </div>
       )}
       <div className="flex gap-2">
         {c.status === 'running' ? (

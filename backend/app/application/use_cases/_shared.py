@@ -14,6 +14,7 @@ from app.infrastructure.instagram.errors import (
     LoginRequiredError,
     PostNotFoundError,
     RateLimitedError,
+    SendBlockedError,
 )
 
 ProgressFn = Callable[..., None]
@@ -37,6 +38,8 @@ def map_instagram_error(exc: InstagramError) -> Err:
         return Err(ErrorCode.POST_NOT_FOUND, "post not found")
     if isinstance(exc, ChallengeRequiredError):
         return Err(ErrorCode.CHALLENGE_REQUIRED, str(exc))
+    if isinstance(exc, SendBlockedError):
+        return Err(ErrorCode.SEND_BLOCKED, str(exc))
     if isinstance(exc, LoginRequiredError):
         return Err(ErrorCode.LOGIN_REQUIRED, str(exc))
     if isinstance(exc, RateLimitedError):

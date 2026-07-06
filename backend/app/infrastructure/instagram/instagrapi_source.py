@@ -184,7 +184,7 @@ class InstagrapiInstagramSource:
         try:
             client.direct_send(safe_text, user_ids=[int(user_pk)])
         except Exception as exc:
-            raise SendBlockedError(f"envío rechazado: {exc}") from exc
+            raise SendBlockedError(_send_block_message(exc)) from exc
 
     def get_friendships(self, user_pks: list[str]) -> dict[str, Friendship]:
         # friendships/show_many only reports who WE follow (no `followed_by`), so
@@ -290,6 +290,27 @@ class InstagrapiInstagramSource:
 
 
 # -- mapping helpers -----------------------------------------------------
+
+
+def _send_block_message(exc: object) -> str:
+    """Turn a direct_send failure into a clear, actionable message.
+
+    A 403 / login_required / feedback_required on the broadcast endpoint means
+    Instagram action-blocked the account from sending DMs — the only right move
+    is to stop and wait, so we say so plainly instead of leaking the raw error.
+    """
+    s = str(exc).lower()
+    if any(
+        k in s
+        for k in ("login_required", "403", "feedback_required", "spam", "action", "few minutes")
+    ):
+        return (
+            "Instagram frenó el envío de DMs de tu cuenta (action-block). "
+            "PARÁ y no reintentes — insistir alarga el bloqueo. Esperá 12-48h sin enviar, "
+            "usá la cuenta a mano desde el celu, y reintentá con Máxima cautela "
+            "(empezá por los que te siguen)."
+        )
+    return f"envío rechazado: {exc}"
 
 
 def _as_dt(value: Any) -> datetime | None:

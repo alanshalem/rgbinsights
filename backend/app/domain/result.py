@@ -16,6 +16,7 @@ class ErrorCode(StrEnum):
     CHALLENGE_REQUIRED = "challenge_required"
     LOGIN_REQUIRED = "login_required"
     RATE_LIMITED = "rate_limited"
+    SEND_BLOCKED = "send_blocked"  # IG action-block on DM sending — must stop
     UNKNOWN = "unknown"
 
 

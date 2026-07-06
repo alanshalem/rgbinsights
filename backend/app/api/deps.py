@@ -22,6 +22,7 @@ _STATUS_BY_CODE = {
     ErrorCode.CHALLENGE_REQUIRED: 409,
     ErrorCode.LOGIN_REQUIRED: 401,
     ErrorCode.RATE_LIMITED: 429,
+    ErrorCode.SEND_BLOCKED: 429,
     ErrorCode.UNKNOWN: 502,
 }
 

@@ -24,7 +24,17 @@ export function TestSend({
 }) {
   return (
     <>
-      {error && <p className="text-xs text-red">{error}</p>}
+      {error &&
+        (/action-block|frenó el env/i.test(error) ? (
+          <div className="rounded-lg border border-yellow/50 bg-yellow/10 p-3 text-xs text-yellow">
+            <p className="font-semibold">⚠ Instagram bloqueó el envío de DMs</p>
+            <p className="mt-1 opacity-90">{error}</p>
+          </div>
+        ) : (
+          <div className="rounded-lg border border-red/40 bg-red/10 p-2.5 text-xs text-red">
+            {error}
+          </div>
+        ))}
       {testedTo && <p className="text-xs text-green">✓ Mensaje de prueba enviado a @{testedTo}.</p>}
 
       {/* test send — one DM to check it lands before the batch */}
