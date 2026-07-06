@@ -18,6 +18,24 @@ export type LocalEstimate = {
   minutes_per_day: number;
 };
 
+/** Pull the 5 send knobs out of a preset/optimal object (which also carries a
+ * `name` and possibly extra fields). One place to keep the shape in sync. */
+export function toParams(p: {
+  delay_min: number;
+  delay_max: number;
+  daily_cap: number;
+  hour_start: number;
+  hour_end: number;
+}): SendParams {
+  return {
+    delay_min: p.delay_min,
+    delay_max: p.delay_max,
+    daily_cap: p.daily_cap,
+    hour_start: p.hour_start,
+    hour_end: p.hour_end,
+  };
+}
+
 export function estimateFor(count: number, p: SendParams): LocalEstimate {
   const avg = (p.delay_min + p.delay_max) / 2;
   const windowHours = (p.hour_end - p.hour_start) % 24 || 24;

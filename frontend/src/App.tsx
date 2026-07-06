@@ -5,14 +5,16 @@ import { ActionsMenu } from './components/ActionsMenu';
 import { ActivityPage } from './components/ActivityPage';
 import { Board } from './components/Board';
 import { CampaignModal } from './components/CampaignModal';
+import { ErrorBanner } from './components/ErrorBanner';
 import { FiestaModal } from './components/FiestaModal';
+import { FilterBar } from './components/FilterBar';
 import { HelpPage } from './components/HelpPage';
 import { Navbar, type Page } from './components/Navbar';
 import { PostsDrawer } from './components/PostsDrawer';
 import { ScanBar } from './components/ScanBar';
 import { Toasts } from './components/Toasts';
 import { UsersTable } from './components/UsersTable';
-import { LIGHTS, LIGHT_LABEL } from './lib/user';
+import { useDebouncedValue } from './lib/useDebouncedValue';
 
 type View = 'board' | 'table';
 
@@ -35,7 +37,11 @@ export default function App() {
 
   const events = useEvents();
   const follows = onlyFollowers || undefined;
-  const counts = useCounts({ event, search: search || undefined, follows });
+  // Debounced so the derived queries (counts + users) only refetch once typing
+  // pauses, instead of on every keystroke.
+  const debouncedSearch = useDebouncedValue(search);
+  const searchQ = debouncedSearch || undefined;
+  const counts = useCounts({ event, search: searchQ, follows });
   const c = counts.data ?? { red: 0, yellow: 0, green: 0, total: 0 };
 
   const selected = useMemo(() => events.data?.find((e) => e.id === event), [events.data, event]);
@@ -62,6 +68,7 @@ export default function App() {
             <select
               value={event ?? ''}
               onChange={(e) => setEvent(e.target.value ? Number(e.target.value) : undefined)}
+              aria-label="Elegir fiesta"
               className="rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] px-3 py-1.5 text-sm font-medium outline-none"
             >
               <option value="">Todas las fiestas</option>
@@ -112,95 +119,22 @@ export default function App() {
 
           <ScanBar event={event} eventName={selected?.name} onError={setError} />
 
-          {error && (
-            <div
-              className={`rounded-xl border px-4 py-3 text-sm ${
-                error.isChallenge
-                  ? 'border-[var(--color-yellow)]/50 bg-[var(--color-yellow)]/10 text-[var(--color-yellow)]'
-                  : 'border-[var(--color-red)]/50 bg-[var(--color-red)]/10 text-[var(--color-red)]'
-              }`}
-            >
-              {error.isChallenge ? (
-                <>
-                  <strong>Instagram pide verificación.</strong> La sesión se venció: reconectá desde
-                  el chip <b>IG</b> arriba a la derecha (se abre una ventana para loguearte) y
-                  reintentá. {error.message}
-                </>
-              ) : (
-                <>Error: {error.message}</>
-              )}
-            </div>
-          )}
+          <ErrorBanner error={error} />
 
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="flex overflow-hidden rounded-lg border border-[var(--color-border)]">
-              {(['board', 'table'] as const).map((v) => (
-                <button
-                  key={v}
-                  onClick={() => setView(v)}
-                  className={`px-3 py-1.5 text-sm font-medium ${
-                    view === v
-                      ? 'bg-[var(--color-panel-2)] text-[var(--color-ink)]'
-                      : 'text-[var(--color-muted)] hover:text-[var(--color-ink)]'
-                  }`}
-                >
-                  {v === 'board' ? 'Board' : 'Tabla'}
-                </button>
-              ))}
-            </div>
-
-            <input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Buscar @usuario o nombre…"
-              className="rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] px-3 py-1.5 text-sm outline-none placeholder:text-[var(--color-muted)]"
-            />
-
-            {view === 'table' && (
-              <select
-                value={status}
-                onChange={(e) => setStatus(e.target.value as TrafficLight | '')}
-                className="rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] px-3 py-1.5 text-sm outline-none"
-              >
-                <option value="">Todos los estados</option>
-                {LIGHTS.map((l) => (
-                  <option key={l} value={l}>
-                    {LIGHT_LABEL[l]}
-                  </option>
-                ))}
-              </select>
-            )}
-
-            <select
-              value={order}
-              onChange={(e) => setOrder(e.target.value as Order)}
-              className="rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] px-3 py-1.5 text-sm outline-none"
-            >
-              <option value="status">Orden: estado</option>
-              <option value="fans">Orden: fans 🔥</option>
-              <option value="followers">Orden: seguidores 🌟</option>
-              <option value="username">Orden: usuario</option>
-            </select>
-
-            <button
-              onClick={() => setOnlyFollowers((v) => !v)}
-              title="Mostrar solo los que te siguen (más seguros para escribir)"
-              className={`rounded-lg border px-3 py-1.5 text-sm font-medium ${
-                onlyFollowers
-                  ? 'border-[var(--color-blue)] bg-[var(--color-blue)]/15 text-[var(--color-blue)]'
-                  : 'border-[var(--color-border)] text-[var(--color-muted)] hover:text-[var(--color-ink)]'
-              }`}
-            >
-              {onlyFollowers ? '✓ Solo seguidores' : 'Solo seguidores'}
-            </button>
-
-            <button
-              onClick={() => setShowPosts((s) => !s)}
-              className="rounded-lg border border-[var(--color-border)] px-3 py-1.5 text-sm hover:bg-[var(--color-panel)]"
-            >
-              {showPosts ? 'Ocultar posts' : 'Ver posts'}
-            </button>
-          </div>
+          <FilterBar
+            view={view}
+            onView={setView}
+            search={search}
+            onSearch={setSearch}
+            status={status}
+            onStatus={setStatus}
+            order={order}
+            onOrder={setOrder}
+            onlyFollowers={onlyFollowers}
+            onToggleFollowers={() => setOnlyFollowers((v) => !v)}
+            showPosts={showPosts}
+            onTogglePosts={() => setShowPosts((s) => !s)}
+          />
 
           {showPosts && <PostsDrawer event={event} onError={setError} />}
 
@@ -212,7 +146,7 @@ export default function App() {
             ) : view === 'board' ? (
               <Board
                 event={event}
-                search={search || undefined}
+                search={searchQ}
                 order={order}
                 follows={follows}
                 counts={{ red: c.red, yellow: c.yellow, green: c.green }}
@@ -222,7 +156,7 @@ export default function App() {
                 query={{
                   event,
                   status: status || undefined,
-                  search: search || undefined,
+                  search: searchQ,
                   order,
                   follows,
                 }}

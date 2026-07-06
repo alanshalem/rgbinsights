@@ -65,9 +65,7 @@ def list_events(session: Session = Depends(session_dep)) -> list[EventOut]:
     repo = EventRepository(session)
     counts = repo.post_counts()
     scanned = repo.last_scanned()
-    return [
-        _to_out(e, counts.get(e.id or -1, 0), scanned.get(e.id or -1)) for e in repo.list_all()
-    ]
+    return [_to_out(e, counts.get(e.id or -1, 0), scanned.get(e.id or -1)) for e in repo.list_all()]
 
 
 @router.patch("/{event_id}", response_model=EventOut)

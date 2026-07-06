@@ -11,6 +11,7 @@ from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
+from sqlalchemy import func
 from sqlmodel import Session, col, select
 
 from app.application.dto import (
@@ -56,7 +57,7 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
-def _map_error(exc: InstagramError) -> Err:
+def map_instagram_error(exc: InstagramError) -> Err:
     if isinstance(exc, PostNotFoundError):
         return Err(ErrorCode.POST_NOT_FOUND, "post not found")
     if isinstance(exc, ChallengeRequiredError):
@@ -94,7 +95,7 @@ class ScanPostUseCase:
             likers = self._source.get_likers(post.media_pk)
         except InstagramError as exc:
             logger.warning("scan failed for %s: %s", url, exc)
-            return _map_error(exc)
+            return map_instagram_error(exc)
 
         now = _now()
         self._posts.upsert(post, scanned_at=now, event_id=event_id)
@@ -154,7 +155,7 @@ class ScanPostsUseCase:
         try:
             recent = self._source.get_recent_posts(self._recent_limit)
         except InstagramError as exc:
-            return _map_error(exc)
+            return map_instagram_error(exc)
         in_range = [
             p for p in recent if p.taken_at is not None and date_from <= p.taken_at <= date_to
         ]
@@ -213,9 +214,7 @@ class RescanEventUseCase:
         urls = [p.url for p in stale]
         if not urls:
             return Ok(
-                ScanBatchResult(
-                    results=[], total_users_found=0, total_new_users=0, skipped=skipped
-                )
+                ScanBatchResult(results=[], total_users_found=0, total_new_users=0, skipped=skipped)
             )
         result = self._batch.by_urls(urls, event_id=event_id, progress=progress)
         if isinstance(result, Ok):
@@ -244,7 +243,7 @@ class SyncDmsUseCase:
             threads = self._source.get_dm_threads(progress, since)
         except InstagramError as exc:
             logger.warning("dm sync failed: %s", exc)
-            return _map_error(exc)
+            return map_instagram_error(exc)
 
         now = _now()
         for thread in threads:
@@ -337,15 +336,13 @@ class EnrichProfilesUseCase:
                 profile = self._source.get_profile(user.username)
             except InstagramError as exc:
                 logger.warning("enrich failed for @%s: %s", user.username, exc)
-                return _map_error(exc)
+                return map_instagram_error(exc)
             self._users.set_profile(user.pk, profile, now)
             enriched += 1
 
         self._session.commit()
         return Ok(
-            EnrichResult(
-                enriched=enriched, relations=relations, relations_cached=relations_cached
-            )
+            EnrichResult(enriched=enriched, relations=relations, relations_cached=relations_cached)
         )
 
 
@@ -414,11 +411,12 @@ class ListUsersUseCase:
 
         fan = self._fan_scores()
         threads = DmThreadRepository(self._session).by_user_pk()
+        users_by_pk = self._users_by_pk(list(engagements))
         needle = search.lower() if search else None
 
         views: list[UserView] = []
         for user_pk, rows in engagements.items():
-            user = self._session.get(models.User, user_pk)
+            user = users_by_pk.get(user_pk)
             if user is None:
                 continue
             if (
@@ -500,14 +498,28 @@ class ListUsersUseCase:
             grouped.setdefault(row.user_pk, []).append(row)
         return grouped
 
+    def _users_by_pk(self, pks: list[str]) -> dict[str, models.User]:
+        """Batch-load users by pk (one IN query, chunked under SQLite's limit)."""
+        out: dict[str, models.User] = {}
+        for i in range(0, len(pks), 900):
+            chunk = pks[i : i + 900]
+            for user in self._session.exec(
+                select(models.User).where(col(models.User.pk).in_(chunk))
+            ):
+                out[user.pk] = user
+        return out
+
     def _fan_scores(self) -> dict[str, int]:
-        """user_pk -> distinct posts engaged (global loyalty signal)."""
-        by_user: dict[str, set[str]] = {}
-        for user_pk, post_pk in self._session.exec(
-            select(models.Engagement.user_pk, models.Engagement.post_media_pk)
-        ):
-            by_user.setdefault(user_pk, set()).add(post_pk)
-        return {k: len(v) for k, v in by_user.items()}
+        """user_pk -> distinct posts engaged (global loyalty signal).
+
+        Counted in SQL (GROUP BY) so we don't pull the whole Engagement table
+        into memory on every request.
+        """
+        stmt = select(
+            models.Engagement.user_pk,
+            func.count(func.distinct(models.Engagement.post_media_pk)),
+        ).group_by(col(models.Engagement.user_pk))
+        return {user_pk: count for user_pk, count in self._session.exec(stmt)}
 
     @staticmethod
     def _sort(views: list[UserView], order: str) -> list[UserView]:

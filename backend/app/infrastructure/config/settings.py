@@ -40,24 +40,18 @@ class Settings(BaseSettings):
     # Instagram. Set to false once credentials are filled in .env.
     use_fake_instagram: bool = True
 
-    # Which data source to use: "fake" | "web" | "playwright" | "instagrapi".
-    #   web        -> browser web API via IG_SESSIONID (only /users/* works)
-    #   playwright -> real logged-in headless browser (recommended for real use)
-    #   instagrapi -> mobile private API via user/password (needs a mobile login)
+    # Which data source to use: "fake" | "instagrapi".
+    #   instagrapi -> mobile private API, seeded by IG_SESSIONID / user+password.
     # Empty falls back to use_fake_instagram for backward compat.
     ig_source: str = ""
 
-    # Playwright source: it drives a plain Chrome over CDP (see chrome_cdp.py).
-    ig_browser_dir: str = ".pw-profile"  # dedicated Chrome profile (persists login)
-    ig_browser_headless: bool = True  # headless when scraping; login is always headed
-    ig_chrome_path: str = ""  # path to chrome.exe; empty = auto-detect
-    ig_cdp_port: int = 9222
-
     def resolved_source(self) -> str:
-        src = self.ig_source.strip().lower()
-        if src:
-            return src
-        return "fake" if self.use_fake_instagram else "instagrapi"
+        """Only 'fake' or 'instagrapi' remain; anything real maps to instagrapi."""
+        if self.ig_source.strip().lower() == "fake":
+            return "fake"
+        if not self.ig_source.strip() and self.use_fake_instagram:
+            return "fake"
+        return "instagrapi"
 
     # How many recent posts to pull when scanning by date range.
     recent_posts_limit: int = 50

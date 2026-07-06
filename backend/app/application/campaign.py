@@ -27,6 +27,45 @@ PRESETS: dict[str, SendParams] = {
     "media": SendParams(delay_min=45, delay_max=120, daily_cap=40, hour_start=10, hour_end=24),
 }
 
+# Safety ceiling for the auto/optimal mode: never blast more than this per day,
+# even if that means the run spills past the target window. Cold-ish bulk DMs
+# above ~45/day sharply raise the action-block risk.
+_OPTIMAL_MAX_CAP = 45
+_OPTIMAL_HOURS = (10, 23)  # 13h daytime window (AR-friendly)
+
+
+def _clamp(value: int, lo: int, hi: int) -> int:
+    return max(lo, min(hi, value))
+
+
+def optimal_params(count: int, target_days: float = 2.5) -> SendParams:
+    """Compute the 'sweet spot' rate for `count` DMs: finish in ~2-3 days as safely
+    as possible.
+
+    Strategy: pick the SMALLEST daily cap that still drains the list within the
+    target window (bounded by a hard safety ceiling), then stretch the delays so
+    those sends spread across the whole active window. Fewer-per-day + long,
+    randomized gaps = the least bursty pattern that still meets the deadline —
+    the safest point on the speed/ban-risk curve. If the list is too big to
+    finish safely in the window, the cap stays at the ceiling and it simply takes
+    longer (the ETA shows the real number of days).
+    """
+    count = max(count, 1)
+    hour_start, hour_end = _OPTIMAL_HOURS
+    window_seconds = (hour_end - hour_start) * 3600
+    needed_cap = math.ceil(count / max(target_days, 0.5))
+    daily_cap = _clamp(needed_cap, 1, _OPTIMAL_MAX_CAP)
+    avg_gap = window_seconds / daily_cap  # spread the day's sends evenly
+    delay_min = _clamp(round(avg_gap * 0.6), 60, 600)
+    delay_max = _clamp(round(avg_gap * 1.4), delay_min + 60, 1200)
+    return SendParams(
+        delay_min=delay_min,
+        delay_max=delay_max,
+        daily_cap=daily_cap,
+        hour_start=hour_start,
+        hour_end=hour_end,
+    )
+
 
 @dataclass(frozen=True, slots=True)
 class Estimate:

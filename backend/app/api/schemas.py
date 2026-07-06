@@ -203,11 +203,6 @@ class IgStatusOut(BaseModel):
     has_credentials: bool  # user/pass present in .env (enables the 1-click reauth)
 
 
-class IgLoginOut(BaseModel):
-    opened: bool  # a headed login window is open
-    logged_in: bool  # login completed
-
-
 class IgSessionIdIn(BaseModel):
     sessionid: str
 
@@ -225,13 +220,6 @@ class MessageSample(BaseModel):
     message: str
 
 
-class CampaignPreviewOut(BaseModel):
-    targets_count: int
-    follower_targets: int  # how many targets already follow us (safest to DM)
-    estimate: EstimateOut
-    samples: list[MessageSample]
-
-
 class PresetOut(BaseModel):
     name: str
     delay_min: int
@@ -239,6 +227,14 @@ class PresetOut(BaseModel):
     daily_cap: int
     hour_start: int
     hour_end: int
+
+
+class CampaignPreviewOut(BaseModel):
+    targets_count: int
+    follower_targets: int  # how many targets already follow us (safest to DM)
+    estimate: EstimateOut
+    samples: list[MessageSample]
+    optimal: PresetOut  # auto-computed sweet-spot rate (~2-3 days, safest pace)
 
 
 class ResetIn(BaseModel):

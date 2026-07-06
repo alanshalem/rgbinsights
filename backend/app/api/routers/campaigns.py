@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, col, func, select
 
-from app.api.deps import raise_for_err, session_dep, source_dep
+from app.api.deps import raise_for_instagram_error, session_dep, source_dep
 from app.api.schemas import (
     CampaignCreate,
     CampaignOut,
@@ -21,7 +21,6 @@ from app.application import campaign as camp
 from app.application import campaign_sender
 from app.application.dto import UserView
 from app.application.use_cases import ListUsersUseCase
-from app.domain.result import Err, ErrorCode
 from app.domain.traffic_light import TrafficLight
 from app.infrastructure.instagram.base import InstagramSource
 from app.infrastructure.instagram.errors import InstagramError
@@ -103,6 +102,20 @@ def preview(
             minutes_per_day=est.minutes_per_day,
         ),
         samples=samples,
+        optimal=_optimal_preset(len(reds)),
+    )
+
+
+def _optimal_preset(count: int) -> PresetOut:
+    """The auto-computed sweet-spot rate for this list size (~2-3 days, safest)."""
+    p = camp.optimal_params(count)
+    return PresetOut(
+        name="optimo",
+        delay_min=p.delay_min,
+        delay_max=p.delay_max,
+        daily_cap=p.daily_cap,
+        hour_start=p.hour_start,
+        hour_end=p.hour_end,
     )
 
 
@@ -135,8 +148,8 @@ def test_send(
     try:
         source.send_dm(target.pk, message)
     except InstagramError as exc:
-        raise_for_err(Err(ErrorCode.CHALLENGE_REQUIRED, str(exc)))
-    except Exception as exc:  # noqa: BLE001 — browser/Playwright faults would 500 raw otherwise
+        raise_for_instagram_error(exc)
+    except Exception as exc:  # noqa: BLE001 — an unexpected fault would 500 raw otherwise
         logger.exception("test_send failed for @%s", target.username)
         raise HTTPException(
             status_code=502,

@@ -8,9 +8,11 @@ from typing import NoReturn
 from fastapi import Depends, HTTPException
 from sqlmodel import Session
 
+from app.application.use_cases import map_instagram_error
 from app.domain.result import Err, ErrorCode
 from app.infrastructure.config.settings import Settings, get_settings
 from app.infrastructure.instagram.base import InstagramSource
+from app.infrastructure.instagram.errors import InstagramError
 from app.infrastructure.instagram.fake_source import FakeInstagramSource
 from app.infrastructure.instagram.shared import get_shared_source
 from app.infrastructure.persistence.db import get_session
@@ -39,3 +41,9 @@ def raise_for_err(err: Err) -> NoReturn:
     """Turn an expected-failure Result into a clean HTTP error with a code."""
     status = _STATUS_BY_CODE.get(err.code, 502)
     raise HTTPException(status_code=status, detail={"code": err.code.value, "message": err.message})
+
+
+def raise_for_instagram_error(exc: InstagramError) -> NoReturn:
+    """Map an adapter exception to its HTTP error — the single place routers use,
+    so a challenge/login/rate-limit always gets the same status everywhere."""
+    raise_for_err(map_instagram_error(exc))

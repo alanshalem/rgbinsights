@@ -47,12 +47,14 @@ class UserRepository:
         return list(self.session.exec(select(models.User.pk)))
 
     def set_friendships(self, rels: dict[str, Friendship]) -> None:
-        for pk, fr in rels.items():
-            row = self.session.get(models.User, pk)
-            if row is not None:
-                row.follows_us = fr.followed_by
-                row.we_follow = fr.following
-                self.session.add(row)
+        if not rels:
+            return
+        rows = self.session.exec(select(models.User).where(col(models.User.pk).in_(list(rels))))
+        for row in rows:
+            fr = rels[row.pk]
+            row.follows_us = fr.followed_by
+            row.we_follow = fr.following
+            self.session.add(row)
 
     def set_profile(self, pk: str, profile: ProfileInfo, now: datetime) -> None:
         row = self.session.get(models.User, pk)
@@ -68,13 +70,23 @@ class UserRepository:
         self.session.add(row)
 
     def unenriched(self, pks: list[str]) -> list[models.User]:
-        """Users (from the given pks) whose profile hasn't been fetched yet."""
-        rows = []
-        for pk in pks:
-            row = self.session.get(models.User, pk)
-            if row is not None and row.profile_synced_at is None:
-                rows.append(row)
-        return rows
+        """Users (from the given pks) whose profile hasn't been fetched yet.
+
+        One query instead of N gets; input order is preserved (the enrich loop
+        may be capped by `limit`, so which users come first must stay stable).
+        """
+        if not pks:
+            return []
+        found = {
+            u.pk: u
+            for u in self.session.exec(
+                select(models.User).where(
+                    col(models.User.pk).in_(pks),
+                    col(models.User.profile_synced_at).is_(None),
+                )
+            )
+        }
+        return [found[pk] for pk in pks if pk in found]
 
 
 class PostRepository:

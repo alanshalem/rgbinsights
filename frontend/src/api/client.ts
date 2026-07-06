@@ -39,7 +39,6 @@ export type Activity =
 export type Status = paths['/status']['get']['responses']['200']['content']['application/json'];
 export type IgStatus =
   paths['/ig/status']['get']['responses']['200']['content']['application/json'];
-export type IgLogin = paths['/ig/login']['post']['responses']['200']['content']['application/json'];
 
 type ApiErrorDetail = { code: string; message: string };
 
@@ -139,8 +138,6 @@ export const api = {
   getStatus: () => request<Status>('/status'),
 
   igStatus: () => request<IgStatus>('/ig/status'),
-  igLogin: () => request<IgLogin>('/ig/login', { method: 'POST' }),
-  igLoginFinish: () => request<IgLogin>('/ig/login/finish', { method: 'POST' }),
   igReauth: () => request<IgStatus>('/ig/reauth', { method: 'POST' }),
   igSetSessionid: (sessionid: string) =>
     request<IgStatus>('/ig/sessionid', { method: 'POST', body: JSON.stringify({ sessionid }) }),
