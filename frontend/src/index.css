@@ -17,6 +17,16 @@
 
   --font-display: 'Arial Black', 'Helvetica Neue', system-ui, sans-serif;
   --font-mono: ui-monospace, 'Cascadia Code', 'Consolas', monospace;
+
+  /* Squared-off borders: sharp panels, modals, inputs and buttons read as a
+     deliberate technical look instead of the default soft-rounded template.
+     Circles and pills (rounded-full: status dots, avatars, chips) stay round. */
+  --radius-sm: 0px;
+  --radius-md: 0px;
+  --radius-lg: 0px;
+  --radius-xl: 0px;
+  --radius-2xl: 0px;
+  --radius-3xl: 0px;
 }
 
 html,

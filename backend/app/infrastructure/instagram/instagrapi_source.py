@@ -151,11 +151,13 @@ class InstagrapiInstagramSource:
     def _session_valid(self, client: Client) -> bool:
         """Cheap authed probe: True if the loaded session still works.
 
-        Uses get_timeline_feed() — the probe instagrapi's own docs recommend for
-        session validity (lighter and less flag-prone than account_info).
+        Uses account_info() (/accounts/current_user/) on purpose: it is gentler
+        than the timeline feed, which IG heavily monitors and 403s on the
+        slightest throttle/flag even when the session is fine for scraping. We'd
+        rather keep a usable-but-throttled session connected than mark it dead.
         """
         try:
-            client.get_timeline_feed()
+            client.account_info()
             return True
         except Exception:  # noqa: BLE001 — any failure means fall through to re-login
             return False
@@ -407,6 +409,15 @@ def classify_login_error(exc: Exception) -> InstagramError:
             "sessionid quedó mal copiado o vencido: volvé a copiar el valor COMPLETO "
             "de la cookie 'sessionid', recién sacado del navegador. Si con uno fresco "
             "sigue igual, la cuenta o la IP está en revisión: esperá o probá otra red."
+        )
+    if "403" in s or "forbidden" in s or "feedback_required" in s:
+        # Authenticated but IG refuses every call — the account/IP is blocked or
+        # under review. The sessionid is likely fine; retrying makes it worse.
+        return LoginRequiredError(
+            "El sessionid está bien, pero Instagram rechaza las llamadas de la cuenta "
+            "(403). No es el código: la cuenta o la IP está bloqueada / en revisión. "
+            "Esperá 12-48h sin automatizar, usá la cuenta a mano desde el celu, y "
+            "probá desde otra red. No reintentes seguido — lo alarga."
         )
     return LoginRequiredError(
         "La sesión venció o el sessionid es inválido. Pegá un sessionid nuevo del "

@@ -21,6 +21,7 @@ from app.api.schemas import IgSessionIdIn, IgStatusOut
 from app.infrastructure.config.settings import Settings, get_settings
 from app.infrastructure.instagram.base import InstagramSource
 from app.infrastructure.instagram.errors import ChallengeRequiredError, InstagramError
+from app.infrastructure.instagram.fake_source import FakeInstagramSource
 from app.infrastructure.instagram.instagrapi_source import classify_login_error
 from app.infrastructure.instagram.shared import get_shared_source, reset_shared_source
 from app.infrastructure.persistence.repositories import AppStateRepository
@@ -32,7 +33,11 @@ _LAST_OK = "ig_last_ok_at"
 
 
 def _source(settings: Settings) -> InstagramSource:
-    # The shared (process-wide) source, so the status reflects the real session.
+    # Demo -> the fake source (connected, no network). Otherwise the shared
+    # (process-wide) instagrapi source, so status reflects the real session.
+    # Mirrors deps.source_dep so demo behaves consistently everywhere.
+    if settings.resolved_source() == "fake":
+        return FakeInstagramSource()
     return get_shared_source(settings.resolved_source())
 
 
@@ -136,10 +141,14 @@ def ig_set_sessionid(
     try:
         client = build_client(settings, _no_challenge)
         client.login_by_sessionid(sid)
+        # login_by_sessionid only sets the cookie; probe once so a blocked account
+        # (403) or a dead cookie surfaces here as a clear message instead of a
+        # silent "saved but disconnected". Only persist a session that works.
+        client.account_info()
         client.dump_settings(Path(settings.ig_session_file))
     except InstagramError as exc:  # already classified (e.g. challenge handler)
         raise_for_instagram_error(exc)
-    except Exception as exc:  # noqa: BLE001 — classify IP-block vs expired session
+    except Exception as exc:  # noqa: BLE001 — classify 403/IP-block/expired session
         raise_for_instagram_error(classify_login_error(exc))
     reset_shared_source()  # next call reloads the now-valid session.json
     return _status(session, settings)

@@ -202,7 +202,7 @@ class IgStatusOut(BaseModel):
     pk: str | None
     last_ok_at: datetime | None
     demo: bool  # fake source (no real Instagram)
-    source: str  # fake | web | playwright | instagrapi — drives the reconnect UI
+    source: str  # fake | instagrapi — drives the reconnect UI
     has_credentials: bool  # user/pass present in .env (enables the 1-click reauth)
 
 

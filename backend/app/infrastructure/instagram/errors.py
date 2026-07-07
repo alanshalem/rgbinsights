@@ -59,4 +59,4 @@ class SendRetryableError(InstagramError):
 
 
 class SendNotSupportedError(InstagramError):
-    """This data source can't send DMs (use the Playwright source)."""
+    """This data source can't send DMs (only the instagrapi source can)."""
