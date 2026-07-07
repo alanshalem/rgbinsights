@@ -21,6 +21,7 @@ _STATUS_BY_CODE = {
     ErrorCode.POST_NOT_FOUND: 404,
     ErrorCode.CHALLENGE_REQUIRED: 409,
     ErrorCode.LOGIN_REQUIRED: 401,
+    ErrorCode.IP_BLOCKED: 403,
     ErrorCode.RATE_LIMITED: 429,
     ErrorCode.SEND_BLOCKED: 429,
     ErrorCode.UNKNOWN: 502,

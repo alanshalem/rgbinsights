@@ -11,6 +11,7 @@ from app.domain.result import Err, ErrorCode
 from app.infrastructure.instagram.errors import (
     ChallengeRequiredError,
     InstagramError,
+    IpBlockedError,
     LoginRequiredError,
     PostNotFoundError,
     RateLimitedError,
@@ -40,6 +41,8 @@ def map_instagram_error(exc: InstagramError) -> Err:
         return Err(ErrorCode.CHALLENGE_REQUIRED, str(exc))
     if isinstance(exc, SendBlockedError):
         return Err(ErrorCode.SEND_BLOCKED, str(exc))
+    if isinstance(exc, IpBlockedError):
+        return Err(ErrorCode.IP_BLOCKED, str(exc))
     if isinstance(exc, LoginRequiredError):
         return Err(ErrorCode.LOGIN_REQUIRED, str(exc))
     if isinstance(exc, RateLimitedError):

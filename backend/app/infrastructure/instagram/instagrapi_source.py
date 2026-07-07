@@ -29,9 +29,12 @@ from app.infrastructure.config.settings import Settings
 from app.infrastructure.instagram.errors import (
     ChallengeRequiredError,
     InstagramError,
+    IpBlockedError,
     LoginRequiredError,
     PostNotFoundError,
+    RecipientUnavailableError,
     SendBlockedError,
+    SendRetryableError,
 )
 from app.infrastructure.instagram.session import build_client
 from app.infrastructure.instagram.throttle import RequestBudget
@@ -47,11 +50,7 @@ class InstagrapiInstagramSource:
 
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
-        self._budget = RequestBudget(
-            settings.scan_min_delay_seconds,
-            settings.scan_max_delay_seconds,
-            settings.scan_max_requests,
-        )
+        self._budget = RequestBudget(settings.scan_max_requests)
         self._client: Client | None = None
 
     # -- login / session -------------------------------------------------
@@ -98,6 +97,8 @@ class InstagrapiInstagramSource:
             except (ChallengeRequired, LoginRequired) as exc:
                 errors.append(f"sessionid vencido/rechazado: {exc}")
             except Exception as exc:  # noqa: BLE001 — surfaced below as handled
+                if isinstance(domain := classify_login_error(exc), IpBlockedError):
+                    raise domain from exc  # a flagged IP breaks every path — stop now
                 errors.append(f"sessionid: {exc}")
 
         # 3. username/password (auto-renews when the session dies).
@@ -123,15 +124,21 @@ class InstagrapiInstagramSource:
             except InstagramError:
                 raise  # already a handled type (e.g. from the TOTP guard)
             except Exception as exc:  # noqa: BLE001
+                if isinstance(domain := classify_login_error(exc), IpBlockedError):
+                    raise domain from exc  # a flagged IP breaks every path — stop now
                 errors.append(f"user/pass: {exc}")
 
         detail = "; ".join(errors) if errors else "no hay sessionid ni user/pass en .env"
         raise LoginRequiredError(f"no se pudo iniciar sesión de Instagram ({detail})")
 
     def _session_valid(self, client: Client) -> bool:
-        """Cheap authed probe: True if the loaded session still works."""
+        """Cheap authed probe: True if the loaded session still works.
+
+        Uses get_timeline_feed() — the probe instagrapi's own docs recommend for
+        session validity (lighter and less flag-prone than account_info).
+        """
         try:
-            client.account_info()
+            client.get_timeline_feed()
             return True
         except Exception:  # noqa: BLE001 — any failure means fall through to re-login
             return False
@@ -174,17 +181,55 @@ class InstagrapiInstagramSource:
         self._budget.reset()
 
     def send_dm(self, user_pk: str, text: str) -> None:
+        from instagrapi.exceptions import (
+            BadPassword,
+            ClientThrottledError,
+            DirectMessageRequestsDisabled,
+            FeedbackRequired,
+            LoginRequired,
+            PleaseWaitFewMinutes,
+            ProxyAddressIsBlocked,
+            RateLimitError,
+            SentryBlock,
+        )
+
+        # No self._budget.spend() here: DM sends are governed by the campaign
+        # sender's own rails (per-send delay + daily cap). The scan budget's
+        # process-wide cap must NOT leak in and fake an Instagram block.
+        try:
+            recipient = int(user_pk)
+        except (TypeError, ValueError) as exc:
+            raise SendRetryableError(f"user_pk inválido: {user_pk!r}") from exc
+
         client = self._login()
-        self._budget.spend()
         # instagrapi routes any text containing "http" through the link-preview
         # endpoint (broadcast/link/), which Instagram blocks far harder (403) than
         # plain text. Drop the URL scheme so it goes via broadcast/text/ — IG still
         # auto-links the bare domain, so the recipient gets a clickable link.
         safe_text = re.sub(r"https?://", "", text)
         try:
-            client.direct_send(safe_text, user_ids=[int(user_pk)])
-        except Exception as exc:
+            client.direct_send(safe_text, user_ids=[recipient])
+        except DirectMessageRequestsDisabled as exc:
+            # The recipient closed message requests — their setting, not a block
+            # on us. Skip this one and keep the campaign going.
+            raise RecipientUnavailableError(
+                f"@{user_pk} no acepta mensajes nuevos — se saltea"
+            ) from exc
+        except (BadPassword, ProxyAddressIsBlocked, LoginRequired) as exc:
+            # IG rejected the (re)login triggered by the send, not the send itself.
+            # Classify IP-block vs expired-session so the UI guides the right fix.
+            raise classify_login_error(exc) from exc
+        except (
+            FeedbackRequired,
+            SentryBlock,
+            PleaseWaitFewMinutes,
+            ClientThrottledError,
+            RateLimitError,
+        ) as exc:
+            # A genuine Instagram push-back on sending — stop and wait.
             raise SendBlockedError(_send_block_message(exc)) from exc
+        except Exception as exc:  # noqa: BLE001 — network/timeout: transient, not a block
+            raise SendRetryableError(f"envío falló (reintentable): {exc}") from exc
 
     def get_friendships(self, user_pks: list[str]) -> dict[str, Friendship]:
         # friendships/show_many only reports who WE follow (no `followed_by`), so
@@ -193,8 +238,13 @@ class InstagrapiInstagramSource:
         client = self._login()
         self._budget.spend()
         our_id = str(client.user_id)
-        followers = {str(pk) for pk in client.user_followers(our_id, amount=0)}
-        following = {str(pk) for pk in client.user_following(our_id, amount=0)}
+        # amount=0 fetches the whole graph (correct, but the heaviest call). On a
+        # huge account set relationship_fetch_max>0 to trade completeness for far
+        # fewer requests. This read is TTL-cached upstream (relationship_cache_hours).
+        cap = self._settings.relationship_fetch_max
+        followers = {str(pk) for pk in client.user_followers(our_id, amount=cap)}
+        following = {str(pk) for pk in client.user_following(our_id, amount=cap)}
+        logger.info("read graph: %d followers, %d following", len(followers), len(following))
         # A logged-in account always has some followers/following. Both empty
         # means the read was blocked — refuse rather than overwrite good "te
         # sigue" data with all-False.
@@ -254,7 +304,9 @@ class InstagrapiInstagramSource:
         client = self._login()
         self._budget.spend()
         comments: list[Comment] = []
-        for c in client.media_comments(media_pk):
+        # Cap the fetch: without amount instagrapi pages EVERY comment (hundreds
+        # of private-API requests on a viral post). scan_comments_limit is plenty.
+        for c in client.media_comments(media_pk, amount=self._settings.scan_comments_limit):
             comments.append(
                 Comment(
                     user=_to_user(c.user),
@@ -290,6 +342,51 @@ class InstagrapiInstagramSource:
 
 
 # -- mapping helpers -----------------------------------------------------
+
+
+def classify_login_error(exc: Exception) -> InstagramError:
+    """Turn an instagrapi login/auth failure into a specific domain error so the
+    UI can tell an IP block apart from an expired session.
+
+    - IP/proxy on Instagram's blacklist  -> IpBlockedError (a new sessionid won't
+      help; change network).
+    - challenge / 2FA                    -> ChallengeRequiredError (verify on the
+      phone, then repaste).
+    - anything else (dead sessionid, bad password) -> LoginRequiredError (paste a
+      fresh sessionid).
+    """
+    from instagrapi.exceptions import (
+        ChallengeRequired,
+        ProxyAddressIsBlocked,
+        TwoFactorRequired,
+    )
+
+    s = str(exc).lower()
+    ip_markers = ("blacklist", "ip address", "change your ip", "proxy")
+    if isinstance(exc, ProxyAddressIsBlocked) or any(k in s for k in ip_markers):
+        return IpBlockedError(
+            "Instagram marcó tu conexión (IP), no la sesión. Un sessionid nuevo NO "
+            "lo arregla. Probá desde otra red (datos del celu / otra wifi) o esperá "
+            "unas horas antes de reintentar."
+        )
+    if isinstance(exc, (ChallengeRequired, TwoFactorRequired)):
+        return ChallengeRequiredError(
+            "Instagram pidió verificación (challenge). Entrá a la cuenta desde el celu, "
+            "confirmá que sos vos, y volvé a pegar el sessionid."
+        )
+    if "redirect" in s and ("exceeded" in s or "too many" in s):
+        # A redirect loop: IG bounces the request instead of authenticating.
+        # Usually a mis-copied/expired sessionid; sometimes an account/IP in review.
+        return LoginRequiredError(
+            "Instagram rebotó la conexión (bucle de redirects). Casi siempre el "
+            "sessionid quedó mal copiado o vencido: volvé a copiar el valor COMPLETO "
+            "de la cookie 'sessionid', recién sacado del navegador. Si con uno fresco "
+            "sigue igual, la cuenta o la IP está en revisión: esperá o probá otra red."
+        )
+    return LoginRequiredError(
+        "La sesión venció o el sessionid es inválido. Pegá un sessionid nuevo del "
+        "navegador donde estés logueado a la cuenta."
+    )
 
 
 def _send_block_message(exc: object) -> str:

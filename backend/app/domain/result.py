@@ -15,6 +15,7 @@ class ErrorCode(StrEnum):
     POST_NOT_FOUND = "post_not_found"
     CHALLENGE_REQUIRED = "challenge_required"
     LOGIN_REQUIRED = "login_required"
+    IP_BLOCKED = "ip_blocked"  # IG flagged the IP/proxy — not the session
     RATE_LIMITED = "rate_limited"
     SEND_BLOCKED = "send_blocked"  # IG action-block on DM sending — must stop
     UNKNOWN = "unknown"

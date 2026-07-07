@@ -19,6 +19,7 @@ from datetime import UTC, datetime
 
 from sqlmodel import Session, select
 
+from app.application import campaign as camp
 from app.application import tasks
 from app.infrastructure.config.settings import get_settings
 from app.infrastructure.instagram.errors import (
@@ -90,7 +91,9 @@ def _run(campaign_id: int) -> None:
             _reset_daily_counter(campaign)
 
             now = datetime.now(UTC)
-            if not _within_active_hours(campaign, now) or campaign.sent_today >= campaign.daily_cap:
+            day_index = (now.date() - campaign.created_at.date()).days
+            cap = camp.warmup_cap(campaign.daily_cap, day_index)
+            if not _within_active_hours(campaign, now) or campaign.sent_today >= cap:
                 session.add(campaign)
                 session.commit()
                 if _sleep_or_stopped(campaign_id, 60):

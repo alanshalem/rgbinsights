@@ -28,6 +28,7 @@ export function IgSession() {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false); // reauth / sessionid in flight
   const [error, setError] = useState<string | null>(null);
+  const [errorCode, setErrorCode] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
   const [showPaste, setShowPaste] = useState(false);
   const [sessionid, setSessionid] = useState('');
@@ -47,20 +48,35 @@ export function IgSession() {
 
   const refresh = () => void qc.invalidateQueries({ queryKey: ['ig-status'] });
 
+  const clearErr = () => {
+    setError(null);
+    setErrorCode(null);
+  };
+  const showErr = (e: unknown): string => {
+    const ae = toApiError(e);
+    setError(ae.message);
+    setErrorCode(ae.code);
+    return ae.code;
+  };
+  const showMsg = (m: string) => {
+    setError(m);
+    setErrorCode(null);
+  };
+
   // Reconnect: saved session -> sessionid -> user/pass (handled server-side).
   const reauth = async () => {
-    setError(null);
+    clearErr();
     setSuccess(false);
     setBusy(true);
     try {
       const r = await api.igReauth();
       refresh();
       if (r.state === 'connected') setSuccess(true);
-      else setError('No se pudo conectar con la cuenta guardada. Probá pegar tu sesión (abajo).');
+      else showMsg('No se pudo conectar con la cuenta guardada. Probá pegar tu sesión (abajo).');
     } catch (e) {
-      // A challenge means user/pass hit a checkpoint — nudge toward the sessionid.
-      setError(toApiError(e).message);
-      setShowPaste(true);
+      // A flagged IP won't be fixed by a new sessionid — don't push the paste flow.
+      const code = showErr(e);
+      if (code !== 'ip_blocked') setShowPaste(true);
     } finally {
       setBusy(false);
     }
@@ -69,7 +85,7 @@ export function IgSession() {
   const saveSessionid = async () => {
     const value = sessionid.trim();
     if (!value) return;
-    setError(null);
+    clearErr();
     setSuccess(false);
     setBusy(true);
     try {
@@ -80,10 +96,10 @@ export function IgSession() {
         setSuccess(true);
         setShowPaste(false);
       } else {
-        setError('Ese código no funcionó. Copiá uno recién sacado del navegador (paso 5).');
+        showMsg('Ese código no funcionó. Copiá uno recién sacado del navegador (paso 5).');
       }
     } catch (e) {
-      setError(toApiError(e).message);
+      showErr(e);
     } finally {
       setBusy(false);
     }
@@ -91,7 +107,7 @@ export function IgSession() {
 
   const close = () => {
     setOpen(false);
-    setError(null);
+    clearErr();
     setSuccess(false);
     setShowPaste(false);
     setSessionid('');
@@ -138,11 +154,23 @@ export function IgSession() {
               </p>
             )}
 
-            {error && (
-              <div className="rounded-lg border border-red/40 bg-red/10 p-2.5 text-xs text-red">
-                {error}
-              </div>
-            )}
+            {error &&
+              (errorCode === 'ip_blocked' ? (
+                <div className="rounded-lg border border-yellow/50 bg-yellow/10 p-3 text-xs text-yellow">
+                  <p className="font-semibold">⚠ Es tu conexión (IP), no la sesión</p>
+                  <p className="mt-1 opacity-90">{error}</p>
+                  <p className="mt-1 font-medium">Pegar otra sesión NO lo arregla.</p>
+                </div>
+              ) : errorCode === 'challenge_required' ? (
+                <div className="rounded-lg border border-yellow/50 bg-yellow/10 p-3 text-xs text-yellow">
+                  <p className="font-semibold">⚠ Instagram pide verificación</p>
+                  <p className="mt-1 opacity-90">{error}</p>
+                </div>
+              ) : (
+                <div className="rounded-lg border border-red/40 bg-red/10 p-2.5 text-xs text-red">
+                  {error}
+                </div>
+              ))}
 
             {showPaste ? (
               // Paste a fresh sessionid — available whether connected or not, so
@@ -212,7 +240,7 @@ export function IgSession() {
                     type="button"
                     onClick={() => {
                       setShowPaste(true);
-                      setError(null);
+                      clearErr();
                     }}
                     className="mr-auto text-xs text-muted underline hover:text-ink"
                   >
@@ -262,7 +290,7 @@ export function IgSession() {
                     type="button"
                     onClick={() => {
                       setShowPaste(true);
-                      setError(null);
+                      clearErr();
                     }}
                     className="text-xs text-muted underline hover:text-ink"
                   >

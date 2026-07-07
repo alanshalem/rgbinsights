@@ -16,12 +16,12 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session
 
-from app.api.deps import raise_for_err, raise_for_instagram_error, session_dep
+from app.api.deps import raise_for_instagram_error, session_dep
 from app.api.schemas import IgSessionIdIn, IgStatusOut
-from app.domain.result import Err, ErrorCode
 from app.infrastructure.config.settings import Settings, get_settings
 from app.infrastructure.instagram.base import InstagramSource
 from app.infrastructure.instagram.errors import ChallengeRequiredError, InstagramError
+from app.infrastructure.instagram.instagrapi_source import classify_login_error
 from app.infrastructure.instagram.shared import get_shared_source, reset_shared_source
 from app.infrastructure.persistence.repositories import AppStateRepository
 
@@ -110,7 +110,9 @@ def ig_set_sessionid(
         client = build_client(settings, _no_challenge)
         client.login_by_sessionid(sid)
         client.dump_settings(Path(settings.ig_session_file))
-    except Exception as exc:  # noqa: BLE001 — surfaced as a handled error
-        raise_for_err(Err(ErrorCode.LOGIN_REQUIRED, f"sessionid inválido o vencido: {exc}"))
+    except InstagramError as exc:  # already classified (e.g. challenge handler)
+        raise_for_instagram_error(exc)
+    except Exception as exc:  # noqa: BLE001 — classify IP-block vs expired session
+        raise_for_instagram_error(classify_login_error(exc))
     reset_shared_source()  # next call reloads the now-valid session.json
     return _status(session, settings)

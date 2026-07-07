@@ -38,6 +38,20 @@ def _clamp(value: int, lo: int, hi: int) -> int:
     return max(lo, min(hi, value))
 
 
+_WARMUP_BASE = 8  # sends allowed on day 0
+_WARMUP_STEP = 8  # extra sends allowed each following day
+
+
+def warmup_cap(daily_cap: int, day_index: int) -> int:
+    """Effective daily cap during warm-up: start low and ramp toward `daily_cap`.
+
+    A brand-new campaign blasting its full cap on day 1 is the biggest cold-start
+    block signal. Day 0 sends ~8, day 1 ~16, etc., until it reaches the real cap.
+    """
+    ramped = _WARMUP_BASE + max(0, day_index) * _WARMUP_STEP
+    return max(1, min(daily_cap, ramped))
+
+
 def optimal_params(count: int, target_days: float = 2.5) -> SendParams:
     """Compute the 'sweet spot' rate for `count` DMs: finish in ~2-3 days as safely
     as possible.

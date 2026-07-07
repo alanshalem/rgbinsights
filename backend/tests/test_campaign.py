@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.application.campaign import PRESETS, estimate, render_message
+from app.application.campaign import PRESETS, estimate, render_message, warmup_cap
 from app.infrastructure.instagram.fake_source import FakeInstagramSource
 
 
@@ -34,6 +34,20 @@ def test_render_uses_first_name_and_rotates() -> None:
 
 def test_render_no_fullname_falls_back_to_username() -> None:
     assert render_message(["Hola {nombre}"], "sofi.raver", "", "103") == "Hola sofi.raver"
+
+
+def test_warmup_cap_ramps_then_reaches_daily_cap() -> None:
+    # Day 0 starts low, then +8/day, never above the real cap.
+    assert warmup_cap(25, 0) == 8
+    assert warmup_cap(25, 1) == 16
+    assert warmup_cap(25, 2) == 24
+    assert warmup_cap(25, 3) == 25  # capped
+    assert warmup_cap(25, 99) == 25
+
+
+def test_warmup_cap_respects_small_cap_and_bad_day() -> None:
+    assert warmup_cap(5, 0) == 5  # cap below the base
+    assert warmup_cap(25, -3) == 8  # negative day → base
 
 
 def test_fake_source_records_sends() -> None:

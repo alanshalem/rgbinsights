@@ -9,7 +9,7 @@ import {
   useUsers,
 } from '../../api/hooks';
 import { toParams } from '../../lib/campaign';
-import { DEFAULT_MSG, audienceToFlags, type Audience, type Params } from './types';
+import { DEFAULT_MSG, audienceToFlags, stripLinks, type Audience, type Params } from './types';
 
 /** All the state, data and actions behind the campaign modal. Extracted so the
  * modal + its sub-panels stay presentational. Behaviour is unchanged. */
@@ -29,7 +29,8 @@ export function useCampaignForm(event: number, eventName: string) {
     hour_start: 11,
     hour_end: 23,
   });
-  const [audience, setAudience] = useState<Audience>('first');
+  const [audience, setAudience] = useState<Audience>('only');
+  const [includeLink, setIncludeLink] = useState(true);
   const [preview, setPreview] = useState<CampaignPreview | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [testedTo, setTestedTo] = useState<string | null>(null);
@@ -41,11 +42,14 @@ export function useCampaignForm(event: number, eventName: string) {
   const flags = audienceToFlags(audience);
   const body: CampaignCreate = useMemo(
     () => ({
-      templates: templates.map((t) => t.trim()).filter(Boolean),
+      templates: templates
+        .map((t) => t.trim())
+        .filter(Boolean)
+        .map((t) => (includeLink ? t : stripLinks(t))),
       ...params,
       ...audienceToFlags(audience),
     }),
-    [templates, params, audience]
+    [templates, params, audience, includeLink]
   );
 
   // Red list for the test-send picker (respects the audience follow filter).
@@ -136,6 +140,8 @@ export function useCampaignForm(event: number, eventName: string) {
     setParams,
     audience,
     setAudience,
+    includeLink,
+    setIncludeLink,
     testTarget,
     setTestTarget,
     // data

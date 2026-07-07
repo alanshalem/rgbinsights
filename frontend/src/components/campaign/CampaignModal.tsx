@@ -46,8 +46,22 @@ export function CampaignModal({
           <div className="grid gap-6 text-sm lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)] lg:items-start">
             {/* ================= LEFT: componer ================= */}
             <div className="flex min-w-0 flex-col gap-6">
-              <MessageEditor templates={f.templates} setTemplates={f.setTemplates} />
+              <MessageEditor
+                templates={f.templates}
+                setTemplates={f.setTemplates}
+                includeLink={f.includeLink}
+                setIncludeLink={f.setIncludeLink}
+              />
               <AudiencePicker audience={f.audience} setAudience={f.setAudience} />
+              {f.audience !== 'only' &&
+                f.preview &&
+                f.preview.targets_count > f.preview.follower_targets && (
+                  <div className="rounded-lg border border-yellow/50 bg-yellow/10 p-2.5 text-xs text-yellow">
+                    ⚠ {f.preview.targets_count - f.preview.follower_targets} de{' '}
+                    {f.preview.targets_count} <strong>no te siguen</strong>. Instagram bloquea los
+                    DMs a no-seguidores mucho más rápido. Lo más seguro: “Solo a los que me siguen”.
+                  </div>
+                )}
               <CautelaPicker
                 presetName={f.presetName}
                 applyPreset={f.applyPreset}

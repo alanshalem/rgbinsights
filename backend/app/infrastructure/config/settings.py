@@ -21,11 +21,13 @@ class Settings(BaseSettings):
     # login checkpoint that user/password triggers. If set, it takes priority.
     ig_sessionid: str = ""
 
-    # Anti-block hygiene (all optional). A stable proxy + consistent
-    # country/locale make the account look far less suspicious to Instagram.
+    # Anti-block hygiene. A stable proxy + consistent country/locale/timezone
+    # make the account look far less suspicious to Instagram. Defaults target
+    # Argentina (matching a local residential IP); override for another region.
     ig_proxy: str = ""  # e.g. http://user:pass@host:port
-    ig_country: str = ""  # e.g. AR
-    ig_locale: str = ""  # e.g. es_AR
+    ig_country: str = "AR"
+    ig_locale: str = "es_AR"
+    ig_timezone_offset: int = -10800  # seconds from UTC (AR = UTC-3)
 
     database_url: str = "sqlite:///./rgb.db"
 
@@ -55,6 +57,16 @@ class Settings(BaseSettings):
 
     # How many recent posts to pull when scanning by date range.
     recent_posts_limit: int = 50
+
+    # Cap comments read per post: without a cap instagrapi pages EVERY comment on
+    # a viral post (hundreds of private-API requests = ban risk). 200 recent
+    # comments is plenty to catch engaged users.
+    scan_comments_limit: int = 200
+
+    # Optional cap on followers/following fetched to compute "te sigue"
+    # membership. 0 = all (correct but heaviest). Set >0 on accounts with a huge
+    # graph to trade completeness for far fewer requests.
+    relationship_fetch_max: int = 0
 
     # Caching to spare Instagram requests (and lower ban risk). Each is a TTL:
     # within it the app reuses stored data instead of re-fetching. "force" in the
