@@ -80,6 +80,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       /* non-JSON error body */
     }
     if (isErrorDetail(detail)) throw new ApiError(res.status, detail.code, detail.message);
+    // A bare string detail (e.g. FastAPI's 500 "Internal Server Error") is still
+    // more useful than "HTTP 500" — surface it instead of the raw status.
+    if (typeof detail === 'string' && detail.trim())
+      throw new ApiError(res.status, 'unknown', detail);
     throw new ApiError(res.status, 'unknown', `HTTP ${res.status}`);
   }
   return (await res.json()) as T;
@@ -140,6 +144,7 @@ export const api = {
 
   igStatus: () => request<IgStatus>('/ig/status'),
   igReauth: () => request<IgStatus>('/ig/reauth', { method: 'POST' }),
+  igDisconnect: () => request<IgStatus>('/ig/disconnect', { method: 'POST' }),
   igSetSessionid: (sessionid: string) =>
     request<IgStatus>('/ig/sessionid', { method: 'POST', body: JSON.stringify({ sessionid }) }),
 

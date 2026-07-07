@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ApiError, type Order, type TrafficLight } from './api/client';
 import { useCounts, useEvents } from './api/hooks';
 import { ActionsMenu } from './components/ActionsMenu';
@@ -46,6 +46,15 @@ export default function App() {
   const c = counts.data ?? { red: 0, yellow: 0, green: 0, total: 0 };
 
   const selected = useMemo(() => events.data?.find((e) => e.id === event), [events.data, event]);
+
+  // If the selected fiesta vanished (e.g. after "Borrar todo"), drop back to
+  // "Todas las fiestas" so the UI doesn't scope queries to a dead id or show
+  // "undefined" as the event name.
+  useEffect(() => {
+    if (event !== undefined && events.data && !events.data.some((e) => e.id === event)) {
+      setEvent(undefined);
+    }
+  }, [events.data, event]);
   const contacted = c.yellow + c.green;
   const pct = c.total ? Math.round((contacted / c.total) * 100) : 0;
   const tableTotal = status ? c[status] : c.total;

@@ -94,6 +94,33 @@ def ig_reauth(
     return _status(session, settings)
 
 
+@router.post("/disconnect", response_model=IgStatusOut)
+def ig_disconnect(
+    session: Session = Depends(session_dep),
+    settings: Settings = Depends(get_settings),
+) -> IgStatusOut:
+    """Forget the saved session: delete session.json + drop the cached source.
+
+    A UI-pasted session is fully cleared. If .env still has IG_SESSIONID or
+    user/pass, the next status probe will reconnect from those (they are
+    configured credentials, not the saved cookie).
+    """
+    Path(settings.ig_session_file).unlink(missing_ok=True)
+    logger.info("disconnected IG: removed %s", settings.ig_session_file)
+    reset_shared_source()
+    # Report disconnected immediately — do NOT re-probe here, or _login would try
+    # to reconnect via .env creds (slow, and defeats the disconnect).
+    src = settings.resolved_source()
+    return IgStatusOut(
+        state="disconnected",
+        pk=None,
+        last_ok_at=AppStateRepository(session).get_dt(_LAST_OK),
+        demo=src == "fake",
+        source=src,
+        has_credentials=bool(settings.ig_username.strip() and settings.ig_password.strip()),
+    )
+
+
 @router.post("/sessionid", response_model=IgStatusOut)
 def ig_set_sessionid(
     body: IgSessionIdIn,

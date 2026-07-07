@@ -10,8 +10,10 @@ between requests, and a hard cap on requests per run.
 
 from __future__ import annotations
 
+import functools
 import logging
 import re
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -43,6 +45,21 @@ if TYPE_CHECKING:
     from instagrapi import Client
 
 logger = logging.getLogger(__name__)
+
+def _adapts[F: Callable[..., Any]](fn: F) -> F:
+    """Wrap a port method so any raw instagrapi/network exception becomes an
+    InstagramError (our own errors already pass through). Defined before the
+    class because decorators are evaluated when the class body runs.
+    """
+
+    @functools.wraps(fn)
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 — normalised at the adapter boundary
+            raise _to_instagram_error(exc) from exc
+
+    return wrapper  # type: ignore[return-value]
 
 
 class InstagrapiInstagramSource:
@@ -231,6 +248,7 @@ class InstagrapiInstagramSource:
         except Exception as exc:  # noqa: BLE001 — network/timeout: transient, not a block
             raise SendRetryableError(f"envío falló (reintentable): {exc}") from exc
 
+    @_adapts
     def get_friendships(self, user_pks: list[str]) -> dict[str, Friendship]:
         # friendships/show_many only reports who WE follow (no `followed_by`), so
         # to know "te sigue" we read our own followers/following lists and test
@@ -255,6 +273,7 @@ class InstagrapiInstagramSource:
             for pk in set(user_pks)
         }
 
+    @_adapts
     def get_profile(self, username: str) -> ProfileInfo:
         client = self._login()
         self._budget.spend()
@@ -271,10 +290,12 @@ class InstagrapiInstagramSource:
             profile_pic_url=str(u.profile_pic_url) if u.profile_pic_url else None,
         )
 
+    @_adapts
     def current_user_pk(self) -> str:
         client = self._login()
         return str(client.user_id)
 
+    @_adapts
     def get_post(self, url: str) -> Post:
         from instagrapi.exceptions import ClientError, MediaNotFound
 
@@ -289,17 +310,20 @@ class InstagrapiInstagramSource:
             raise PostNotFoundError(url) from exc
         return _to_post(media)
 
+    @_adapts
     def get_recent_posts(self, limit: int) -> list[Post]:
         client = self._login()
         self._budget.spend()
         medias = client.user_medias(client.user_id, amount=limit)
         return [_to_post(m) for m in medias]
 
+    @_adapts
     def get_likers(self, media_pk: str) -> list[IgUser]:
         client = self._login()
         self._budget.spend()
         return [_to_user(u) for u in client.media_likers(media_pk)]
 
+    @_adapts
     def get_comments(self, media_pk: str) -> list[Comment]:
         client = self._login()
         self._budget.spend()
@@ -316,6 +340,7 @@ class InstagrapiInstagramSource:
             )
         return comments
 
+    @_adapts
     def get_dm_threads(
         self, progress: object | None = None, since: datetime | None = None
     ) -> list[DmThread]:
@@ -387,6 +412,36 @@ def classify_login_error(exc: Exception) -> InstagramError:
         "La sesión venció o el sessionid es inválido. Pegá un sessionid nuevo del "
         "navegador donde estés logueado a la cuenta."
     )
+
+
+def _to_instagram_error(exc: Exception) -> InstagramError:
+    """Convert a raw instagrapi/requests failure into our InstagramError family.
+
+    The adapter is the boundary: every method must surface an InstagramError so
+    use cases map it to a clean Result/HTTP error instead of leaking a 500.
+    Our own errors pass through unchanged; login/redirect/challenge/IP get the
+    specific, actionable messages from classify_login_error.
+    """
+    if isinstance(exc, InstagramError):
+        return exc
+    s = str(exc).lower()
+    login_markers = (
+        "login_required",
+        "login required",
+        "not logged in",
+        "challenge",
+        "redirect",
+        "blacklist",
+        "ip address",
+        "change your ip",
+        "two_factor",
+        "csrf",
+    )
+    if any(k in s for k in login_markers):
+        return classify_login_error(exc)
+    return InstagramError(f"Instagram falló la operación: {exc}")
+
+
 
 
 def _send_block_message(exc: object) -> str:

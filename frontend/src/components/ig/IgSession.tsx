@@ -105,6 +105,27 @@ export function IgSession() {
     }
   };
 
+  const disconnect = async () => {
+    if (
+      !confirm(
+        '¿Desconectar Instagram? Se borra la sesión guardada. Para reconectar vas a tener que pegar el sessionid de nuevo.'
+      )
+    )
+      return;
+    clearErr();
+    setSuccess(false);
+    setBusy(true);
+    try {
+      await api.igDisconnect();
+      refresh();
+      setShowPaste(false);
+    } catch (e) {
+      showErr(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const close = () => {
     setOpen(false);
     clearErr();
@@ -253,6 +274,14 @@ export function IgSession() {
                     className="text-xs text-muted underline hover:text-ink disabled:opacity-50"
                   >
                     Reconectar igual
+                  </button>
+                  <button
+                    type="button"
+                    onClick={disconnect}
+                    disabled={busy}
+                    className="text-xs text-red/80 underline hover:text-red disabled:opacity-50"
+                  >
+                    Desconectar
                   </button>
                   <button
                     type="button"
