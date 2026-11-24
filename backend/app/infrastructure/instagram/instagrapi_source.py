@@ -38,7 +38,7 @@ from app.infrastructure.instagram.errors import (
     SendBlockedError,
     SendRetryableError,
 )
-from app.infrastructure.instagram.session import build_client
+from app.infrastructure.instagram.session import build_client, take_relogin_failure
 from app.infrastructure.instagram.throttle import RequestBudget
 
 if TYPE_CHECKING:
@@ -54,10 +54,26 @@ def _adapts[F: Callable[..., Any]](fn: F) -> F:
 
     @functools.wraps(fn)
     def wrapper(*args: Any, **kwargs: Any) -> Any:
+        source = args[0] if args else None
+        if (client := getattr(source, "_client", None)) is not None:
+            take_relogin_failure(client)  # discard a stale record from an earlier call
         try:
             return fn(*args, **kwargs)
         except Exception as exc:  # noqa: BLE001 — normalised at the adapter boundary
-            raise _to_instagram_error(exc) from exc
+            err = _to_instagram_error(exc)
+            # instagrapi may swallow a failed relogin and report a misleading
+            # fallback error (e.g. "not found"); the real cause wins.
+            client = getattr(source, "_client", None)
+            if client is not None and (failure := take_relogin_failure(client)) is not None:
+                err = _to_instagram_error(failure)
+            if isinstance(err, (LoginRequiredError, ChallengeRequiredError)) and hasattr(
+                source, "_client"
+            ):
+                # The client's cookies are gone; log in from scratch next time.
+                source._client = None  # type: ignore[union-attr]
+            if err is exc:
+                raise
+            raise err from exc
 
     return wrapper  # type: ignore[return-value]
 
@@ -238,6 +254,12 @@ class InstagrapiInstagramSource:
             # IG rejected the (re)login triggered by the send, not the send itself.
             # Classify IP-block vs expired-session so the UI guides the right fix.
             raise classify_login_error(exc) from exc
+        except (LoginRequiredError, IpBlockedError) as exc:
+            # The relogin hook already classified a failed relogin. A dead session
+            # leaves the client without cookies, so log in from scratch next time.
+            if isinstance(exc, LoginRequiredError):
+                self._client = None
+            raise
         except (
             FeedbackRequired,
             SentryBlock,
@@ -308,6 +330,8 @@ class InstagrapiInstagramSource:
             media = client.media_info(media_pk)
         except MediaNotFound as exc:
             raise PostNotFoundError(url) from exc
+        except _session_error_types():
+            raise  # a dead session is not a missing post; _adapts classifies it
         except ClientError as exc:
             raise PostNotFoundError(url) from exc
         return _to_post(media)
@@ -435,6 +459,8 @@ def _to_instagram_error(exc: Exception) -> InstagramError:
     """
     if isinstance(exc, InstagramError):
         return exc
+    if isinstance(exc, _session_error_types()):
+        return classify_login_error(exc)
     s = str(exc).lower()
     login_markers = (
         "login_required",
@@ -453,6 +479,27 @@ def _to_instagram_error(exc: Exception) -> InstagramError:
     return InstagramError(f"Instagram falló la operación: {exc}")
 
 
+
+
+def _session_error_types() -> tuple[type[Exception], ...]:
+    """instagrapi exceptions that mean the session/login is unusable."""
+    from instagrapi.exceptions import (
+        BadPassword,
+        ChallengeRequired,
+        ClientLoginRequired,
+        LoginRequired,
+        ReloginAttemptExceeded,
+        TwoFactorRequired,
+    )
+
+    return (
+        BadPassword,
+        ChallengeRequired,
+        ClientLoginRequired,
+        LoginRequired,
+        ReloginAttemptExceeded,
+        TwoFactorRequired,
+    )
 
 
 def _send_block_message(exc: object) -> str:

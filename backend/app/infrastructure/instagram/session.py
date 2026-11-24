@@ -23,6 +23,21 @@ logger = logging.getLogger(__name__)
 
 ChallengeHandler = Callable[[str, Any], str]
 
+_RELOGIN_FAILURE_ATTR = "_rgb_relogin_failure"
+
+
+def remember_relogin_failure(client: Any, error: Exception) -> None:
+    """Record a failed relogin on the client so the adapter can surface it."""
+    setattr(client, _RELOGIN_FAILURE_ATTR, error)
+
+
+def take_relogin_failure(client: Any) -> Exception | None:
+    """Return and clear the relogin failure recorded on the client, if any."""
+    error = getattr(client, _RELOGIN_FAILURE_ATTR, None)
+    if error is not None:
+        setattr(client, _RELOGIN_FAILURE_ATTR, None)
+    return error
+
 
 def build_client(settings: Settings, challenge_handler: ChallengeHandler) -> Client:
     """Return a configured (but NOT yet logged-in) instagrapi Client.
@@ -85,7 +100,21 @@ def _make_handle_exception(settings: Settings) -> Callable[[Client, Exception], 
 
         if isinstance(exc, LoginRequired) and settings.ig_username and settings.ig_password:
             logger.info("session expired mid-request — relogin (device preserved)")
-            client.relogin()
+            try:
+                client.relogin()
+            except Exception as relogin_exc:
+                # A failed relogin (incl. instagrapi crashes like int(None) when IG
+                # omits the password key) becomes a clear session error. It is also
+                # recorded on the client: instagrapi's media_info swallows it and
+                # falls back to the public endpoint, so the adapter reads it back.
+                from app.infrastructure.instagram.instagrapi_source import (
+                    classify_login_error,
+                )
+
+                logger.warning("relogin failed: %r", relogin_exc)
+                domain = classify_login_error(relogin_exc)
+                remember_relogin_failure(client, domain)
+                raise domain from relogin_exc
             return
         raise exc
 
