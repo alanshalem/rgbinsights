@@ -13,12 +13,14 @@ from app.application.use_cases._shared import (
     _now,
     map_instagram_error,
 )
+from app.domain.entities import DmThread
 from app.domain.result import Ok, Result
 from app.infrastructure.instagram.base import InstagramSource
 from app.infrastructure.instagram.errors import InstagramError
 from app.infrastructure.persistence.repositories import (
     AppStateRepository,
     DmThreadRepository,
+    ThreadIn,
     UserRepository,
 )
 
@@ -49,28 +51,8 @@ class SyncDmsUseCase:
             return map_instagram_error(exc)
 
         now = _now()
-        for thread in threads:
-            out_times = [
-                m.created_at
-                for m in thread.messages
-                if m.user_pk == our_pk and m.created_at is not None
-            ]
-            in_times = [
-                m.created_at
-                for m in thread.messages
-                if m.user_pk != our_pk and m.created_at is not None
-            ]
-            self._users.upsert(thread.user, now)
-            self._threads.upsert(
-                thread_id=thread.thread_id,
-                user_pk=thread.user.pk,
-                has_outgoing=any(m.user_pk == our_pk for m in thread.messages),
-                has_incoming=any(m.user_pk != our_pk for m in thread.messages),
-                last_outgoing_at=max(out_times) if out_times else None,
-                last_incoming_at=max(in_times) if in_times else None,
-                last_message_at=thread.last_message_at,
-                synced_at=now,
-            )
+        self._users.upsert_many((t.user for t in threads), now)
+        self._threads.upsert_many((_thread_in(t, our_pk) for t in threads), synced_at=now)
 
         state.set_dt(KEY_DMS_SYNCED, now)
         self._session.commit()
@@ -82,3 +64,22 @@ class SyncDmsUseCase:
                 incremental=since is not None,
             )
         )
+
+
+def _thread_in(thread: DmThread, our_pk: str) -> ThreadIn:
+    """Derive the per-direction flags/timestamps the semáforo needs."""
+    out_times = [
+        m.created_at for m in thread.messages if m.user_pk == our_pk and m.created_at is not None
+    ]
+    in_times = [
+        m.created_at for m in thread.messages if m.user_pk != our_pk and m.created_at is not None
+    ]
+    return ThreadIn(
+        thread_id=thread.thread_id,
+        user_pk=thread.user.pk,
+        has_outgoing=any(m.user_pk == our_pk for m in thread.messages),
+        has_incoming=any(m.user_pk != our_pk for m in thread.messages),
+        last_outgoing_at=max(out_times) if out_times else None,
+        last_incoming_at=max(in_times) if in_times else None,
+        last_message_at=thread.last_message_at,
+    )

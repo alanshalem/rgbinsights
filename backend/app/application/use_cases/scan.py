@@ -21,6 +21,7 @@ from app.domain.result import Err, ErrorCode, Ok, Result
 from app.infrastructure.instagram.base import InstagramSource
 from app.infrastructure.instagram.errors import InstagramError
 from app.infrastructure.persistence.repositories import (
+    EngagementIn,
     EngagementRepository,
     PostRepository,
     UserRepository,
@@ -49,35 +50,22 @@ class ScanPostUseCase:
 
         now = _now()
         self._posts.upsert(post, scanned_at=now, event_id=event_id)
-
-        seen: set[str] = set()
-        new_users = 0
-
-        for comment in comments:
-            new_users += self._record(comment.user, now, seen)
-            self._engagements.upsert(
-                comment.user.pk,
-                post.media_pk,
-                EngagementType.COMMENT,
-                comment.text,
-                comment.created_at,
-            )
-        for liker in likers:
-            new_users += self._record(liker, now, seen)
-            self._engagements.upsert(liker.pk, post.media_pk, EngagementType.LIKE, None, None)
-
+        # Comments first, then likers: a user in both keeps the liker's data.
+        people = [c.user for c in comments] + likers
+        new_pks = self._users.upsert_many(people, now)
+        self._engagements.upsert_many(
+            post.media_pk,
+            [
+                EngagementIn(c.user.pk, EngagementType.COMMENT, c.text, c.created_at)
+                for c in comments
+            ]
+            + [EngagementIn(liker.pk, EngagementType.LIKE) for liker in likers],
+        )
         self._session.commit()
-        logger.info("scanned %s: %d users, %d new", url, len(seen), new_users)
-        return Ok(ScanResult(_to_scanned(post), users_found=len(seen), new_users=new_users))
 
-    def _record(self, user: object, now: datetime, seen: set[str]) -> int:
-        from app.domain.entities import IgUser
-
-        assert isinstance(user, IgUser)
-        is_new = self._users.upsert(user, now)
-        first_time_this_scan = user.pk not in seen
-        seen.add(user.pk)
-        return 1 if (is_new and first_time_this_scan) else 0
+        found = len({u.pk for u in people})
+        logger.info("scanned %s: %d users, %d new", url, found, len(new_pks))
+        return Ok(ScanResult(_to_scanned(post), users_found=found, new_users=len(new_pks)))
 
 
 class ScanPostsUseCase:

@@ -1,47 +1,95 @@
 """Repositories — the only place that reads/writes SQLModel rows.
 
 Upserts are keyed by stable ids (user.pk, post.media_pk, thread_id) so
-re-running a scan updates in place instead of duplicating.
+re-running a scan updates in place instead of duplicating. Batch upserts load
+the existing rows with one chunked `SELECT ... IN` and let the session flush
+the inserts/updates in bulk, instead of one round-trip per row. The caller
+commits once per batch.
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Iterator
+from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 
+from sqlalchemy import func, insert
 from sqlmodel import Session, col, select
 
 from app.domain.entities import EngagementType, Friendship, IgUser, Post, ProfileInfo
 from app.infrastructure.persistence import models
+
+# Max bound parameters per IN (...) chunk: well under SQLite's variable limit.
+IN_CHUNK = 900
+
+
+def chunked(items: list[Any], size: int = IN_CHUNK) -> Iterator[list[Any]]:
+    for i in range(0, len(items), size):
+        yield items[i : i + size]
+
+
+@dataclass(frozen=True, slots=True)
+class EngagementIn:
+    user_pk: str
+    type: EngagementType
+    comment_text: str | None = None
+    created_at: datetime | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ThreadIn:
+    thread_id: str
+    user_pk: str
+    has_outgoing: bool
+    has_incoming: bool
+    last_outgoing_at: datetime | None
+    last_incoming_at: datetime | None
+    last_message_at: datetime | None
 
 
 class UserRepository:
     def __init__(self, session: Session) -> None:
         self.session = session
 
-    def upsert(self, user: IgUser, now: datetime) -> bool:
-        """Upsert a user by pk. Returns True if newly inserted."""
-        row = self.session.get(models.User, user.pk)
-        if row is None:
-            self.session.add(
-                models.User(
-                    pk=user.pk,
-                    username=user.username,
-                    full_name=user.full_name,
-                    profile_pic_url=user.profile_pic_url,
-                    is_private=user.is_private,
-                    first_seen_at=now,
-                    last_seen_at=now,
+    def upsert_many(self, users: Iterable[IgUser], now: datetime) -> set[str]:
+        """Upsert users by pk; returns the pks that were newly inserted.
+
+        A pk seen twice keeps its first position but the last data (same as
+        upserting one by one). first_seen_at is only set on insert.
+        """
+        latest: dict[str, IgUser] = {}
+        for user in users:
+            latest[user.pk] = user
+        existing: dict[str, models.User] = {}
+        for chunk in chunked(list(latest)):
+            for row in self.session.exec(select(models.User).where(col(models.User.pk).in_(chunk))):
+                existing[row.pk] = row
+        inserted: set[str] = set()
+        for pk, user in latest.items():
+            found = existing.get(pk)
+            if found is None:
+                self.session.add(
+                    models.User(
+                        pk=user.pk,
+                        username=user.username,
+                        full_name=user.full_name,
+                        profile_pic_url=user.profile_pic_url,
+                        is_private=user.is_private,
+                        first_seen_at=now,
+                        last_seen_at=now,
+                    )
                 )
-            )
-            return True
-        # username can change over time; keep the latest.
-        row.username = user.username
-        row.full_name = user.full_name
-        row.profile_pic_url = user.profile_pic_url
-        row.is_private = user.is_private
-        row.last_seen_at = now
-        self.session.add(row)
-        return False
+                inserted.add(pk)
+                continue
+            # username can change over time; keep the latest.
+            found.username = user.username
+            found.full_name = user.full_name
+            found.profile_pic_url = user.profile_pic_url
+            found.is_private = user.is_private
+            found.last_seen_at = now
+            self.session.add(found)
+        return inserted
 
     def all_pks(self) -> list[str]:
         return list(self.session.exec(select(models.User.pk)))
@@ -122,71 +170,70 @@ class EngagementRepository:
     def __init__(self, session: Session) -> None:
         self.session = session
 
-    def upsert(
-        self,
-        user_pk: str,
-        post_media_pk: str,
-        type_: EngagementType,
-        comment_text: str | None,
-        created_at: datetime | None,
-    ) -> bool:
-        """Idempotent on (user_pk, post_media_pk, type). True if new."""
-        existing = self.session.exec(
-            select(models.Engagement).where(
-                models.Engagement.user_pk == user_pk,
-                models.Engagement.post_media_pk == post_media_pk,
-                models.Engagement.type == type_.value,
+    def upsert_many(self, post_media_pk: str, items: Iterable[EngagementIn]) -> None:
+        """Idempotent on (user_pk, post_media_pk, type), in input order.
+
+        One SELECT loads the post's existing rows; new rows go out in one
+        executemany INSERT (ids keep input order). A repeated key only
+        refreshes the comment text (edited comment); created_at keeps the
+        first value seen.
+        """
+        existing: dict[tuple[str, str], models.Engagement] = {
+            (row.user_pk, row.type): row
+            for row in self.session.exec(
+                select(models.Engagement).where(models.Engagement.post_media_pk == post_media_pk)
             )
-        ).first()
-        if existing is not None:
-            # Refresh comment text in case an edited comment was re-scanned.
-            if type_ is EngagementType.COMMENT and comment_text is not None:
-                existing.comment_text = comment_text
-                self.session.add(existing)
-            return False
-        self.session.add(
-            models.Engagement(
-                user_pk=user_pk,
-                post_media_pk=post_media_pk,
-                type=type_.value,
-                comment_text=comment_text,
-                created_at=created_at,
-            )
-        )
-        return True
+        }
+        new: dict[tuple[str, str], dict[str, Any]] = {}
+        for item in items:
+            key = (item.user_pk, item.type.value)
+            refresh = item.type is EngagementType.COMMENT and item.comment_text is not None
+            if (found := existing.get(key)) is not None:
+                if refresh:
+                    found.comment_text = item.comment_text
+                    self.session.add(found)
+            elif (pending := new.get(key)) is not None:
+                if refresh:
+                    pending["comment_text"] = item.comment_text
+            else:
+                new[key] = {
+                    "user_pk": item.user_pk,
+                    "post_media_pk": post_media_pk,
+                    "type": item.type.value,
+                    "comment_text": item.comment_text,
+                    "created_at": item.created_at,
+                }
+        if new:
+            self.session.execute(insert(models.Engagement), list(new.values()))
 
 
 class DmThreadRepository:
     def __init__(self, session: Session) -> None:
         self.session = session
 
-    def upsert(
-        self,
-        thread_id: str,
-        user_pk: str,
-        has_outgoing: bool,
-        has_incoming: bool,
-        last_outgoing_at: datetime | None,
-        last_incoming_at: datetime | None,
-        last_message_at: datetime | None,
-        synced_at: datetime,
-    ) -> None:
-        row = self.session.get(models.DmThread, thread_id)
-        if row is None:
-            row = models.DmThread(thread_id=thread_id, user_pk=user_pk, last_synced_at=synced_at)
-        row.user_pk = user_pk
-        row.has_outgoing = has_outgoing
-        row.has_incoming = has_incoming
-        row.last_outgoing_at = last_outgoing_at
-        row.last_incoming_at = last_incoming_at
-        row.last_message_at = last_message_at
-        row.last_synced_at = synced_at
-        self.session.add(row)
-
-    def by_user_pk(self) -> dict[str, models.DmThread]:
-        """Map user_pk -> thread. One thread per user in this app's scope."""
-        rows = self.session.exec(select(models.DmThread))
-        return {row.user_pk: row for row in rows}
+    def upsert_many(self, threads: Iterable[ThreadIn], synced_at: datetime) -> None:
+        """Upsert threads by thread_id, overwriting every field (last one wins)."""
+        latest: dict[str, ThreadIn] = {}
+        for thread in threads:
+            latest[thread.thread_id] = thread
+        existing: dict[str, models.DmThread] = {}
+        for chunk in chunked(list(latest)):
+            for row in self.session.exec(
+                select(models.DmThread).where(col(models.DmThread.thread_id).in_(chunk))
+            ):
+                existing[row.thread_id] = row
+        for thread_id, t in latest.items():
+            row = existing.get(thread_id) or models.DmThread(
+                thread_id=thread_id, user_pk=t.user_pk, last_synced_at=synced_at
+            )
+            row.user_pk = t.user_pk
+            row.has_outgoing = t.has_outgoing
+            row.has_incoming = t.has_incoming
+            row.last_outgoing_at = t.last_outgoing_at
+            row.last_incoming_at = t.last_incoming_at
+            row.last_message_at = t.last_message_at
+            row.last_synced_at = synced_at
+            self.session.add(row)
 
 
 class EventRepository:
@@ -207,23 +254,24 @@ class EventRepository:
 
     def post_counts(self) -> dict[int, int]:
         """event_id -> number of posts assigned."""
-        counts: dict[int, int] = {}
-        for row in self.session.exec(select(models.Post.event_id)):
-            if row is not None:
-                counts[row] = counts.get(row, 0) + 1
-        return counts
+        event_id = col(models.Post.event_id)
+        stmt = select(event_id, func.count()).where(event_id.is_not(None)).group_by(event_id)
+        return {eid: count for eid, count in self.session.exec(stmt) if eid is not None}
 
     def last_scanned(self) -> dict[int, datetime]:
         """event_id -> most recent post scan (for the 'posts hace Xh' hint)."""
-        latest: dict[int, datetime] = {}
-        for event_id, scanned in self.session.exec(
-            select(models.Post.event_id, models.Post.last_scanned_at)
-        ):
-            if event_id is None or scanned is None:
-                continue
-            if event_id not in latest or scanned > latest[event_id]:
-                latest[event_id] = scanned
-        return latest
+        event_id = col(models.Post.event_id)
+        scanned = col(models.Post.last_scanned_at)
+        stmt = (
+            select(event_id, func.max(scanned))
+            .where(event_id.is_not(None), scanned.is_not(None))
+            .group_by(event_id)
+        )
+        return {
+            eid: latest
+            for eid, latest in self.session.exec(stmt)
+            if eid is not None and latest is not None
+        }
 
 
 class AppStateRepository:

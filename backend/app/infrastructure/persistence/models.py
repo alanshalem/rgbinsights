@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import UniqueConstraint
+from sqlalchemy import Index, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
 
@@ -31,7 +31,8 @@ class User(SQLModel, table=True):
     is_verified: bool = False
     is_business: bool = False
     biography: str | None = None
-    profile_synced_at: datetime | None = None
+    # Indexed: the enrich step selects users whose profile was never fetched.
+    profile_synced_at: datetime | None = Field(default=None, index=True)
 
 
 class Event(SQLModel, table=True):
@@ -96,7 +97,7 @@ class Campaign(SQLModel, table=True):
 
     id: int | None = Field(default=None, primary_key=True)
     event_id: int = Field(foreign_key="events.id", index=True)
-    status: str = "running"  # running | paused | blocked | done
+    status: str = Field(default="running", index=True)  # running | paused | blocked | done
     templates: str  # JSON list of message variants
     delay_min: int
     delay_max: int
@@ -135,6 +136,8 @@ class AppState(SQLModel, table=True):
 
 class CampaignTarget(SQLModel, table=True):
     __tablename__ = "campaign_targets"
+    # The sender's "next pending target of this campaign" lookup.
+    __table_args__ = (Index("ix_campaign_targets_campaign_id_status", "campaign_id", "status"),)
 
     id: int | None = Field(default=None, primary_key=True)
     campaign_id: int = Field(foreign_key="campaigns.id", index=True)

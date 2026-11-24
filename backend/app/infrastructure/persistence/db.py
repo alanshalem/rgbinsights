@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from typing import Any
 
+from sqlalchemy import Engine, event, make_url
+from sqlalchemy.schema import CreateIndex
 from sqlmodel import Session, SQLModel, create_engine
 
 from app.infrastructure.config.settings import get_settings
@@ -11,19 +14,48 @@ from app.infrastructure.config.settings import get_settings
 # Import models so SQLModel.metadata is populated before create_all.
 from app.infrastructure.persistence import models  # noqa: F401
 
-_settings = get_settings()
-
-# check_same_thread=False: FastAPI may touch the session across threads.
-engine = create_engine(
-    _settings.database_url,
-    echo=False,
-    connect_args={"check_same_thread": False},
+# File-based SQLite only: WAL lets the board read while a scan/campaign writes,
+# busy_timeout waits for a lock instead of failing with "database is locked",
+# and synchronous=NORMAL is the safe, faster pairing for WAL.
+_FILE_PRAGMAS = (
+    "PRAGMA journal_mode=WAL",
+    "PRAGMA busy_timeout=5000",
+    "PRAGMA synchronous=NORMAL",
 )
 
 
-def create_db_and_tables() -> None:
-    SQLModel.metadata.create_all(engine)
-    _migrate()
+def _is_file_sqlite(url: str) -> bool:
+    parsed = make_url(url)
+    if parsed.get_backend_name() != "sqlite":
+        return False
+    database = parsed.database or ""
+    return database not in ("", ":memory:") and "mode=memory" not in str(parsed)
+
+
+def _apply_file_pragmas(dbapi_connection: Any, _record: Any) -> None:
+    cursor = dbapi_connection.cursor()
+    try:
+        for pragma in _FILE_PRAGMAS:
+            cursor.execute(pragma)
+    finally:
+        cursor.close()
+
+
+def build_engine(url: str) -> Engine:
+    # check_same_thread=False: FastAPI may touch the session across threads.
+    engine = create_engine(url, echo=False, connect_args={"check_same_thread": False})
+    if _is_file_sqlite(url):
+        event.listen(engine, "connect", _apply_file_pragmas)
+    return engine
+
+
+engine = build_engine(get_settings().database_url)
+
+
+def create_db_and_tables(bind: Engine | None = None) -> None:
+    target = bind if bind is not None else engine
+    SQLModel.metadata.create_all(target)
+    _migrate(target)
 
 
 # New nullable columns added to already-existing tables. create_all() creates
@@ -47,13 +79,20 @@ _ADDED_COLUMNS: dict[str, dict[str, str]] = {
 }
 
 
-def _migrate() -> None:
-    with engine.begin() as conn:
+def _migrate(bind: Engine) -> None:
+    with bind.begin() as conn:
         for table, columns in _ADDED_COLUMNS.items():
             existing = {row[1] for row in conn.exec_driver_sql(f"PRAGMA table_info({table})")}
             for column, ddl in columns.items():
                 if column not in existing:
                     conn.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
+        # create_all() skips existing tables, indexes included: add any declared
+        # index an older DB lacks (after the ALTERs, since some index new
+        # columns). Non-unique only, so existing data can never make this fail.
+        for declared in SQLModel.metadata.sorted_tables:
+            for index in declared.indexes:
+                if not index.unique:
+                    conn.execute(CreateIndex(index, if_not_exists=True))
 
 
 def get_session() -> Iterator[Session]:
