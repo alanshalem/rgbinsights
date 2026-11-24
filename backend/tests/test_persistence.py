@@ -12,6 +12,7 @@ import pytest
 from app.application.use_cases import KEY_DMS_SYNCED, ScanPostUseCase, SyncDmsUseCase
 from app.domain.entities import Comment, DmMessage, DmThread, IgUser, Post
 from app.domain.result import Ok
+from app.infrastructure.instagram.base import DmInbox
 from app.infrastructure.instagram.fake_source import FakeInstagramSource
 from app.infrastructure.persistence import db, models
 from app.infrastructure.persistence.repositories import AppStateRepository, EventRepository
@@ -37,7 +38,7 @@ class ScriptedSource(FakeInstagramSource):
     def get_post(self, url: str) -> Post:
         return POST
 
-    def get_comments(self, media_pk: str) -> list[Comment]:
+    def get_comments(self, media_pk: str, since: datetime | None = None) -> list[Comment]:
         return list(self.comments)
 
     def get_likers(self, media_pk: str) -> list[IgUser]:
@@ -45,8 +46,8 @@ class ScriptedSource(FakeInstagramSource):
 
     def get_dm_threads(
         self, progress: object | None = None, since: datetime | None = None
-    ) -> list[DmThread]:
-        return list(self.threads)
+    ) -> DmInbox:
+        return DmInbox(threads=list(self.threads))
 
 
 def _at(monkeypatch: pytest.MonkeyPatch, when: datetime) -> None:
@@ -421,3 +422,39 @@ def test_startup_migrates_db_missing_column_and_index(tmp_path: Path) -> None:
     eng.dispose()
     assert {"ix_users_profile_synced_at", "ix_users_username"} <= names
     assert "profile_synced_at" in cols
+
+
+def test_startup_adds_fase1_table_and_column_to_existing_db(tmp_path: Path) -> None:
+    """S9/S12: an existing DB gains follow_edges and posts.last_comment_at in place."""
+    import sqlite3
+
+    path = tmp_path / "before_t4.db"
+    eng = db.build_engine(f"sqlite:///{path}")
+    SQLModel.metadata.create_all(eng)
+    eng.dispose()
+    con = sqlite3.connect(path)
+    con.execute("DROP TABLE follow_edges")
+    con.execute("ALTER TABLE posts DROP COLUMN last_comment_at")
+    con.execute(
+        "INSERT INTO posts (media_pk, shortcode, url, caption) VALUES ('p1', 's1', 'u1', 'c')"
+    )
+    con.commit()
+    con.close()
+
+    eng = db.build_engine(f"sqlite:///{path}")
+    try:
+        db.create_db_and_tables(eng)
+        db.create_db_and_tables(eng)  # second run must be a no-op
+        with eng.connect() as conn:
+            tables = {
+                r[0]
+                for r in conn.exec_driver_sql("SELECT name FROM sqlite_master WHERE type='table'")
+            }
+            cols = {r[1] for r in conn.exec_driver_sql("PRAGMA table_info(posts)")}
+        assert "follow_edges" in tables
+        assert "last_comment_at" in cols
+        with Session(eng) as s:
+            post = s.get(models.Post, "p1")
+            assert post is not None and post.shortcode == "s1" and post.last_comment_at is None
+    finally:
+        eng.dispose()

@@ -11,7 +11,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
-from app.infrastructure.instagram.errors import RateLimitedError
+from app.infrastructure.instagram.errors import BudgetExhaustedError
 
 # Now and then a person gets distracted: add a longer pause on top.
 _DISTRACTION_CHANCE = 0.1
@@ -71,7 +71,7 @@ class RequestBudget:
     day_count: int = 0
 
     def spend(self, now_local: datetime) -> None:
-        """Count one request, or raise RateLimitedError if a cap is reached."""
+        """Count one request, or raise BudgetExhaustedError if a cap is reached."""
         hour_key = now_local.strftime("%Y-%m-%dT%H")
         day_key = now_local.date().isoformat()
         if hour_key != self.hour_key:
@@ -116,8 +116,9 @@ def format_local(when: datetime) -> str:
     return f"{when:%H:%M} del {when:%d/%m}"
 
 
-def _cap_error(cap: int, window: str, resume: datetime) -> RateLimitedError:
-    return RateLimitedError(
+def _cap_error(cap: int, window: str, resume: datetime) -> BudgetExhaustedError:
+    return BudgetExhaustedError(
         f"Se alcanzó el tope de seguridad de {cap} pedidos a Instagram por {window}. "
-        f"Se reanuda a las {format_local(resume)} (hora AR)."
+        f"Se reanuda a las {format_local(resume)} (hora AR).",
+        retry_at=resume,
     )

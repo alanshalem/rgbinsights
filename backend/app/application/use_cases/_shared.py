@@ -23,6 +23,8 @@ ProgressFn = Callable[..., None]
 # app_state keys for cache/TTL timestamps.
 KEY_DMS_SYNCED = "dms_synced_at"
 KEY_RELATIONS_SYNCED = "relationships_synced_at"
+# Last FULL followers/following read (incremental reads don't move it).
+KEY_FOLLOW_GRAPH_FULL = "follow_graph_full_at"
 
 
 def _now() -> datetime:

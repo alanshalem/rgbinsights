@@ -15,7 +15,7 @@ import functools
 import logging
 import re
 from collections.abc import Callable
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -23,12 +23,12 @@ from app.domain.entities import (
     Comment,
     DmMessage,
     DmThread,
-    Friendship,
     IgUser,
     Post,
     ProfileInfo,
 )
 from app.infrastructure.config.settings import Settings
+from app.infrastructure.instagram.base import DmInbox, FollowGraph
 from app.infrastructure.instagram.errors import (
     ChallengeRequiredError,
     InstagramError,
@@ -46,6 +46,9 @@ if TYPE_CHECKING:
     from instagrapi import Client
 
 logger = logging.getLogger(__name__)
+
+# Users per followers page: instagrapi's MAX_USER_COUNT.
+_FOLLOW_PAGE_SIZE = 200
 
 
 def _adapts[F: Callable[..., Any]](fn: F) -> F:
@@ -92,6 +95,10 @@ class InstagrapiInstagramSource:
         self._settings = settings
         self._guard = guard or get_guard(settings)
         self._client: Client | None = None
+        # media pk -> full media id ("<pk>_<owner pk>"), learned from posts we
+        # already fetched. instagrapi needs the full id for comments/likers and
+        # spends one extra media lookup per call to find it when it only has the pk.
+        self._media_ids: dict[str, str] = {}
 
     # -- login / session -------------------------------------------------
 
@@ -131,6 +138,7 @@ class InstagrapiInstagramSource:
         # 2. Bootstrap from a browser sessionid.
         sessionid = self._settings.ig_sessionid.strip()
         if sessionid:
+            self._guard.note_sessionid(sessionid)
             try:
                 client.login_by_sessionid(sessionid)
                 self._persist(client, session_path)
@@ -234,11 +242,12 @@ class InstagrapiInstagramSource:
     def connect_sessionid(self, sessionid: str) -> str:
         """Explicit user action: adopt a sessionid pasted from a real browser.
 
-        Validated with one cheap probe and persisted to session.json. Fresh
-        credentials may skip an open login breaker once (never an IP block or
-        a cooldown). On failure the current client, if any, is kept.
+        Validated with one cheap probe and persisted to session.json. A sessionid
+        other than the one whose login failed may skip an open login breaker once
+        (never an IP block or a cooldown). On failure the current client, if
+        any, is kept.
         """
-        with self._guard.operation(fresh_credentials=True):
+        with self._guard.operation(fresh_sessionid=sessionid):
             client = build_client(self._settings, self._challenge_code_handler)
             try:
                 client.login_by_sessionid(sessionid)
@@ -324,28 +333,75 @@ class InstagrapiInstagramSource:
             self._client = None
 
     @_adapts
-    def get_friendships(self, user_pks: list[str]) -> dict[str, Friendship]:
+    def get_follow_graph(self, known: FollowGraph | None = None) -> FollowGraph:
         # friendships/show_many only reports who WE follow (no `followed_by`), so
-        # to know "te sigue" we read our own followers/following lists and test
-        # membership. Heavy + paginated — this is the slow, opt-in enrich step.
+        # to know "te sigue" we read our own followers/following lists. Followers
+        # are paged newest-first; with `known` the read stops at the first page
+        # made only of people we already know and returns just the new ones.
+        # Following has no guaranteed order, so it is always read whole, with
+        # exactly the call the app made before (instagrapi's user_following).
         client = self._login()
         our_id = str(client.user_id)
-        # amount=0 fetches the whole graph (correct, but the heaviest call). On a
-        # huge account set relationship_fetch_max>0 to trade completeness for far
-        # fewer requests. This read is TTL-cached upstream (relationship_cache_hours).
         cap = self._settings.relationship_fetch_max
-        followers = {str(pk) for pk in client.user_followers(our_id, amount=cap)}
+        followers, saw_followers = self._read_followers(
+            client, our_id, known.followers if known else None
+        )
         following = {str(pk) for pk in client.user_following(our_id, amount=cap)}
-        logger.info("read graph: %d followers, %d following", len(followers), len(following))
-        # A logged-in account always has some followers/following. Both empty
+        saw_following = bool(following)
+        logger.info(
+            "read graph (%s): %d followers, %d following",
+            "incremental" if known else "full",
+            len(followers),
+            len(following),
+        )
+        # A logged-in account always has some followers/following. Nobody at all
         # means the read was blocked — refuse rather than overwrite good "te
         # sigue" data with all-False.
-        if not followers and not following:
+        if not saw_followers and not saw_following:
             raise InstagramError("no se pudo leer seguidores/seguidos (bloqueado?)")
-        return {
-            str(pk): Friendship(following=str(pk) in following, followed_by=str(pk) in followers)
-            for pk in set(user_pks)
-        }
+        return FollowGraph(followers=followers, following=following)
+
+    def _read_followers(
+        self, client: Client, user_id: str, known: set[str] | None
+    ) -> tuple[set[str], bool]:
+        """Our followers, newest first, one request per page.
+
+        Each request is exactly the one instagrapi's
+        user_followers_v1_chunk(user_id, relationship_fetch_max,
+        order="date_followed_latest") sends (same params, order, page size and
+        shrinking last-page count); only the decision to stop is ours. Full read
+        (`known` is None): every page up to the cap. Incremental: the pks not in
+        `known`, stopping after the first page that brings nobody new. Also
+        returns whether IG listed anyone.
+        """
+        cap = self._settings.relationship_fetch_max
+        listed: set[str] = set()  # instagrapi's `unique_set`: drives count and cap
+        found: set[str] = set()
+        max_id = ""
+        while True:
+            count = min(cap - len(listed), _FOLLOW_PAGE_SIZE) if cap else _FOLLOW_PAGE_SIZE
+            params: dict[str, Any] = {
+                "count": count,
+                "rank_token": client.rank_token,
+                "search_surface": "follow_list_page",
+                "query": "",
+                "enable_groups": "true",
+                "order": "date_followed_latest",
+            }
+            if max_id:
+                params["max_id"] = max_id
+            result = client.private_request(f"friendships/{user_id}/followers/", params=params)
+            if result.get("should_limit_list_of_followers"):
+                # IG truncates this list: read it whole the way instagrapi falls back.
+                everyone = {str(u.pk) for u in client.user_followers_private_gql(user_id, cap)}
+                return (everyone if known is None else everyone - known), bool(everyone)
+            page = {pk for u in result.get("users") or [] if (pk := _user_pk(u))}
+            new = (page if known is None else page - known) - listed
+            listed |= page
+            found |= new
+            max_id = result.get("next_max_id") or ""
+            if not max_id or (cap and len(listed) >= cap) or (known is not None and not new):
+                return found, bool(listed)
 
     @_adapts
     def get_profile(self, username: str) -> ProfileInfo:
@@ -382,58 +438,112 @@ class InstagrapiInstagramSource:
             raise  # a dead session is not a missing post; _adapts classifies it
         except ClientError as exc:
             raise PostNotFoundError(url) from exc
-        return _to_post(media)
+        return self._post(media)
 
     @_adapts
     def get_recent_posts(self, limit: int) -> list[Post]:
         client = self._login()
         medias = client.user_medias(client.user_id, amount=limit)
-        return [_to_post(m) for m in medias]
+        return [self._post(m) for m in medias]
+
+    def _post(self, media: Any) -> Post:
+        """Map a fetched media, remembering its full id for comments/likers."""
+        full_id = str(getattr(media, "id", "") or "")
+        if "_" in full_id:
+            self._media_ids[str(media.pk)] = full_id
+        return _to_post(media)
+
+    def _media_id(self, client: Client, media_pk: str) -> str:
+        """Full media id for a pk: known from a fetched post, else resolved once
+        (one media lookup) and remembered for the rest of the scan."""
+        media_pk = str(media_pk)
+        if "_" in media_pk:
+            return media_pk
+        if (full_id := self._media_ids.get(media_pk)) is None:
+            full_id = self._media_ids[media_pk] = str(client.media_id(media_pk))
+        return full_id
 
     @_adapts
     def get_likers(self, media_pk: str) -> list[IgUser]:
         client = self._login()
-        return [_to_user(u) for u in client.media_likers(media_pk)]
+        return [_to_user(u) for u in client.media_likers(self._media_id(client, media_pk))]
 
     @_adapts
-    def get_comments(self, media_pk: str) -> list[Comment]:
+    def get_comments(self, media_pk: str, since: datetime | None = None) -> list[Comment]:
+        """Comments, newest page first (media/<id>/comments/, as media_comments).
+
+        Every request is exactly what instagrapi's media_comments sends: the
+        first page with no arguments, then the cursor passed positionally (so
+        instagrapi signs it as a POST body). Only the decision to stop is ours:
+        at scan_comments_limit (without a cap a viral post means hundreds of
+        requests) or, with `since` (the newest comment already stored), after the
+        first older page in which EVERY comment is at or before `since` — the
+        order is not strictly by date (pinned/ranked comments), so one old comment
+        on a page proves nothing. Comments at or after `since` are returned.
+        """
         client = self._login()
+        endpoint = f"media/{self._media_id(client, media_pk)}/comments/"
+        cap = self._settings.scan_comments_limit
         comments: list[Comment] = []
-        # Cap the fetch: without amount instagrapi pages EVERY comment (hundreds
-        # of private-API requests on a viral post). scan_comments_limit is plenty.
-        for c in client.media_comments(media_pk, amount=self._settings.scan_comments_limit):
-            comments.append(
-                Comment(
-                    user=_to_user(c.user),
-                    text=c.text,
-                    created_at=_as_dt(getattr(c, "created_at_utc", None)),
-                )
-            )
-        return comments
+        result = client.private_request(endpoint, None)
+        all_known = _take_comments(result, since, comments)
+        while (result.get("has_more_comments") and result.get("next_max_id")) or (
+            result.get("has_more_headload_comments") and result.get("next_min_id")
+        ):
+            if cap and len(comments) >= cap:
+                break
+            if result.get("has_more_comments"):
+                if all_known:
+                    break  # older pages only hold what we already stored
+                params = {"max_id": result.get("next_max_id")}
+            else:
+                params = {"min_id": result.get("next_min_id")}
+            if not (
+                result.get("next_max_id") or result.get("next_min_id") or result.get("comments")
+            ):
+                break
+            result = client.private_request(endpoint, params)
+            all_known = _take_comments(result, since, comments)
+        return comments[:cap] if cap else comments
 
     @_adapts
     def get_dm_threads(
         self, progress: object | None = None, since: datetime | None = None
-    ) -> list[DmThread]:
+    ) -> DmInbox:
+        """Inbox pages, newest activity first, each one instagrapi's own
+        direct_threads_chunk request (its defaults: 20 threads, 10 messages).
+
+        Every sync reads at most dm_threads_limit threads. With `since`, paging
+        stops at the first thread last active before `since` (pinned threads sit
+        on top out of order and never stop it); only threads active since then
+        are returned. instagrapi floors activity to whole seconds, so `since` is
+        floored too and a thread in that same second is re-read (harmless) rather
+        than missed. If the cap is hit first, the inbox is marked incomplete.
+        """
         client = self._login()
+        our_pk = str(client.user_id)
+        limit = self._settings.dm_threads_limit
+        floor = since.astimezone(UTC).replace(microsecond=0) if since is not None else None
         threads: list[DmThread] = []
-        for t in client.direct_threads(amount=self._settings.recent_posts_limit):
-            other = _pick_other_user(t, str(client.user_id))
-            if other is None:
-                continue  # group / self thread — no single counterpart
-            messages = [
-                DmMessage(user_pk=str(m.user_id), created_at=_as_dt(m.timestamp))
-                for m in t.messages
-            ]
-            threads.append(
-                DmThread(
-                    thread_id=str(t.id),
-                    user=other,
-                    messages=messages,
-                    last_message_at=messages[0].created_at if messages else None,
-                )
-            )
-        return threads
+        seen = 0
+        cursor: str | None = None
+        while True:
+            chunk, cursor = client.direct_threads_chunk(cursor=cursor)
+            for t in chunk:
+                seen += 1
+                if seen > limit:
+                    return DmInbox(threads=threads, complete=floor is None)
+                activity = _as_dt(getattr(t, "last_activity_at", None))
+                if floor is not None and activity is not None and _utc(activity) < floor:
+                    if getattr(t, "is_pin", False):
+                        continue  # pinned: on top regardless of activity
+                    return DmInbox(threads=threads)  # back to the previous sync
+                if (thread := _to_thread(t, our_pk)) is not None:
+                    threads.append(thread)  # 1:1 only; group/self threads skipped
+            if not cursor or not chunk:
+                return DmInbox(threads=threads)
+            if seen >= limit:
+                return DmInbox(threads=threads, complete=floor is None)
 
 
 # -- mapping helpers -----------------------------------------------------
@@ -584,6 +694,34 @@ def _as_dt(value: Any) -> datetime | None:
     return value if isinstance(value, datetime) else None
 
 
+def _take_comments(result: Any, since: datetime | None, into: list[Comment]) -> bool:
+    """Add a comments page's entries at/after `since` to `into`; True if every
+    comment on the page is at or before `since` (all already stored)."""
+    from instagrapi.extractors import extract_comment
+
+    all_known = True
+    for raw in result.get("comments") or []:
+        c = extract_comment(raw)
+        created = _as_dt(getattr(c, "created_at_utc", None))
+        known = since is not None and created is not None and _utc(created) <= since
+        all_known = all_known and known
+        if since is None or created is None or _utc(created) >= since:
+            into.append(Comment(user=_to_user(c.user), text=c.text, created_at=created))
+    return since is not None and all_known
+
+
+def _utc(when: datetime) -> datetime:
+    """Aware UTC. instagrapi builds DM times with datetime.fromtimestamp, i.e.
+    naive local time — astimezone() reads a naive value exactly that way."""
+    return when.astimezone(UTC)
+
+
+def _user_pk(raw: Any) -> str | None:
+    """A user's pk in a raw API list (instagrapi reads `id`, then `pk`)."""
+    pk = raw.get("id", raw.get("pk")) if isinstance(raw, dict) else None
+    return str(pk) if pk else None
+
+
 def _to_user(u: Any) -> IgUser:
     return IgUser(
         pk=str(u.pk),
@@ -601,6 +739,22 @@ def _to_post(m: Any) -> Post:
         url=f"https://instagram.com/p/{m.code}/",
         caption=getattr(m, "caption_text", "") or "",
         taken_at=_as_dt(getattr(m, "taken_at", None)),
+    )
+
+
+def _to_thread(thread: Any, our_pk: str) -> DmThread | None:
+    """A 1:1 thread with its counterpart, or None for a group/self thread."""
+    other = _pick_other_user(thread, our_pk)
+    if other is None:
+        return None
+    messages = [
+        DmMessage(user_pk=str(m.user_id), created_at=_as_dt(m.timestamp)) for m in thread.messages
+    ]
+    return DmThread(
+        thread_id=str(thread.id),
+        user=other,
+        messages=messages,
+        last_message_at=messages[0].created_at if messages else None,
     )
 
 

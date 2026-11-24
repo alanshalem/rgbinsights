@@ -24,6 +24,7 @@ from app.application import campaign as camp
 from app.application import tasks
 from app.infrastructure.config.settings import get_settings
 from app.infrastructure.instagram.errors import (
+    BudgetExhaustedError,
     ChallengeRequiredError,
     IgBusyError,
     InstagramError,
@@ -43,12 +44,17 @@ _lock = threading.Lock()
 _CHUNK_SECONDS = 3.0
 _IDLE_SECONDS = 60  # re-check interval outside active hours / over the daily cap
 _BUSY_SECONDS = 30  # another Instagram operation is running: wait, then retry
+# Extra wait after our request budget reopens, so sends don't fire right on the
+# hour like a cron job.
+_BUDGET_JITTER_SECONDS = (60.0, 300.0)
 
 # Instagram pushed back on sending: "blocked" (the UI explains the action-block).
 _BLOCK_ERRORS = (SendBlockedError, ChallengeRequiredError)
-# The account/session/IP or a safety rail can't send right now: "paused" with the
-# reason. The same target stays pending, so resuming retries it — no target is
-# burned and no new login is attempted per target.
+# The account/session/IP can't send, or Instagram asked us to slow down
+# (cooldown): "paused" with the reason. The same target stays pending, so
+# resuming retries it — no target is burned and no new login is attempted per
+# target. Our own spent request budget (BudgetExhaustedError) is not a pause:
+# the sender waits for the window to reopen and continues by itself.
 _PAUSE_ERRORS = (LoginRequiredError, IpBlockedError, RateLimitedError)
 
 
@@ -146,6 +152,17 @@ def _run(campaign_id: int) -> None:
         except IgBusyError:
             # Another operation holds Instagram; same target, a bit later.
             if _sleep_or_stopped(campaign_id, _BUSY_SECONDS):
+                return
+            continue
+        except BudgetExhaustedError as exc:
+            # Our hourly/daily budget is spent (nothing wrong with the account):
+            # wait for it to reopen — zero Instagram calls meanwhile — then retry
+            # the same target.
+            wait = max(0.0, (exc.retry_at - _utcnow()).total_seconds())
+            wait += random.uniform(*_BUDGET_JITTER_SECONDS)
+            tasks.log_activity("campaign", "error", f"campaña en espera: {exc}")
+            logger.info("campaign %d waits %.0f s for the request budget", campaign_id, wait)
+            if _sleep_or_stopped(campaign_id, wait):
                 return
             continue
         except _BLOCK_ERRORS as exc:

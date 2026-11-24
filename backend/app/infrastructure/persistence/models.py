@@ -58,6 +58,8 @@ class Post(SQLModel, table=True):
     taken_at: datetime | None = None
     last_scanned_at: datetime | None = None
     event_id: int | None = Field(default=None, foreign_key="events.id", index=True)
+    # Newest comment seen on this post: a rescan pages comments only down to it.
+    last_comment_at: datetime | None = None
 
 
 class Engagement(SQLModel, table=True):
@@ -122,6 +124,16 @@ class ActivityLog(SQLModel, table=True):
     status: str  # done | error
     message: str
     created_at: datetime
+
+
+class FollowEdge(SQLModel, table=True):
+    """One pk of our followers (kind "followers") or following ("following")
+    lists, as last read. Lets a later read stop at people we already know."""
+
+    __tablename__ = "follow_edges"
+
+    kind: str = Field(primary_key=True)
+    user_pk: str = Field(primary_key=True)
 
 
 class AppState(SQLModel, table=True):

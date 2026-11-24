@@ -104,17 +104,70 @@ llamada del código.
   larga ocasional) y un descanso de `IG_REST_MIN_SECONDS`–`IG_REST_MAX_SECONDS`
   (45–150 s) cada `IG_REST_EVERY_REQUESTS` (25) pedidos.
 - **Campañas**: el horario activo y el tope diario usan hora argentina. Ante
-  sesión caída, IP bloqueada o un freno de seguridad (tope/cooldown) la campaña
-  queda `paused` con el motivo en `error` (el destinatario sigue pendiente);
-  ante action-block (incluido un 403 al enviar) o challenge/checkpoint queda
-  `blocked` como antes. Un error de red solo marca ese destinatario como fallido.
-  Una sesión caída o con challenge se descarta: no se reusa para el próximo envío.
+  sesión caída, IP bloqueada o un cooldown (Instagram pidió frenar: 429 /
+  "please wait" / `feedback_required`) la campaña queda `paused` con el motivo en
+  `error` (el destinatario sigue pendiente); ante action-block (incluido un 403
+  al enviar) o challenge/checkpoint queda `blocked` como antes. Si lo que se
+  agotó es nuestro propio presupuesto por hora/día, la campaña **no** se pausa:
+  espera (sin ningún pedido a Instagram) a que se reabra la ventana, más 1–5 min
+  al azar, y sigue sola con el mismo destinatario (queda registrado en
+  Actividad como "campaña en espera"). Un error de red solo marca ese
+  destinatario como fallido. Una sesión caída o con challenge se descarta: no se
+  reusa para el próximo envío.
+- **Pegar el sessionid** puede saltear el breaker de login una vez solo si es
+  distinto del que falló (se guarda un hash SHA-256, nunca el valor).
+- **Último error**: `last_error` se limpia con la primera operación exitosa
+  contra Instagram una vez terminado el cooldown/breaker (no solo al loguear).
 - **Avatares**: se bajan una vez con encabezados de navegador y por el mismo
-  `IG_PROXY`; después se sirven del caché en disco.
+  `IG_PROXY`; después se sirven del caché en disco. Cada descarga tiene 4 s de
+  timeout y una que falla no se reintenta por 10 min (caché negativo en memoria),
+  así un proxy caído no traba al servidor.
 
 El estado del breaker, el cooldown y los contadores se guardan en
 `IG_GUARD_FILE` (default `ig_guard.json`), así sobreviven a reinicios. Es un
-archivo y no la DB a propósito: los casos de uso tienen una transacción SQLite
-abierta mientras llaman a Instagram, y escribir desde otra conexión se
-bloquearía. Si el archivo está corrupto o mal formado, se ignora (con un
-warning en el log) y se arranca con estado limpio.
+archivo y no la DB a propósito: el guardián no debe depender de la transacción
+SQLite de un caso de uso. Si el archivo está corrupto o mal formado, se ignora
+(con un warning en el log) y se arranca con estado limpio.
+
+## Menos pedidos a Instagram
+
+- **Relación + perfiles** (`POST /events/{id}/enrich`): la relación (te sigue /
+  lo seguís) se guarda apenas se lee; los perfiles se guardan de a 10. Ninguna
+  transacción de escritura de SQLite queda abierta mientras se habla con
+  Instagram. Si falla a la mitad (tope, cooldown, red), lo ya traído queda
+  guardado y la próxima corrida pide solo los que faltan (el error y el resumen
+  de la tarea dicen cuántos faltan). Topes: `ENRICH_PROFILES_PER_RUN` (60) por
+  corrida y `ENRICH_PROFILES_PER_DAY` (150) por día argentino.
+- **Mismos pedidos que instagrapi**: cada pedido (endpoint, método, parámetros,
+  tamaño de página) es exactamente el que arma instagrapi para la misma lectura
+  — instagrapi imita la app oficial y cualquier diferencia es una huella. Nuestro
+  código solo decide **cuándo dejar de paginar** (`tests/test_request_shape.py`
+  lo verifica contra instagrapi real).
+- **Seguidores incrementales**: se leen de los más nuevos a los más viejos
+  (`order=date_followed_latest`, como `user_followers(order=...)` de instagrapi)
+  y se corta en la primera página sin nadie nuevo; las listas leídas se guardan
+  en la tabla `follow_edges`. Así solo se suman seguidores; para ver los que
+  dejaron de seguir hay una lectura completa cada
+  `RELATIONSHIP_FULL_REFRESH_DAYS` (7) días o al forzar. **Seguidos** (a quién
+  seguís) no tiene un orden garantizado, así que se lee entero como antes cada
+  vez que vence el caché. Se sigue respetando `RELATIONSHIP_CACHE_HOURS` (12 h
+  sin volver a leer) y `RELATIONSHIP_FETCH_MAX`.
+- **Rescan sin volver a pedir el post**: si el post ya está guardado (mismo
+  shortcode) no se pide `media_info`; el rango de fechas usa los posts que ya
+  devolvió `user_medias`. Además, comentarios y likers usan el id completo del
+  post cuando ya se conoce, sin la búsqueda extra que instagrapi hace por cada
+  llamada (antes: 3 búsquedas del post por escaneo; ahora 1, o 0).
+- **Comentarios incrementales**: se pagina de los más nuevos a los más viejos y
+  se corta después de la primera página en la que **todos** los comentarios son
+  iguales o anteriores al más nuevo ya guardado (`posts.last_comment_at`); uno
+  viejo fijado arriba no corta. Siempre con el tope `SCAN_COMMENTS_LIMIT`.
+- **DMs realmente incrementales**: el inbox se pagina de lo más reciente a lo
+  más viejo y se corta en el primer chat sin actividad desde la sync anterior
+  (los fijados no cortan); la marca es la hora de inicio de la sync anterior,
+  redondeada al segundo como las horas de Instagram. **Toda** sync (primera,
+  forzada o incremental) trae como máximo `DM_THREADS_LIMIT` (60) chats = 3
+  páginas, las mismas que antes; cada chat trae sus últimos 10 mensajes. Si una
+  sync incremental llega a ese tope antes de alcanzar la sync anterior, la marca
+  igual avanza a su hora de inicio y se avisa (log, progreso de la tarea y el
+  resumen de "Actualizar fiesta") que los chats más viejos con mensajes nuevos no
+  se sincronizaron; subí `DM_THREADS_LIMIT` si pasa seguido.

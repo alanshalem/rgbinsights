@@ -8,19 +8,37 @@ implementation is InstagrapiInstagramSource; tests use FakeInstagramSource.
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Protocol, runtime_checkable
 
 from app.domain.entities import (
     Comment,
     DmThread,
-    Friendship,
     IgUser,
     Post,
     ProfileInfo,
 )
 
 ProgressFn = Callable[..., None]
+
+
+@dataclass(frozen=True, slots=True)
+class FollowGraph:
+    """Our account's follow lists, as user pks."""
+
+    followers: set[str] = field(default_factory=set)  # they follow us
+    following: set[str] = field(default_factory=set)  # we follow them
+
+
+@dataclass(frozen=True, slots=True)
+class DmInbox:
+    """DM threads from one inbox read."""
+
+    threads: list[DmThread] = field(default_factory=list)
+    # False when the thread cap stopped an incremental read before it got back
+    # to the previous sync: older threads with new messages were left out.
+    complete: bool = True
 
 
 @runtime_checkable
@@ -48,13 +66,18 @@ class InstagramSource(Protocol):
 
     def get_likers(self, media_pk: str) -> list[IgUser]: ...
 
-    def get_comments(self, media_pk: str) -> list[Comment]: ...
+    def get_comments(self, media_pk: str, since: datetime | None = None) -> list[Comment]:
+        """Newest comments first, capped. With `since` (the newest comment
+        already stored) stop paging once reached; returns comments at/after it."""
+        ...
 
     def get_dm_threads(
         self, progress: ProgressFn | None = None, since: datetime | None = None
-    ) -> list[DmThread]:
-        """DM threads. If `since` is given, stop paging once threads are older
-        than it (incremental sync: only what changed since the last run)."""
+    ) -> DmInbox:
+        """DM threads, newest activity first, at most dm_threads_limit per read.
+        With `since`, stop paging at the first thread not active since then and
+        return only the threads that changed (incremental sync); `complete` is
+        False if the cap stopped it first."""
         ...
 
     def send_dm(self, user_pk: str, text: str) -> None:
@@ -62,8 +85,11 @@ class InstagramSource(Protocol):
         feedback_required), SendNotSupportedError if the source can't send."""
         ...
 
-    def get_friendships(self, user_pks: list[str]) -> dict[str, Friendship]:
-        """Follow status for many users at once (empty if unavailable)."""
+    def get_follow_graph(self, known: FollowGraph | None = None) -> FollowGraph:
+        """Our followers/following. Without `known`, both full lists. With the
+        lists from earlier reads, followers are paged newest-first only until a
+        page of known people and just the NEW followers are returned (unfollows
+        need a full read); `following` is always the full list."""
         ...
 
     def get_profile(self, username: str) -> ProfileInfo:

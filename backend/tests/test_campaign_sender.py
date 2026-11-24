@@ -7,7 +7,7 @@ and activity logging are stubbed so nothing waits or touches the real DB/IG.
 from __future__ import annotations
 
 from collections.abc import Iterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -16,6 +16,7 @@ import pytest
 from app.application import campaign_sender, tasks
 from app.infrastructure.config.settings import Settings
 from app.infrastructure.instagram.errors import (
+    BudgetExhaustedError,
     ChallengeRequiredError,
     IgBusyError,
     InstagramError,
@@ -284,3 +285,43 @@ def test_raw_challenge_from_instagrapi_blocks_the_campaign(
 
     assert harness.campaign().status == "blocked"
     assert [t.status for t in harness.targets()] == ["pending", "pending"]
+
+
+# -- L10 R4-1: a spent request budget waits for its window, it never pauses ----
+
+
+def test_spent_budget_waits_for_the_window_then_continues(harness: Harness) -> None:
+    _seed(harness)
+    retry_at = NOON_AR + timedelta(minutes=30)
+    source = StubSource(BudgetExhaustedError("Se alcanzó el tope por hora.", retry_at=retry_at))
+
+    harness.run(source)
+
+    assert source.attempts == ["1", "1", "2"]  # same target after the wait, no other call
+    assert harness.campaign().status == "done"
+    assert harness.campaign().error is None
+    assert [t.status for t in harness.targets()] == ["sent", "sent"]
+    wait = harness.sleeps[0]
+    assert 30 * 60 < wait <= 30 * 60 + campaign_sender._BUDGET_JITTER_SECONDS[1]
+    assert harness.logs[0][1] == "error" and "espera" in harness.logs[0][2]
+
+
+def test_budget_already_reopened_still_waits_a_little(harness: Harness) -> None:
+    _seed(harness, targets=1)
+    source = StubSource(BudgetExhaustedError("tope", retry_at=NOON_AR - timedelta(minutes=1)))
+
+    harness.run(source)
+
+    assert harness.sleeps[0] >= campaign_sender._BUDGET_JITTER_SECONDS[0]
+    assert harness.campaign().status == "done"
+
+
+def test_instagram_cooldown_still_pauses_not_waits(harness: Harness) -> None:
+    _seed(harness)
+    source = StubSource(RateLimitedError("Instagram pidió frenar (HTTP 429)."))
+
+    harness.run(source)
+
+    assert source.attempts == ["1"]
+    assert harness.campaign().status == "paused"
+    assert harness.sleeps == []

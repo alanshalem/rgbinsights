@@ -59,10 +59,11 @@ def create_db_and_tables(bind: Engine | None = None) -> None:
 
 
 # New nullable columns added to already-existing tables. create_all() creates
-# brand-new tables (e.g. events) but never ALTERs existing ones, so add these by
-# hand to preserve data already scanned/synced. Keyed by table -> {column: ddl}.
+# brand-new tables (e.g. events, follow_edges) but never ALTERs existing ones, so
+# add these by hand to preserve data already scanned/synced. Keyed by table ->
+# {column: ddl}.
 _ADDED_COLUMNS: dict[str, dict[str, str]] = {
-    "posts": {"event_id": "INTEGER"},
+    "posts": {"event_id": "INTEGER", "last_comment_at": "DATETIME"},
     "dm_threads": {
         "last_outgoing_at": "DATETIME",
         "last_incoming_at": "DATETIME",

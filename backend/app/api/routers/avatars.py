@@ -6,11 +6,15 @@ its URL is still valid) into a local cache and serves it from there forever —
 the <img> points at us, not at the expiring CDN link. Downloads look like a
 regular browser and leave through the same proxy as the Instagram client, so
 the CDN sees one consistent visitor instead of a bare python-requests client.
+A failed download is remembered for a while (negative cache) and each attempt
+has a short timeout, so a dead proxy or URL can't pin threadpool workers.
 """
 
 from __future__ import annotations
 
 import logging
+import threading
+import time
 from pathlib import Path
 
 import requests
@@ -38,6 +42,24 @@ _BROWSER_HEADERS = {
     "Accept-Language": "es-AR,es;q=0.9,en;q=0.8",
     "Referer": "https://www.instagram.com/",
 }
+_TIMEOUT_SECONDS = 4
+_FAILURE_TTL_SECONDS = 600.0  # don't retry a failed avatar for 10 minutes
+_failed: dict[str, float] = {}  # pk -> monotonic time until which we don't retry
+_failed_lock = threading.Lock()
+
+
+def _recently_failed(pk: str) -> bool:
+    with _failed_lock:
+        until = _failed.get(pk)
+        if until is not None and time.monotonic() >= until:
+            del _failed[pk]
+            until = None
+    return until is not None
+
+
+def _remember_failure(pk: str) -> None:
+    with _failed_lock:
+        _failed[pk] = time.monotonic() + _FAILURE_TTL_SECONDS
 
 
 @router.get("/avatar/{pk}")
@@ -54,6 +76,9 @@ def avatar(
     if cached.exists():
         return FileResponse(cached, media_type="image/jpeg", headers=_CACHE_HEADERS)
 
+    if _recently_failed(pk):
+        raise HTTPException(status_code=404, detail="avatar unavailable")
+
     user = session.get(models.User, pk)
     if user is None or not user.profile_pic_url:
         raise HTTPException(status_code=404, detail="no avatar")
@@ -64,11 +89,12 @@ def avatar(
             user.profile_pic_url,
             headers=_BROWSER_HEADERS,
             proxies={"http": proxy, "https": proxy} if proxy else None,
-            timeout=10,
+            timeout=_TIMEOUT_SECONDS,
         )
         resp.raise_for_status()
     except Exception as exc:  # noqa: BLE001 — expired/blocked URL: 404 -> UI shows initials
         logger.info("avatar download failed for %s: %s", pk, exc)
+        _remember_failure(pk)
         raise HTTPException(status_code=404, detail="avatar unavailable") from exc
 
     cached.write_bytes(resp.content)

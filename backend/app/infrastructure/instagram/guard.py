@@ -12,15 +12,15 @@ one place all instagrapi traffic (private API, public/GraphQL, every page of a
 paginated read) goes through, so nothing is counted or paced per call site.
 
 State persists to a small JSON file rather than the DB on purpose: the guard
-runs inside use cases that hold an open SQLite write transaction (e.g. enrich
-between profile reads), so writing through a second DB connection from here
-would block on that very lock.
+runs inside use cases' Instagram calls and must never depend on (or wait for)
+their SQLite transactions.
 """
 
 from __future__ import annotations
 
 import contextlib
 import functools
+import hashlib
 import json
 import logging
 import os
@@ -98,6 +98,9 @@ class _State:
     cooldown_reason: str | None = None
     last_error: str | None = None  # the most recent failure, for /ig/status
     last_ok_at: datetime | None = None
+    # sha256 of the sessionid tried by the login that opened the breaker (never
+    # the raw cookie): pasting that same value again is not a fresh credential.
+    breaker_sessionid_hash: str | None = None
 
 
 class IgGuard:
@@ -134,17 +137,19 @@ class IgGuard:
         self._attempts = 0
         self._succeeded = False
         self._stop: RateLimitedError | None = None
+        self._sessionid_hash: str | None = None  # sessionid tried by this operation
 
     # -- operations ----------------------------------------------------------
 
     @contextlib.contextmanager
-    def operation(self, *, fresh_credentials: bool = False) -> Iterator[None]:
+    def operation(self, *, fresh_sessionid: str | None = None) -> Iterator[None]:
         """Run one Instagram operation exclusively.
 
         Nested use (adapter -> login -> request) re-enters the same lock; only
         the outermost level checks the rails and records the outcome. With
-        `fresh_credentials` (the user pasted a new sessionid) an open *login*
-        breaker is skipped once; an IP-block breaker and the cooldown never are.
+        `fresh_sessionid` (the user pasted a sessionid) an open *login* breaker
+        is skipped once, but only if it is not the sessionid whose login opened
+        it; an IP-block breaker and the cooldown never are.
         """
         if not self._lock.acquire(timeout=self._settings.ig_lock_wait_seconds):
             raise IgBusyError(
@@ -156,7 +161,10 @@ class IgGuard:
         try:
             if outer:
                 self._attempts, self._succeeded, self._stop = 0, False, None
-                self._ensure_open(fresh_credentials)
+                self._sessionid_hash = None
+                if fresh_sessionid is not None:
+                    self.note_sessionid(fresh_sessionid)
+                self._ensure_open(fresh=fresh_sessionid is not None)
             try:
                 yield
             except Exception as exc:
@@ -164,7 +172,7 @@ class IgGuard:
                     self._fail(exc)
                 raise
             if outer and self._succeeded:
-                self._update(last_ok_at=self._clock())
+                self._ok()
         finally:
             self._depth -= 1
             self._lock.release()
@@ -179,15 +187,21 @@ class IgGuard:
         if self._attempts and isinstance(exc, _BREAKER_ERRORS):
             self._trip_breaker(exc)
 
-    def _ensure_open(self, fresh_credentials: bool) -> None:
+    def note_sessionid(self, sessionid: str) -> None:
+        """The current operation logs in with this sessionid (kept as a hash)."""
+        self._sessionid_hash = _sessionid_hash(sessionid)
+
+    def _ensure_open(self, *, fresh: bool) -> None:
         now = self._clock()
         with self._state_lock:
             st = self._state
             cooldown, reason = st.cooldown_until, st.cooldown_reason
             breaker, kind, breaker_error = st.breaker_until, st.breaker_kind, st.breaker_error
+            failed_hash = st.breaker_sessionid_hash
         if cooldown is not None and now < cooldown:
             raise self._cooldown_error(cooldown, reason)
-        if breaker is not None and now < breaker and not (fresh_credentials and kind != "ip"):
+        bypass = fresh and kind != "ip" and self._sessionid_hash != failed_hash
+        if breaker is not None and now < breaker and not bypass:
             error_type = _BREAKER_KINDS.get(kind, LoginRequiredError)
             hint = "" if kind == "ip" else " o pegá un sessionid nuevo"
             raise error_type(
@@ -202,9 +216,22 @@ class IgGuard:
             breaker_until=None,
             breaker_kind="",
             breaker_error=None,
+            breaker_sessionid_hash=None,
             last_error=None,
             last_ok_at=self._clock(),
         )
+
+    def _ok(self) -> None:
+        """A successful operation: Instagram works again, so a stale error goes —
+        unless a cooldown or the breaker is still running (its reason stays)."""
+        now = self._clock()
+        with self._state_lock:
+            st = self._state
+            blocked = any(t is not None and now < t for t in (st.cooldown_until, st.breaker_until))
+        if blocked:
+            self._update(last_ok_at=now)
+        else:
+            self._update(last_ok_at=now, last_error=None)
 
     def _trip_breaker(self, exc: InstagramError) -> None:
         with self._state_lock:
@@ -217,6 +244,7 @@ class IgGuard:
             breaker_until=until,
             breaker_kind=kind,
             breaker_error=str(exc),
+            breaker_sessionid_hash=self._sessionid_hash,
             last_error=str(exc),
         )
 
@@ -338,6 +366,7 @@ class IgGuard:
                 cooldown_reason=_opt_text(data.get("cooldown_reason")),
                 last_error=_opt_text(data.get("last_error")),
                 last_ok_at=_parse_dt(data.get("last_ok_at")),
+                breaker_sessionid_hash=_opt_text(data.get("breaker_sessionid_hash")),
             )
             self._budget.restore(budget)  # validates fully before assigning
         except FileNotFoundError:
@@ -360,6 +389,7 @@ class IgGuard:
             "cooldown_reason": st.cooldown_reason,
             "last_error": st.last_error,
             "last_ok_at": _iso(st.last_ok_at),
+            "breaker_sessionid_hash": st.breaker_sessionid_hash,
             "budget": self._budget.counters(),
         }
         tmp = self._path.with_name(self._path.name + ".tmp")
@@ -368,6 +398,10 @@ class IgGuard:
             os.replace(tmp, self._path)
         except OSError:
             logger.warning("could not save %s", self._path, exc_info=True)
+
+
+def _sessionid_hash(sessionid: str) -> str:
+    return hashlib.sha256(sessionid.strip().encode("utf-8")).hexdigest()
 
 
 def _iso(when: datetime | None) -> str | None:

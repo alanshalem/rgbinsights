@@ -11,10 +11,11 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import func, insert
+from sqlalchemy import delete, func, insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlmodel import Session, col, select
 
 from app.domain.entities import EngagementType, Friendship, IgUser, Post, ProfileInfo
@@ -27,6 +28,13 @@ IN_CHUNK = 900
 def chunked(items: list[Any], size: int = IN_CHUNK) -> Iterator[list[Any]]:
     for i in range(0, len(items), size):
         yield items[i : i + size]
+
+
+def _utc(when: datetime | None) -> datetime | None:
+    """Aware UTC (a naive value is UTC: how SQLite keeps them without an offset)."""
+    if when is None:
+        return None
+    return when.replace(tzinfo=UTC) if when.tzinfo is None else when.astimezone(UTC)
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,6 +125,12 @@ class UserRepository:
         row.profile_synced_at = now
         self.session.add(row)
 
+    def profiles_synced_since(self, since: datetime) -> int:
+        """How many profiles were fetched at or after `since` (the daily cap)."""
+        synced = col(models.User.profile_synced_at)
+        stmt = select(func.count()).select_from(models.User).where(synced >= since)
+        return int(self.session.exec(stmt).one())
+
     def unenriched(self, pks: list[str]) -> list[models.User]:
         """Users (from the given pks) whose profile hasn't been fetched yet.
 
@@ -141,7 +155,13 @@ class PostRepository:
     def __init__(self, session: Session) -> None:
         self.session = session
 
-    def upsert(self, post: Post, scanned_at: datetime, event_id: int | None = None) -> models.Post:
+    def upsert(
+        self,
+        post: Post,
+        scanned_at: datetime,
+        event_id: int | None = None,
+        last_comment_at: datetime | None = None,
+    ) -> models.Post:
         row = self.session.get(models.Post, post.media_pk)
         if row is None:
             row = models.Post(media_pk=post.media_pk, shortcode=post.shortcode, url=post.url)
@@ -153,8 +173,45 @@ class PostRepository:
         # Only (re)assign the fiesta when one is given; a plain re-scan keeps it.
         if event_id is not None:
             row.event_id = event_id
+        # The newest comment seen only moves forward.
+        newest, stored = _utc(last_comment_at), _utc(row.last_comment_at)
+        if newest is not None and (stored is None or newest > stored):
+            row.last_comment_at = newest
         self.session.add(row)
         return row
+
+    def find_by_shortcode(self, shortcode: str) -> Post | None:
+        """A post we already stored, as the source would return it (no IG call)."""
+        row = self.session.exec(
+            select(models.Post).where(models.Post.shortcode == shortcode)
+        ).first()
+        if row is None:
+            return None
+        return Post(
+            media_pk=row.media_pk,
+            shortcode=row.shortcode,
+            url=row.url,
+            caption=row.caption,
+            taken_at=row.taken_at,
+        )
+
+    def last_comment_at(self, media_pk: str) -> datetime | None:
+        """Newest comment already stored for a post (aware UTC), or None.
+
+        Posts scanned before this was tracked fall back to their newest stored
+        comment engagement.
+        """
+        row = self.session.get(models.Post, media_pk)
+        if row is None:
+            return None
+        if row.last_comment_at is not None:
+            return _utc(row.last_comment_at)
+        created = col(models.Engagement.created_at)
+        stmt = select(func.max(created)).where(
+            models.Engagement.post_media_pk == media_pk,
+            models.Engagement.type == EngagementType.COMMENT.value,
+        )
+        return _utc(self.session.exec(stmt).one())
 
     def list_all(self, event_id: int | None = None) -> list[models.Post]:
         stmt = select(models.Post)
@@ -234,6 +291,49 @@ class DmThreadRepository:
             row.last_message_at = t.last_message_at
             row.last_synced_at = synced_at
             self.session.add(row)
+
+
+class FollowGraphRepository:
+    """Our followers/following pks as last read (follow_edges)."""
+
+    _FOLLOWERS, _FOLLOWING = "followers", "following"
+
+    def __init__(self, session: Session) -> None:
+        self.session = session
+
+    def load(self) -> tuple[set[str], set[str]]:
+        """(followers, following)."""
+        followers: set[str] = set()
+        following: set[str] = set()
+        for kind, pk in self.session.exec(
+            select(models.FollowEdge.kind, models.FollowEdge.user_pk)
+        ):
+            (followers if kind == self._FOLLOWERS else following).add(pk)
+        return followers, following
+
+    def replace(self, followers: set[str], following: set[str]) -> None:
+        """A full read: the stored lists become exactly these (unfollows drop)."""
+        self.replace_following(following)
+        self.session.execute(
+            delete(models.FollowEdge).where(col(models.FollowEdge.kind) == self._FOLLOWERS)
+        )
+        self.add_followers(followers)
+
+    def replace_following(self, following: set[str]) -> None:
+        """Following is always read whole: store exactly this list."""
+        self.session.execute(
+            delete(models.FollowEdge).where(col(models.FollowEdge.kind) == self._FOLLOWING)
+        )
+        self._insert(self._FOLLOWING, following)
+
+    def add_followers(self, followers: set[str]) -> None:
+        """An incremental followers read: add the new pks (stored ones stay)."""
+        self._insert(self._FOLLOWERS, followers)
+
+    def _insert(self, kind: str, pks: set[str]) -> None:
+        if pks:
+            stmt = sqlite_insert(models.FollowEdge).on_conflict_do_nothing()
+            self.session.execute(stmt, [{"kind": kind, "user_pk": pk} for pk in sorted(pks)])
 
 
 class EventRepository:

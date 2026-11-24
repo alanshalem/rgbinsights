@@ -83,6 +83,11 @@ class Settings(BaseSettings):
     # How many recent posts to pull when scanning by date range.
     recent_posts_limit: int = 50
 
+    # DM threads read by a full (first or forced) DM sync. Later syncs page the
+    # inbox newest-first only until the previous sync. 60 = 3 inbox pages, the
+    # same requests the old fixed 50-thread read made.
+    dm_threads_limit: int = 60
+
     # Cap comments read per post: without a cap instagrapi pages EVERY comment on
     # a viral post (hundreds of private-API requests = ban risk). 200 recent
     # comments is plenty to catch engaged users.
@@ -92,6 +97,15 @@ class Settings(BaseSettings):
     # membership. 0 = all (correct but heaviest). Set >0 on accounts with a huge
     # graph to trade completeness for far fewer requests.
     relationship_fetch_max: int = 0
+    # Between full reads, followers/following are read newest-first only until a
+    # page of people we already know (only adds). A full read every N days also
+    # catches unfollows.
+    relationship_full_refresh_days: float = 7.0
+
+    # "Relación + perfiles": profile reads per run and per Argentina-local day.
+    # Progress is saved in batches, so the next run continues with the rest.
+    enrich_profiles_per_run: int = 60
+    enrich_profiles_per_day: int = 150
 
     # Caching to spare Instagram requests (and lower ban risk). Each is a TTL:
     # within it the app reuses stored data instead of re-fetching. "force" in the

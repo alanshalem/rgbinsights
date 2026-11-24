@@ -24,12 +24,13 @@ from app.application.use_cases import (
     event_counts,
     state_delta,
 )
+from app.application.use_cases.sync import CAPPED_NOTE
 from app.domain.result import Err
 from app.domain.traffic_light import TrafficLight
 from app.infrastructure.config.settings import Settings, get_settings
 from app.infrastructure.instagram.base import InstagramSource
 from app.infrastructure.persistence import models
-from app.infrastructure.persistence.repositories import EventRepository
+from app.infrastructure.persistence.repositories import EventRepository, UserRepository
 
 router = APIRouter(prefix="/events", tags=["events"])
 
@@ -136,6 +137,7 @@ def refresh_event(
             "nuevos": scan.value.total_new_users,
             **state_delta(before, event_counts(session, event_id)),
             "hilos": sync.value.threads_synced,
+            **({"aviso": CAPPED_NOTE} if sync.value.capped else {}),
         }
         out = EventRefreshOut(
             scan=ScanBatchResultOut.model_validate(scan.value, from_attributes=True),
@@ -152,16 +154,23 @@ def enrich_event(
     source: InstagramSource = Depends(source_dep),
     settings: Settings = Depends(get_settings),
 ) -> EnrichResultOut:
-    """Fetch follower count / verified / bio for the fiesta's users (slow, opt-in)."""
+    """Fetch follower count / verified / bio for the fiesta's users (slow, opt-in).
+
+    Capped per run and per Argentina-local day; progress is saved in batches,
+    so a later run continues with the users still missing ("faltan")."""
     if EventRepository(session).get(event_id) is None:
         raise HTTPException(status_code=404, detail={"code": "not_found", "message": "fiesta"})
     pks = [u.pk for u in ListUsersUseCase(session).execute(event=event_id)]
     with tasks.track("enrich", "Enriqueciendo (relación + perfiles)") as task:
         result = EnrichProfilesUseCase(source, session).execute(
             pks,
+            limit=settings.enrich_profiles_per_run,
             progress=task.progress,
             force=force,
             cache_hours=settings.relationship_cache_hours,
+            daily_cap=settings.enrich_profiles_per_day,
+            tz=settings.local_tz(),
+            full_refresh_days=settings.relationship_full_refresh_days,
         )
         if isinstance(result, Err):
             task.fail(result.message or result.code.value)
@@ -173,6 +182,7 @@ def enrich_event(
         task.result = {
             "relaciones": rel,
             "perfiles": result.value.enriched,
+            "faltan": len(UserRepository(session).unenriched(pks)),
             "te siguen": f"{red_followers}/{len(reds)} rojos",
         }
     return EnrichResultOut(

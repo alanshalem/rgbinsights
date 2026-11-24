@@ -17,11 +17,11 @@ from app.domain.entities import (
     Comment,
     DmMessage,
     DmThread,
-    Friendship,
     IgUser,
     Post,
     ProfileInfo,
 )
+from app.infrastructure.instagram.base import DmInbox, FollowGraph
 from app.infrastructure.instagram.errors import PostNotFoundError
 
 _OUR_PK = "0"
@@ -64,13 +64,12 @@ class FakeInstagramSource:
     def send_dm(self, user_pk: str, text: str) -> None:
         self.sent.append((user_pk, text))
 
-    def get_friendships(self, user_pks: list[str]) -> dict[str, Friendship]:
+    def get_follow_graph(self, known: FollowGraph | None = None) -> FollowGraph:
         # lucia follows us; tomas is mutual; others neither.
-        rel = {
-            "101": Friendship(following=False, followed_by=True),
-            "102": Friendship(following=True, followed_by=True),
-        }
-        return {pk: rel.get(pk, Friendship(following=False, followed_by=False)) for pk in user_pks}
+        followers, following = {"101", "102"}, {"102"}
+        if known is None:
+            return FollowGraph(followers=followers, following=following)
+        return FollowGraph(followers=followers - known.followers, following=following)
 
     def get_profile(self, username: str) -> ProfileInfo:
         return ProfileInfo(
@@ -110,20 +109,22 @@ class FakeInstagramSource:
             return [_LUCIA, _TOMAS]
         return []
 
-    def get_comments(self, media_pk: str) -> list[Comment]:
+    def get_comments(self, media_pk: str, since: datetime | None = None) -> list[Comment]:
+        comments: list[Comment] = []
         if media_pk == _POST_A.media_pk:
-            return [
+            comments = [
                 Comment(user=_LUCIA, text="temazo 🔥", created_at=_dt(11)),
                 Comment(user=_SOFIA, text="cuándo la próxima?", created_at=_dt(11)),
             ]
-        if media_pk == _POST_B.media_pk:
-            return [Comment(user=_LUCIA, text="ahí estaré", created_at=_dt(21))]
-        return []
+        elif media_pk == _POST_B.media_pk:
+            comments = [Comment(user=_LUCIA, text="ahí estaré", created_at=_dt(21))]
+        # Same contract as the real source: from `since` on (inclusive).
+        return [c for c in comments if since is None or (c.created_at or since) >= since]
 
     def get_dm_threads(
         self, progress: object | None = None, since: datetime | None = None
-    ) -> list[DmThread]:
-        return [
+    ) -> DmInbox:
+        threads = [
             # lucia answered us -> GREEN
             DmThread(
                 thread_id="t-lucia",
@@ -142,3 +143,7 @@ class FakeInstagramSource:
                 last_message_at=_dt(14),
             ),
         ]
+        # Same contract as the real source: only threads active after `since`.
+        return DmInbox(
+            threads=[t for t in threads if since is None or (t.last_message_at or since) > since]
+        )

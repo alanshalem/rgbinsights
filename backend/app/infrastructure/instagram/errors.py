@@ -6,6 +6,8 @@ boundary between the fragile IG/ToS layer and the rest of the app.
 
 from __future__ import annotations
 
+from datetime import datetime
+
 
 class InstagramError(Exception):
     """Base for adapter-level failures."""
@@ -34,6 +36,18 @@ class IpBlockedError(InstagramError):
 class RateLimitedError(InstagramError):
     """A safety rail stopped the call: request budget spent, Instagram asked us
     to slow down (cooldown), or another rail is open. Nothing was sent."""
+
+
+class BudgetExhaustedError(RateLimitedError):
+    """Our own hourly/daily request budget is spent — not an Instagram push-back.
+
+    Nothing is wrong with the account: work may simply resume at `retry_at`
+    (the campaign sender waits for it instead of pausing).
+    """
+
+    def __init__(self, message: str, *, retry_at: datetime) -> None:
+        super().__init__(message)
+        self.retry_at = retry_at
 
 
 class IgBusyError(RateLimitedError):

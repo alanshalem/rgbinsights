@@ -22,6 +22,7 @@ from app.api.schemas import IgSessionIdIn
 from app.infrastructure.config.settings import Settings
 from app.infrastructure.instagram import instagrapi_source
 from app.infrastructure.instagram.errors import (
+    BudgetExhaustedError,
     ChallengeRequiredError,
     IgBusyError,
     IpBlockedError,
@@ -293,8 +294,10 @@ class SlowClient:
         self.user_id = 1
         self.active = 0
         self.max_active = 0
+        self.calls = 0
 
     def _work(self) -> None:
+        self.calls += 1
         self.active += 1
         self.max_active = max(self.max_active, self.active)
         time.sleep(0.05)
@@ -337,7 +340,9 @@ def test_campaign_send_and_request_reads_never_overlap(tmp_path: Path) -> None:
     for t in threads:
         t.join(5)
 
-    assert client.max_active == 1
+    assert not any(t.is_alive() for t in threads)
+    assert client.calls == 6  # every read and every send ran...
+    assert client.max_active == 1  # ...one at a time
 
 
 def test_nested_operations_do_not_deadlock(tmp_path: Path) -> None:
@@ -731,3 +736,151 @@ def test_redirect_chains_are_capped(tmp_path: Path) -> None:
         client.private.get(URL)
 
     assert len(http.calls) <= 4  # not requests' default of 30 hops
+
+
+# -- L10 advisories ---------------------------------------------------------------
+
+
+def test_spent_budget_is_a_budget_error_with_its_reopening_time(tmp_path: Path) -> None:
+    guard = _guard(tmp_path, ig_max_requests_per_hour=1)
+    client = _client(FakeHttp())
+    guard.install(client)
+    client.private.get(URL)
+
+    with pytest.raises(BudgetExhaustedError) as info:
+        client.private.get(URL)
+
+    assert info.value.retry_at == datetime(2026, 11, 24, 16, 0, tzinfo=UTC)  # 13:00 AR
+    assert "13:00" in str(info.value)
+
+
+def test_instagram_cooldown_is_not_a_budget_error(tmp_path: Path) -> None:
+    guard = _guard(tmp_path)
+    client = _client(FakeHttp((429, "Too Many Requests")))
+    guard.install(client)
+    client.private.get(URL)
+
+    with pytest.raises(RateLimitedError) as info:
+        client.private.get(URL)
+    assert not isinstance(info.value, BudgetExhaustedError)
+
+
+def test_last_error_clears_after_a_successful_operation_once_recovered(tmp_path: Path) -> None:
+    clock = Clock()
+    guard = _guard(tmp_path, clock, ig_throttle_cooldown_minutes=60)
+    client = _client(FakeHttp((200, "{}"), (429, "Too Many Requests")))
+    guard.install(client)
+    with guard.operation():  # instagrapi swallowed the 429: the operation "succeeds"
+        client.private.get(URL)
+        client.private.get(URL)
+    assert guard.snapshot().last_error is not None  # still cooling down: keep the reason
+
+    clock.advance(minutes=61)
+    with guard.operation():
+        client.private.get(URL)
+
+    assert guard.snapshot().last_error is None
+    assert _guard(tmp_path, clock).snapshot().last_error is None  # persisted
+
+
+def test_failed_operation_keeps_last_error(tmp_path: Path) -> None:
+    clock = Clock()
+    guard = _guard(tmp_path, clock)
+    client = _client(FakeHttp((429, "Too Many Requests")))
+    guard.install(client)
+    client.private.get(URL)
+    clock.advance(minutes=61)
+
+    with pytest.raises(RuntimeError), guard.operation():
+        raise RuntimeError("no request reached Instagram")
+
+    assert guard.snapshot().last_error is not None
+
+
+def _avatar_user(session: Session) -> None:
+    session.add(
+        models.User(
+            pk="78",
+            username="tomas",
+            profile_pic_url="https://scontent.cdninstagram.com/dead.jpg",
+            first_seen_at=START,
+            last_seen_at=START,
+        )
+    )
+    session.commit()
+
+
+def test_avatar_failure_is_remembered_and_uses_a_short_timeout(
+    tmp_path: Path, session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[dict[str, Any]] = []
+
+    def dead_proxy(url: str, **kwargs: Any) -> requests.Response:
+        calls.append(kwargs)
+        raise requests.ConnectTimeout("proxy unreachable")
+
+    now = [1000.0]
+    monkeypatch.setattr(avatars, "_CACHE_DIR", tmp_path)
+    monkeypatch.setattr(avatars, "_failed", {})
+    monkeypatch.setattr(avatars.time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(requests, "get", dead_proxy)
+    _avatar_user(session)
+    settings = _settings(tmp_path)
+
+    for _ in range(3):
+        with pytest.raises(avatars.HTTPException) as info:
+            avatars.avatar("78", session=session, settings=settings)
+        assert info.value.status_code == 404
+
+    assert len(calls) == 1  # the failure is cached: no new download attempt
+    assert calls[0]["timeout"] == avatars._TIMEOUT_SECONDS == 4
+
+    now[0] += avatars._FAILURE_TTL_SECONDS + 1
+    with pytest.raises(avatars.HTTPException):
+        avatars.avatar("78", session=session, settings=settings)
+    assert len(calls) == 2  # retried once the negative cache expired
+
+
+def test_same_failed_sessionid_does_not_bypass_the_breaker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clock = Clock()
+    source, guard, factory = _login_setup(tmp_path, monkeypatch, clock)
+
+    with pytest.raises(LoginRequiredError):
+        source.connect_sessionid("bad-cookie")
+    attempts = len(factory.built)
+
+    factory.fail = None  # it would not matter: nothing may reach Instagram
+    with pytest.raises(LoginRequiredError) as info:
+        source.connect_sessionid("bad-cookie")
+    assert len(factory.built) == attempts
+    assert "hasta las" in str(info.value)
+
+    assert source.connect_sessionid("new-cookie") == "42"  # a different one may try
+
+
+def test_env_sessionid_that_failed_is_not_a_fresh_paste(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clock = Clock()
+    source, _, factory = _login_setup(tmp_path, monkeypatch, clock)  # IG_SESSIONID=abc
+    with pytest.raises(LoginRequiredError):
+        source.current_user_pk()
+    attempts = len(factory.built)
+
+    with pytest.raises(LoginRequiredError):
+        source.connect_sessionid(" abc ".strip())
+    assert len(factory.built) == attempts
+
+
+def test_guard_file_stores_only_a_hash_of_the_failed_sessionid(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source, _, _ = _login_setup(tmp_path, monkeypatch, Clock())
+    with pytest.raises(LoginRequiredError):
+        source.connect_sessionid("secret-cookie-value")
+
+    saved = (tmp_path / "ig_guard.json").read_text(encoding="utf-8")
+    assert "secret-cookie-value" not in saved
+    assert '"breaker_sessionid_hash": "' in saved
