@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ApiError, type Order, type TrafficLight } from './api/client';
+import { ApiError, type ExportQuery, type Order, type TrafficLight } from './api/client';
 import { useCounts, useEvents } from './api/hooks';
 import { ActionsMenu } from './components/ActionsMenu';
 import { ActivityPage } from './components/ActivityPage';
 import { Board } from './components/board/Board';
 import { CampaignModal } from './components/campaign/CampaignModal';
+import { ExportButtons } from './components/board/ExportButtons';
 import { Cursor } from './components/ui/Cursor';
 import { ErrorBanner } from './components/ui/ErrorBanner';
 import { FiestaModal } from './components/FiestaModal';
@@ -58,6 +59,12 @@ export default function App() {
   const contacted = c.yellow + c.green;
   const pct = c.total ? Math.round((contacted / c.total) * 100) : 0;
   const tableTotal = status ? c[status] : c.total;
+  // The export mirrors the visible view: the Board is its three color columns
+  // (no status filter); the Table applies the status picker.
+  const exportQuery: ExportQuery =
+    view === 'board'
+      ? { event, search: searchQ, order, follows, by_status: true }
+      : { event, status: status || undefined, search: searchQ, order, follows };
 
   return (
     <>
@@ -143,7 +150,9 @@ export default function App() {
             onToggleFollowers={() => setOnlyFollowers((v) => !v)}
             showPosts={showPosts}
             onTogglePosts={() => setShowPosts((s) => !s)}
-          />
+          >
+            <ExportButtons query={exportQuery} onError={setError} />
+          </FilterBar>
 
           {showPosts && <PostsDrawer event={event} onError={setError} />}
 

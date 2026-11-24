@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import type { Order, TrafficLight } from '../../api/client';
 import { INPUT_CLS } from '../../lib/ui';
 import { LIGHTS, LIGHT_LABEL } from '../../lib/user';
@@ -5,8 +6,8 @@ import { LIGHTS, LIGHT_LABEL } from '../../lib/user';
 type View = 'board' | 'table';
 
 /** The board/table toolbar: view toggle, search, status (table only), order,
- * follower filter, posts drawer toggle. Pure controlled component — App owns
- * the state. */
+ * follower filter, posts drawer toggle, plus trailing actions (`children`, e.g.
+ * the export buttons). Pure controlled component — App owns the state. */
 export function FilterBar({
   view,
   onView,
@@ -20,6 +21,7 @@ export function FilterBar({
   onToggleFollowers,
   showPosts,
   onTogglePosts,
+  children,
 }: {
   view: View;
   onView: (v: View) => void;
@@ -33,6 +35,7 @@ export function FilterBar({
   onToggleFollowers: () => void;
   showPosts: boolean;
   onTogglePosts: () => void;
+  children?: ReactNode;
 }) {
   return (
     <div className="flex flex-wrap items-center gap-2">
@@ -107,6 +110,8 @@ export function FilterBar({
       >
         {showPosts ? 'Ocultar posts' : 'Ver posts'}
       </button>
+
+      {children}
     </div>
   );
 }

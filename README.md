@@ -112,6 +112,9 @@ Abrí el navegador en **http://localhost:5173**.
 3. Mirá el **Board** (3 columnas) o cambiá a la vista de **Tabla**.
 4. Filtrá por estado, por post o buscá por `@usuario`.
 5. **Abrir DM** te lleva al chat en Instagram; si no hay chat, **Ver perfil**.
+6. **Exportar Excel** / **Exportar PDF** bajan la lista que estás viendo (misma
+   fiesta, filtros, búsqueda y orden; todas las filas) para pasársela a las
+   publicas. Sale de la base local: no le pide nada a Instagram.
 
 Re-escanear un post no duplica nada: podés hacerlo las veces que quieras.
 
@@ -190,3 +193,8 @@ Lo que más ayuda, en orden:
 - Frontend: Vite + React + TypeScript (strict) + TanStack Query, con cliente
   HTTP **tipado generado desde el OpenAPI** del backend.
 - La app escucha solo en `127.0.0.1` (no se expone a internet).
+- Export del semáforo: `GET /users/export?format=xlsx|pdf` con los mismos
+  filtros que `/users` (`event`, `post`, `status`, `search`, `order`, `follows`)
+  más `by_status=true` (agrupado rojo → amarillo → verde, como el Board). Devuelve
+  el archivo como descarga (`semaforo-<fiesta>-<AAAA-MM-DD>.xlsx|pdf`, fecha
+  argentina) con todas las filas, sin paginar. Usa `openpyxl` y `fpdf2`.

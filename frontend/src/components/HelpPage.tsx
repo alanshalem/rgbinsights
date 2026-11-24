@@ -7,6 +7,7 @@ const SECTIONS: { id: string; title: string }[] = [
   { id: 'paso-a-paso', title: 'Paso a paso' },
   { id: 'acciones', title: 'Las acciones' },
   { id: 'seguidores', title: 'Te sigue y perfiles' },
+  { id: 'exportar', title: 'Exportar Excel / PDF' },
   { id: 'campana', title: 'Campaña de DMs' },
   { id: 'progreso', title: 'Progreso y actividad' },
   { id: 'problemas', title: 'Si algo falla' },
@@ -145,6 +146,22 @@ export function HelpPage({ onBack }: { onBack: () => void }) {
               El chip <b>🌟</b> es la cantidad de seguidores (para detectar DJs/influencers). Ordená
               por <b>seguidores 🌟</b> o <b>fans 🔥</b> (cuántos posts enganchó), y filtrá{' '}
               <b>Solo seguidores</b>.
+            </p>
+          </Section>
+
+          <Section id="exportar" title="Exportar Excel / PDF">
+            <p>
+              <b>Exportar Excel</b> y <b>Exportar PDF</b> (en la barra de filtros) bajan{' '}
+              <b>lo que estás viendo</b>: la misma fiesta, búsqueda, filtros y orden, con{' '}
+              <b>todas</b> las filas (no solo las cargadas). En el Board sale agrupado por color (🔴
+              → 🟡 → 🟢). Trae usuario con link al perfil, nombre, estado, si te sigue, seguidores,
+              likes/comentarios y el link de DM. Sale de lo que ya está guardado:{' '}
+              <b>no le pide nada a Instagram</b>.
+            </p>
+            <p>
+              Ideal para pasárselo a las publicas: el <b>link al perfil</b> les sirve a todas; el{' '}
+              <b>link de DM</b> abre el chat de la cuenta de RGB (solo funciona logueado con esa
+              cuenta).
             </p>
           </Section>
 

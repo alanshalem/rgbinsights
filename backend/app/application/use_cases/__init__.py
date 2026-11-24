@@ -15,6 +15,11 @@ from app.application.use_cases._shared import (
     state_delta,
 )
 from app.application.use_cases.enrich import EnrichProfilesUseCase
+from app.application.use_cases.export_users import (
+    ExportRow,
+    ExportUsersUseCase,
+    UserExport,
+)
 from app.application.use_cases.list_users import ListUsersUseCase, event_counts
 from app.application.use_cases.scan import (
     RescanEventUseCase,
@@ -27,12 +32,15 @@ __all__ = [
     "KEY_DMS_SYNCED",
     "KEY_RELATIONS_SYNCED",
     "EnrichProfilesUseCase",
+    "ExportRow",
+    "ExportUsersUseCase",
     "ListUsersUseCase",
     "ProgressFn",
     "RescanEventUseCase",
     "ScanPostUseCase",
     "ScanPostsUseCase",
     "SyncDmsUseCase",
+    "UserExport",
     "event_counts",
     "map_instagram_error",
     "state_delta",

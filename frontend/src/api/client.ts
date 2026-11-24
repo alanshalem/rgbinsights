@@ -67,25 +67,28 @@ export function toApiError(e: unknown): ApiError {
   return e instanceof ApiError ? e : new ApiError(0, 'unknown', String(e));
 }
 
+/** The ApiError for a failed response, from its JSON `detail` when present. */
+async function errorFrom(res: Response): Promise<ApiError> {
+  let detail: unknown = null;
+  try {
+    detail = (await res.json()).detail;
+  } catch {
+    /* non-JSON error body */
+  }
+  if (isErrorDetail(detail)) return new ApiError(res.status, detail.code, detail.message);
+  // A bare string detail (e.g. FastAPI's 500 "Internal Server Error") is still
+  // more useful than "HTTP 500" — surface it instead of the raw status.
+  if (typeof detail === 'string' && detail.trim())
+    return new ApiError(res.status, 'unknown', detail);
+  return new ApiError(res.status, 'unknown', `HTTP ${res.status}`);
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(BASE + path, {
     headers: { 'Content-Type': 'application/json' },
     ...init,
   });
-  if (!res.ok) {
-    let detail: unknown = null;
-    try {
-      detail = (await res.json()).detail;
-    } catch {
-      /* non-JSON error body */
-    }
-    if (isErrorDetail(detail)) throw new ApiError(res.status, detail.code, detail.message);
-    // A bare string detail (e.g. FastAPI's 500 "Internal Server Error") is still
-    // more useful than "HTTP 500" — surface it instead of the raw status.
-    if (typeof detail === 'string' && detail.trim())
-      throw new ApiError(res.status, 'unknown', detail);
-    throw new ApiError(res.status, 'unknown', `HTTP ${res.status}`);
-  }
+  if (!res.ok) throw await errorFrom(res);
   return (await res.json()) as T;
 }
 
@@ -99,6 +102,35 @@ export type UsersQuery = {
   limit?: number;
   offset?: number;
 };
+
+export type ExportFormat = 'xlsx' | 'pdf';
+
+/** What the screen shows: the /users filters (all rows, no paging) and, for the
+ * Board, `by_status` = one block per color like its three columns. */
+export type ExportQuery = Omit<UsersQuery, 'limit' | 'offset'> & { by_status?: boolean };
+
+function filenameFrom(res: Response, fallback: string): string {
+  const m = /filename="?([^";]+)"?/i.exec(res.headers.get('Content-Disposition') ?? '');
+  return m?.[1] ?? fallback;
+}
+
+/** Download the on-screen list as Excel/PDF (built from the local DB only). */
+async function downloadExport(format: ExportFormat, q: ExportQuery): Promise<void> {
+  const res = await fetch(`${BASE}/users/export${qs({ ...q, format })}`);
+  if (!res.ok) throw await errorFrom(res);
+  const url = URL.createObjectURL(await res.blob());
+  try {
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filenameFrom(res, `semaforo.${format}`);
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  } finally {
+    // Let the click start the download before the blob URL goes away.
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+}
 
 function qs(params: Record<string, string | number | boolean | undefined>): string {
   const sp = new URLSearchParams();
@@ -114,6 +146,8 @@ export const api = {
 
   counts: (q: Pick<UsersQuery, 'event' | 'post' | 'search'> = {}) =>
     request<StatusCounts>(`/users/counts${qs({ ...q })}`),
+
+  exportUsers: downloadExport,
 
   listPosts: (event?: number) => request<PostOut[]>(`/posts${qs({ event })}`),
 
