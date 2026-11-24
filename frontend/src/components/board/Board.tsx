@@ -1,6 +1,6 @@
-import { useState } from 'react';
-import type { Order, TrafficLight } from '../../api/client';
-import { useUsers } from '../../api/hooks';
+import { useMemo } from 'react';
+import type { Order, TrafficLight, UserOut } from '../../api/client';
+import { useUserPages } from '../../api/hooks';
 import { LIGHT_HINT, LIGHT_LABEL } from '../../lib/user';
 import { UserCard } from './UserCard';
 
@@ -14,6 +14,19 @@ const ACCENT: Record<TrafficLight, string> = {
 
 type ColumnQuery = { event?: number; search?: string; order: Order; follows?: boolean };
 
+/** Flatten the loaded pages, dropping a repeat that an offset shift (data changed
+ * between two page fetches) could bring in, so cards and keys stay unique. */
+function uniqueRows(pages: UserOut[][] | undefined): UserOut[] {
+  const seen = new Set<string>();
+  const rows: UserOut[] = [];
+  for (const u of pages?.flat() ?? []) {
+    if (seen.has(u.pk)) continue;
+    seen.add(u.pk);
+    rows.push(u);
+  }
+  return rows;
+}
+
 function Column({
   light,
   total,
@@ -23,10 +36,8 @@ function Column({
   total: number;
   query: ColumnQuery;
 }) {
-  const [pages, setPages] = useState(1);
-  const limit = pages * PAGE;
-  const users = useUsers({ ...query, status: light, limit, offset: 0 });
-  const rows = users.data ?? [];
+  const users = useUserPages({ ...query, status: light }, PAGE);
+  const rows = useMemo(() => uniqueRows(users.data?.pages), [users.data]);
 
   return (
     <section className="anim-fade-up flex min-w-0 flex-1 flex-col rounded-2xl border border-border bg-panel/40">
@@ -60,7 +71,10 @@ function Column({
         {rows.length < total && (
           <button
             type="button"
-            onClick={() => setPages((p) => p + 1)}
+            onClick={() => {
+              // Only the next page; a click while it loads would just repeat it.
+              if (!users.isFetchingNextPage) void users.fetchNextPage();
+            }}
             className="rounded-lg border border-border py-1.5 text-sm text-muted hover:text-ink"
           >
             Cargar más ({rows.length}/{total})

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useIsMutating, useQueryClient } from '@tanstack/react-query';
 import type { Campaign, Task } from '../api/client';
-import { useActiveCampaign, useTasks } from '../api/hooks';
+import { invalidateAfter, useActiveCampaign, useTasks } from '../api/hooks';
 import { estimateFor } from '../lib/campaign';
 
 const KIND: Record<string, { icon: string; title: string }> = {
@@ -178,12 +178,8 @@ export function Toasts() {
     for (const t of tasks.data ?? []) {
       if ((t.status === 'done' || t.status === 'error') && !processed.current.has(t.id)) {
         processed.current.add(t.id);
-        if (t.status === 'done') {
-          void qc.invalidateQueries({ queryKey: ['users'] });
-          void qc.invalidateQueries({ queryKey: ['counts'] });
-          void qc.invalidateQueries({ queryKey: ['posts'] });
-          void qc.invalidateQueries({ queryKey: ['events'] });
-        }
+        // Refresh only what this kind of task changed.
+        if (t.status === 'done') invalidateAfter(qc, t.kind);
         const id = t.id;
         setTimeout(() => setDismissed((s) => new Set(s).add(id)), 7000);
       }

@@ -13,6 +13,37 @@ function fmtAgo(iso: string | null | undefined): string {
   return `hace ${Math.floor(hours / 24)}d`;
 }
 
+/** One menu entry. Module-level so it keeps its identity across renders (no
+ * remount of every item each time the menu re-renders). */
+function Item({
+  label,
+  hint,
+  freshness,
+  disabled,
+  onClick,
+}: {
+  label: string;
+  hint: string;
+  freshness?: string;
+  disabled?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className="flex w-full flex-col gap-0.5 px-3 py-2 text-left hover:bg-panel-2 disabled:opacity-40"
+    >
+      <span className="flex items-center justify-between gap-4 text-sm">
+        <span className="font-medium">{label}</span>
+        <span className="text-xs text-muted">{hint}</span>
+      </span>
+      {freshness && <span className="mono text-[10px] text-muted">actualizado {freshness}</span>}
+    </button>
+  );
+}
+
 /** "Actualizar ▾": one menu for the three refresh depths (DMs / posts+DMs /
  * relación+perfiles). Each item shows how fresh its data is; "forzar" ignores
  * the cache when you really want to re-fetch. */
@@ -47,33 +78,6 @@ export function ActionsMenu({
     setOpen(false);
     m.mutate(arg, { onError: (e: unknown) => onError(toApiError(e)) });
   };
-
-  const Item = ({
-    label,
-    hint,
-    freshness,
-    disabled,
-    onClick,
-  }: {
-    label: string;
-    hint: string;
-    freshness?: string;
-    disabled?: boolean;
-    onClick: () => void;
-  }) => (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      className="flex w-full flex-col gap-0.5 px-3 py-2 text-left hover:bg-panel-2 disabled:opacity-40"
-    >
-      <span className="flex items-center justify-between gap-4 text-sm">
-        <span className="font-medium">{label}</span>
-        <span className="text-xs text-muted">{hint}</span>
-      </span>
-      {freshness && <span className="mono text-[10px] text-muted">actualizado {freshness}</span>}
-    </button>
-  );
 
   return (
     <div className="relative" ref={ref}>

@@ -21,7 +21,7 @@ export function Cursor() {
 
     const pos = { x: window.innerWidth / 2, y: window.innerHeight / 2 };
     const ring = { x: pos.x, y: pos.y };
-    let raf = 0;
+    let raf = 0; // 0 = idle (no frame scheduled)
 
     const place = (el: HTMLDivElement | null, x: number, y: number) => {
       if (el) el.style.transform = `translate(${x}px, ${y}px) translate(-50%, -50%)`;
@@ -34,20 +34,31 @@ export function Cursor() {
       if (ringRef.current) ringRef.current.style.opacity = '1';
       const hovering = (e.target as HTMLElement)?.closest?.(INTERACTIVE);
       ringRef.current?.classList.toggle('is-hover', !!hovering);
+      wake();
     };
     const onDown = () => ringRef.current?.classList.add('is-down');
     const onUp = () => ringRef.current?.classList.remove('is-down');
+    // Animate only while the ring is catching up; once it reaches the pointer it
+    // snaps (sub-pixel, invisible) and the loop stops until the next move.
     const loop = () => {
       ring.x += (pos.x - ring.x) * 0.2; // trails with easing
       ring.y += (pos.y - ring.y) * 0.2;
+      const settled = Math.abs(pos.x - ring.x) < 0.1 && Math.abs(pos.y - ring.y) < 0.1;
+      if (settled) {
+        ring.x = pos.x;
+        ring.y = pos.y;
+      }
       place(ringRef.current, ring.x, ring.y);
-      raf = requestAnimationFrame(loop);
+      raf = settled ? 0 : requestAnimationFrame(loop);
+    };
+    const wake = () => {
+      if (raf === 0) raf = requestAnimationFrame(loop);
     };
 
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mousedown', onDown);
     window.addEventListener('mouseup', onUp);
-    raf = requestAnimationFrame(loop);
+    wake();
     return () => {
       cancelAnimationFrame(raf);
       window.removeEventListener('mousemove', onMove);

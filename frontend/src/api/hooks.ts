@@ -1,4 +1,10 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+  useQueryClient,
+  type QueryClient,
+} from '@tanstack/react-query';
 import { api, type EventCreate, type UsersQuery } from './client';
 
 export function useEvents() {
@@ -9,6 +15,19 @@ export function useUsers(query: UsersQuery) {
   return useQuery({
     queryKey: ['users', query],
     queryFn: () => api.listUsers(query),
+  });
+}
+
+/** Board column: users in pages of `pageSize`. "Cargar más" (`fetchNextPage`)
+ * asks only for the next page (`offset` = rows already loaded) and appends it.
+ * Filters are part of the key, so a new search/filter/order starts at page 1. */
+export function useUserPages(query: Omit<UsersQuery, 'limit' | 'offset'>, pageSize: number) {
+  return useInfiniteQuery({
+    queryKey: ['users', 'pages', pageSize, query],
+    queryFn: ({ pageParam }) => api.listUsers({ ...query, limit: pageSize, offset: pageParam }),
+    initialPageParam: 0,
+    getNextPageParam: (last, pages) =>
+      last.length < pageSize ? undefined : pages.reduce((n, p) => n + p.length, 0),
   });
 }
 
@@ -23,16 +42,34 @@ export function usePosts(event?: number) {
   return useQuery({ queryKey: ['posts', event ?? null], queryFn: () => api.listPosts(event) });
 }
 
-/** Invalidate every derived view after a write so counts/columns refresh. */
-function useRefreshAll() {
+type ViewKey = 'users' | 'counts' | 'posts' | 'events' | 'status';
+
+const ALL_VIEWS: readonly ViewKey[] = ['users', 'counts', 'posts', 'events', 'status'];
+
+/** What each write changes on the backend → the only views worth refetching.
+ * Keys match the backend task kinds (`/tasks`) plus the untracked writes. */
+const CHANGES: Record<string, readonly ViewKey[]> = {
+  // POST /events: a new, empty fiesta row (no posts/users yet).
+  event: ['events'],
+  // Posts + engagements + users; the fiesta's posts_count / last_scanned_at.
+  scan: ['users', 'counts', 'posts', 'events'],
+  rescan: ['users', 'counts', 'posts', 'events'],
+  // Profiles + follows_us (the counts' "te siguen" filter) + relationships_synced_at.
+  enrich: ['users', 'counts', 'status'],
+  // DM threads → traffic lights + dms_synced_at.
+  sync: ['users', 'counts', 'status'],
+  // rescan + sync.
+  refresh: ALL_VIEWS,
+};
+
+/** Refetch only the views a write of `kind` changed (unknown kind → all of them). */
+export function invalidateAfter(qc: QueryClient, kind: string) {
+  for (const key of CHANGES[kind] ?? ALL_VIEWS) void qc.invalidateQueries({ queryKey: [key] });
+}
+
+function useInvalidateAfter(kind: string) {
   const qc = useQueryClient();
-  return () => {
-    void qc.invalidateQueries({ queryKey: ['users'] });
-    void qc.invalidateQueries({ queryKey: ['counts'] });
-    void qc.invalidateQueries({ queryKey: ['posts'] });
-    void qc.invalidateQueries({ queryKey: ['events'] });
-    void qc.invalidateQueries({ queryKey: ['status'] });
-  };
+  return () => invalidateAfter(qc, kind);
 }
 
 /** Freshness of the shared data (last relationships/DMs sync), for the hints. */
@@ -46,11 +83,12 @@ export function useIgStatus() {
     queryKey: ['ig-status'],
     queryFn: () => api.igStatus(),
     refetchInterval: 20000,
+    refetchIntervalInBackground: false, // paused while the tab is hidden
   });
 }
 
 export function useCreateEvent() {
-  const refresh = useRefreshAll();
+  const refresh = useInvalidateAfter('event');
   return useMutation({
     mutationFn: (body: EventCreate) => api.createEvent(body),
     onSuccess: refresh,
@@ -58,7 +96,7 @@ export function useCreateEvent() {
 }
 
 export function useScanPosts() {
-  const refresh = useRefreshAll();
+  const refresh = useInvalidateAfter('scan');
   return useMutation({
     mutationFn: ({ urls, eventId }: { urls: string[]; eventId?: number }) =>
       api.scanPosts(urls, eventId),
@@ -67,7 +105,7 @@ export function useScanPosts() {
 }
 
 export function useRescanEvent() {
-  const refresh = useRefreshAll();
+  const refresh = useInvalidateAfter('rescan');
   return useMutation({
     mutationFn: (eventId: number) => api.rescanEvent(eventId),
     onSuccess: refresh,
@@ -77,7 +115,7 @@ export function useRescanEvent() {
 type Forceable = { id: number; force?: boolean };
 
 export function useEnrichEvent() {
-  const refresh = useRefreshAll();
+  const refresh = useInvalidateAfter('enrich');
   return useMutation({
     mutationFn: ({ id, force }: Forceable) => api.enrichEvent(id, force),
     onSuccess: refresh,
@@ -86,7 +124,7 @@ export function useEnrichEvent() {
 
 /** Re-scan the fiesta's posts + sync DMs in one call. */
 export function useRefreshEvent() {
-  const refresh = useRefreshAll();
+  const refresh = useInvalidateAfter('refresh');
   return useMutation({
     mutationFn: ({ id, force }: Forceable) => api.refreshEvent(id, force),
     onSuccess: refresh,
@@ -94,7 +132,7 @@ export function useRefreshEvent() {
 }
 
 export function useSyncDms() {
-  const refresh = useRefreshAll();
+  const refresh = useInvalidateAfter('sync');
   return useMutation({
     mutationFn: (arg: { force?: boolean; event?: number } = {}) =>
       api.syncDms(arg.force, arg.event),
@@ -155,11 +193,14 @@ export function useActiveCampaign(active: boolean) {
   });
 }
 
+/** Polls only while the Activity page is mounted (its sole observer) and the
+ * tab is visible. */
 export function useActivity() {
   return useQuery({
     queryKey: ['activity'],
     queryFn: () => api.listActivity(),
     refetchInterval: 5000,
+    refetchIntervalInBackground: false,
   });
 }
 
