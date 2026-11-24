@@ -204,6 +204,9 @@ class IgStatusOut(BaseModel):
     demo: bool  # fake source (no real Instagram)
     source: str  # fake | instagrapi — drives the reconnect UI
     has_credentials: bool  # user/pass present in .env (enables the 1-click reauth)
+    # No Instagram request before this (login breaker or throttle cooldown open).
+    cooldown_until: datetime | None = None
+    last_error: str | None = None  # the most recent Instagram failure, if any
 
 
 class IgSessionIdIn(BaseModel):

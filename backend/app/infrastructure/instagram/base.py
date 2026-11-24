@@ -26,7 +26,18 @@ ProgressFn = Callable[..., None]
 @runtime_checkable
 class InstagramSource(Protocol):
     def current_user_pk(self) -> str:
-        """Our own account pk. Used to classify DM message direction."""
+        """Our own account pk. Used to classify DM message direction. Logs in if
+        needed, so only call it from a user-initiated operation."""
+        ...
+
+    def cached_user_pk(self) -> str | None:
+        """Our pk if a session is already live in memory, else None. Never
+        touches the network (safe for status polling)."""
+        ...
+
+    def connect_sessionid(self, sessionid: str) -> str:
+        """Explicit user action: adopt a browser sessionid, validate it once,
+        persist it, and return our pk."""
         ...
 
     def get_post(self, url: str) -> Post:
@@ -60,6 +71,6 @@ class InstagramSource(Protocol):
         ...
 
     def reset_budget(self) -> None:
-        """Reset the per-run request counter. Called at the start of each
-        top-level operation so the cap is per-operation, not per-process."""
+        """Kept for callers; a no-op now. The request budget is real and
+        process-wide (per hour/day, every HTTP request), enforced by IgGuard."""
         ...

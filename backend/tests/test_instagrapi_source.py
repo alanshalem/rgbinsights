@@ -8,6 +8,7 @@ handle_exception hook and then silently falls back to the public endpoint.
 from __future__ import annotations
 
 import contextlib
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -32,6 +33,12 @@ URL = "https://www.instagram.com/p/DfZ69nZEeFv/"
 RELOGIN_TYPEERROR = (
     "int() argument must be a string, a bytes-like object or a real number, not 'NoneType'"
 )
+
+
+@pytest.fixture(autouse=True)
+def _isolated_guard_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # The adapter persists breaker/budget state; keep it out of the repo.
+    monkeypatch.setenv("IG_GUARD_FILE", str(tmp_path / "ig_guard.json"))
 
 
 def _settings() -> Settings:
@@ -75,7 +82,7 @@ class StubClient:
 
 def _source_with(client: object) -> InstagrapiInstagramSource:
     source = InstagrapiInstagramSource(_settings())
-    source._client = client  # type: ignore[assignment]
+    source._client = client
     return source
 
 

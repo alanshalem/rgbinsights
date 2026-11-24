@@ -2,7 +2,8 @@
 one-time interactive login script.
 
 Centralizes the anti-block hygiene (stable proxy, consistent country/locale,
-randomized delays, saved-session reuse) so both entry points behave identically.
+saved-session reuse, and the IgGuard rails: one operation at a time, budget,
+cooldown, human pacing) so both entry points behave identically.
 instagrapi is imported lazily to keep it optional at import time.
 """
 
@@ -15,6 +16,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from app.infrastructure.config.settings import Settings
+from app.infrastructure.instagram.guard import get_guard
 
 if TYPE_CHECKING:
     from instagrapi import Client
@@ -49,10 +51,6 @@ def build_client(settings: Settings, challenge_handler: ChallengeHandler) -> Cli
     from instagrapi import Client
 
     client = Client()
-    client.delay_range = [
-        settings.scan_min_delay_seconds,
-        settings.scan_max_delay_seconds,
-    ]
     client.challenge_code_handler = challenge_handler
     # Resilience hook (instagrapi best-practice): self-heal a dead session with a
     # device-preserving relogin; re-raise throttle/feedback so callers back off.
@@ -81,6 +79,12 @@ def build_client(settings: Settings, challenge_handler: ChallengeHandler) -> Cli
             client.load_settings(session_path)
             logger.info("loaded IG session (device+cookies) from %s", session_path)
 
+    # No silent transport-level retries (they re-send a 429 behind our back); the
+    # guard decides when Instagram may be asked again.
+    client.set_retry_config(session_retry_total=0)
+    # Every HTTP request now goes through the guard: budget, cooldown, pacing
+    # (replaces instagrapi's own uniform delay_range) and the process-wide lock.
+    get_guard(settings).install(client)
     return client
 
 

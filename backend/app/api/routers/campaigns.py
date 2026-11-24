@@ -22,6 +22,7 @@ from app.application import campaign_sender
 from app.application.dto import UserView
 from app.application.use_cases import ListUsersUseCase
 from app.domain.traffic_light import TrafficLight
+from app.infrastructure.config.settings import get_settings
 from app.infrastructure.instagram.base import InstagramSource
 from app.infrastructure.instagram.errors import InstagramError
 from app.infrastructure.persistence import models
@@ -188,12 +189,14 @@ def create_campaign(
         daily_cap=params.daily_cap,
         hour_start=params.hour_start,
         hour_end=params.hour_end,
-        sent_today_date=now.date().isoformat(),
+        # The daily cap counts Argentina-local days (see campaign_sender).
+        sent_today_date=now.astimezone(get_settings().local_tz()).date().isoformat(),
         created_at=now,
     )
     session.add(campaign)
     session.commit()
     session.refresh(campaign)
+    assert campaign.id is not None
 
     for u in reds:
         session.add(
@@ -206,7 +209,6 @@ def create_campaign(
         )
     session.commit()
 
-    assert campaign.id is not None
     campaign_sender.start(campaign.id)
     return _to_out(session, campaign)
 

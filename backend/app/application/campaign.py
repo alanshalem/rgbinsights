@@ -16,9 +16,9 @@ class SendParams:
 
     delay_min: int  # seconds between sends (lower bound)
     delay_max: int  # seconds between sends (upper bound)
-    daily_cap: int  # max sends per calendar day
-    hour_start: int  # active window start hour [0..24)
-    hour_end: int  # active window end hour (exclusive, 1..24)
+    daily_cap: int  # max sends per calendar day (Argentina local)
+    hour_start: int  # active window start hour [0..24), Argentina local time
+    hour_end: int  # active window end hour (exclusive, 1..24), Argentina local time
 
 
 # Selectable presets, ordered from safest. "custom" lets the UI tune each knob.

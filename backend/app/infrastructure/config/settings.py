@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import timedelta, timezone
 from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -29,14 +30,38 @@ class Settings(BaseSettings):
     ig_locale: str = "es_AR"
     ig_timezone_offset: int = -10800  # seconds from UTC (AR = UTC-3)
 
+    def local_tz(self) -> timezone:
+        """The account's local time (campaign hours, daily caps, budget windows).
+
+        A fixed offset on purpose: it is the same timezone we report to Instagram,
+        Argentina has no DST, and Windows ships no tz database for zoneinfo.
+        """
+        return timezone(timedelta(seconds=self.ig_timezone_offset))
+
     database_url: str = "sqlite:///./rgb.db"
 
-    # Rate limiting / good behaviour.
-    scan_min_delay_seconds: float = 1.0
-    scan_max_delay_seconds: float = 3.0
-    # Per-operation request cap (anti-runaway). Reset before each op; high enough
-    # that enriching a few hundred profiles in one run doesn't trip it.
-    scan_max_requests: int = 1500
+    # Human pacing before EVERY Instagram HTTP request (pages included). Each gap
+    # is jittered between these bounds (never faster on average than their
+    # midpoint), with an occasional longer "distraction" pause on top.
+    scan_min_delay_seconds: float = 2.0
+    scan_max_delay_seconds: float = 6.0
+    # A long rest every N requests, like a person putting the phone down.
+    ig_rest_every_requests: int = 25
+    ig_rest_min_seconds: float = 45.0
+    ig_rest_max_seconds: float = 150.0
+
+    # Real request budget: every HTTP request to Instagram counts (each page of
+    # followers/comments too). Windows are Argentina local hours/days; reaching a
+    # cap stops all Instagram work until the window rolls over.
+    ig_max_requests_per_hour: int = 200
+    ig_max_requests_per_day: int = 1500
+    # When Instagram answers 429 / "please wait" / feedback_required, every
+    # Instagram request stops for this long (survives restarts).
+    ig_throttle_cooldown_minutes: float = 60.0
+    # Only one Instagram operation runs at a time; others wait this long at most.
+    ig_lock_wait_seconds: float = 600.0
+    # Breaker/cooldown/budget state (a small JSON file, survives restarts).
+    ig_guard_file: str = "ig_guard.json"
 
     # When true (default), the app uses FakeInstagramSource and never touches
     # Instagram. Set to false once credentials are filled in .env.

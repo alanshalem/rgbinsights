@@ -1,0 +1,286 @@
+"""The campaign send loop (S3 pause rules, S6 Argentina time).
+
+Runs `_run` synchronously against an in-memory DB with a stub source; sleeps
+and activity logging are stubbed so nothing waits or touches the real DB/IG.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Iterator
+from datetime import UTC, datetime
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
+
+import pytest
+from app.application import campaign_sender, tasks
+from app.infrastructure.config.settings import Settings
+from app.infrastructure.instagram.errors import (
+    ChallengeRequiredError,
+    IgBusyError,
+    InstagramError,
+    IpBlockedError,
+    LoginRequiredError,
+    RateLimitedError,
+    RecipientUnavailableError,
+    SendBlockedError,
+    SendRetryableError,
+)
+from app.infrastructure.instagram.guard import IgGuard
+from app.infrastructure.instagram.instagrapi_source import InstagrapiInstagramSource
+from app.infrastructure.persistence import models
+from instagrapi.exceptions import ChallengeRequired
+from sqlalchemy.engine import Engine
+from sqlalchemy.pool import StaticPool
+from sqlmodel import Session, SQLModel, create_engine, select
+
+NOON_AR = datetime(2026, 11, 24, 15, 0, tzinfo=UTC)  # 12:00 in Argentina
+
+
+class StubSource:
+    """Raises the queued errors in order, then sends fine."""
+
+    def __init__(self, *errors: Exception) -> None:
+        self.errors = list(errors)
+        self.attempts: list[str] = []
+        self.sent: list[tuple[str, str]] = []
+
+    def send_dm(self, user_pk: str, text: str) -> None:
+        self.attempts.append(user_pk)
+        if self.errors:
+            raise self.errors.pop(0)
+        self.sent.append((user_pk, text))
+
+
+class Harness:
+    def __init__(self, engine: Engine, monkeypatch: pytest.MonkeyPatch) -> None:
+        self.engine = engine
+        self.monkeypatch = monkeypatch
+        self.sleeps: list[float] = []
+        self.logs: list[tuple[str, str, str]] = []
+        self.now = NOON_AR
+
+    def run(self, source: StubSource | InstagrapiInstagramSource) -> None:
+        self.monkeypatch.setattr(campaign_sender, "get_shared_source", lambda _: source)
+        campaign_sender._run(1)
+
+    def campaign(self) -> models.Campaign:
+        with Session(self.engine) as s:
+            row = s.get(models.Campaign, 1)
+            assert row is not None
+            return row
+
+    def targets(self) -> list[models.CampaignTarget]:
+        with Session(self.engine) as s:
+            return list(s.exec(select(models.CampaignTarget)).all())
+
+
+@pytest.fixture
+def harness(monkeypatch: pytest.MonkeyPatch) -> Iterator[Harness]:
+    engine = create_engine(
+        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
+    )
+    SQLModel.metadata.create_all(engine)
+    h = Harness(engine, monkeypatch)
+
+    def fake_sleep(campaign_id: int, seconds: float) -> bool:
+        h.sleeps.append(seconds)
+        return seconds == campaign_sender._IDLE_SECONDS  # stop when it would idle-wait
+
+    monkeypatch.setattr(campaign_sender, "engine", engine)
+    monkeypatch.setattr(campaign_sender, "get_settings", lambda: Settings(_env_file=None))
+    monkeypatch.setattr(campaign_sender, "_IDLE_SECONDS", 60, raising=False)
+    monkeypatch.setattr(campaign_sender, "_sleep_or_stopped", fake_sleep)
+    monkeypatch.setattr(campaign_sender, "_utcnow", lambda: h.now, raising=False)
+    monkeypatch.setattr(tasks, "log_activity", lambda *args: h.logs.append(args))
+    yield h
+    engine.dispose()
+
+
+def _seed(
+    h: Harness,
+    targets: int = 2,
+    hours: tuple[int, int] = (0, 24),
+    **campaign: Any,
+) -> None:
+    with Session(h.engine) as s:
+        s.add(
+            models.Campaign(
+                id=1,
+                event_id=1,
+                status="running",
+                templates="[]",
+                delay_min=10,
+                delay_max=10,
+                daily_cap=25,
+                hour_start=hours[0],
+                hour_end=hours[1],
+                sent_today_date=campaign.pop("sent_today_date", "2026-11-24"),
+                created_at=campaign.pop("created_at", datetime(2026, 11, 1, tzinfo=UTC)),
+                **campaign,
+            )
+        )
+        for i in range(1, targets + 1):
+            s.add(
+                models.CampaignTarget(
+                    campaign_id=1, user_pk=str(i), username=f"u{i}", message=f"m{i}"
+                )
+            )
+        s.commit()
+
+
+# -- previous behaviour that must still hold -------------------------------
+
+
+def test_send_loop_sends_every_target_then_finishes(harness: Harness) -> None:
+    _seed(harness)
+    source = StubSource()
+
+    harness.run(source)
+
+    assert source.sent == [("1", "m1"), ("2", "m2")]
+    assert harness.campaign().status == "done"
+    assert harness.campaign().sent_today == 2
+    assert [t.status for t in harness.targets()] == ["sent", "sent"]
+
+
+@pytest.mark.parametrize(
+    "error",
+    [SendBlockedError("action-block"), ChallengeRequiredError("challenge")],
+    ids=["send_blocked", "challenge"],
+)
+def test_action_block_still_blocks_the_campaign(harness: Harness, error: Exception) -> None:
+    _seed(harness)
+    source = StubSource(error)
+
+    harness.run(source)
+
+    assert source.attempts == ["1"]
+    assert harness.campaign().status == "blocked"
+    assert harness.campaign().error == str(error)
+    assert [t.status for t in harness.targets()] == ["pending", "pending"]
+
+
+def test_recipient_unavailable_skips_only_that_target(harness: Harness) -> None:
+    _seed(harness)
+    source = StubSource(RecipientUnavailableError("@1 no acepta mensajes nuevos"))
+
+    harness.run(source)
+
+    assert [t.status for t in harness.targets()] == ["failed", "sent"]
+    assert harness.campaign().status == "done"
+
+
+# -- S3: account-level failures pause the campaign -------------------------
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        LoginRequiredError("La sesión venció."),
+        IpBlockedError("Instagram marcó tu conexión (IP)."),
+        RateLimitedError("Instagram pidió frenar."),
+    ],
+    ids=["login", "ip_blocked", "rate_limited"],
+)
+def test_account_level_failure_pauses_with_reason(harness: Harness, error: Exception) -> None:
+    _seed(harness)
+    source = StubSource(error)
+
+    harness.run(source)
+
+    assert source.attempts == ["1"]  # no next target, no re-login per target
+    campaign = harness.campaign()
+    assert campaign.status == "paused"
+    assert campaign.error == str(error)
+    assert [t.status for t in harness.targets()] == ["pending", "pending"]
+    assert harness.logs and "pausada" in harness.logs[-1][2]
+
+
+@pytest.mark.parametrize(
+    "error",
+    [SendRetryableError("timeout"), InstagramError("Instagram falló la operación")],
+    ids=["retryable", "generic"],
+)
+def test_transient_failure_marks_target_and_keeps_pacing(
+    harness: Harness, error: Exception
+) -> None:
+    _seed(harness)
+    source = StubSource(error)
+
+    harness.run(source)
+
+    assert [t.status for t in harness.targets()] == ["failed", "sent"]
+    assert harness.campaign().status == "done"
+    assert harness.sleeps == [10, 10]  # the per-send gap also follows a failed attempt
+
+
+def test_busy_instagram_waits_and_retries_the_same_target(harness: Harness) -> None:
+    _seed(harness, targets=1)
+    source = StubSource(IgBusyError("Instagram está ocupado"))
+
+    harness.run(source)
+
+    assert source.attempts == ["1", "1"]
+    assert [t.status for t in harness.targets()] == ["sent"]
+    assert harness.campaign().status == "done"
+
+
+# -- S6: Argentina local time ----------------------------------------------
+
+
+def test_active_hours_are_argentina_local(harness: Harness) -> None:
+    _seed(harness, targets=1, hours=(11, 23))
+    harness.now = datetime(2026, 11, 25, 1, 30, tzinfo=UTC)  # 22:30 in Argentina
+    source = StubSource()
+
+    harness.run(source)
+
+    assert source.sent == [("1", "m1")]
+
+
+def test_outside_argentina_hours_does_not_send(harness: Harness) -> None:
+    _seed(harness, targets=1, hours=(11, 23))
+    harness.now = datetime(2026, 11, 24, 13, 30, tzinfo=UTC)  # 10:30 in Argentina
+    source = StubSource()
+
+    harness.run(source)
+
+    assert source.attempts == []
+    assert harness.sleeps == [60]
+
+
+def test_daily_counter_rolls_over_at_argentina_midnight(harness: Harness) -> None:
+    _seed(harness, targets=1, sent_today=5, sent_today_date="2026-11-24")
+    harness.now = datetime(2026, 11, 25, 1, 30, tzinfo=UTC)  # still the 24th in Argentina
+    harness.run(StubSource())
+
+    campaign = harness.campaign()
+    assert campaign.sent_today == 6
+    assert campaign.sent_today_date == "2026-11-24"
+
+
+def test_raw_challenge_from_instagrapi_blocks_the_campaign(
+    harness: Harness, tmp_path: Path
+) -> None:
+    """End to end through the real adapter: instagrapi's own ChallengeRequired on
+    direct_send must stop the campaign, not burn targets one by one."""
+
+    def challenged(*args: Any, **kwargs: Any) -> None:
+        raise ChallengeRequired("challenge_required")
+
+    settings = Settings(
+        _env_file=None,
+        use_fake_instagram=False,
+        ig_source="instagrapi",
+        ig_guard_file=str(tmp_path / "ig_guard.json"),
+        ig_session_file=str(tmp_path / "session.json"),
+    )
+    source = InstagrapiInstagramSource(settings, guard=IgGuard(settings, sleep=lambda _: None))
+    source._client = SimpleNamespace(user_id=1, direct_send=challenged)
+    _seed(harness)
+
+    harness.run(source)
+
+    assert harness.campaign().status == "blocked"
+    assert [t.status for t in harness.targets()] == ["pending", "pending"]

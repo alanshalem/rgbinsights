@@ -15,3 +15,9 @@ def test_ig_status_connected_in_demo(session: Session) -> None:
     assert out.state == "connected"
     assert out.pk  # fake account pk
     assert out.last_ok_at is not None  # recorded on a successful check
+
+
+def test_ig_status_demo_has_no_cooldown_or_error(session: Session) -> None:
+    out = ig_status(session=session, settings=_fake_settings())
+    assert out.cooldown_until is None
+    assert out.last_error is None

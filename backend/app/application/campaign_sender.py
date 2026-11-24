@@ -1,9 +1,10 @@
 """Background DM sender for a campaign.
 
-Runs one campaign on its own thread, sending through the shared browser source
+Runs one campaign on its own thread, sending through the shared Instagram source
 with strong good-behaviour rails: randomized delays, a per-day cap, an active-
-hours window, and an immediate stop the moment Instagram pushes back. State
-lives in the DB so a campaign survives an app restart (resume_all on startup).
+hours window (Argentina local time), and an immediate stop the moment Instagram
+pushes back or the account/session/IP is in trouble. State lives in the DB so a
+campaign survives an app restart (resume_all on startup).
 
 Sending bulk DMs is the highest-risk IG action; these rails reduce — not
 eliminate — the ban risk.
@@ -15,7 +16,7 @@ import logging
 import random
 import threading
 import time
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, tzinfo
 
 from sqlmodel import Session, select
 
@@ -24,7 +25,11 @@ from app.application import tasks
 from app.infrastructure.config.settings import get_settings
 from app.infrastructure.instagram.errors import (
     ChallengeRequiredError,
+    IgBusyError,
     InstagramError,
+    IpBlockedError,
+    LoginRequiredError,
+    RateLimitedError,
     SendBlockedError,
 )
 from app.infrastructure.instagram.shared import get_shared_source
@@ -36,6 +41,19 @@ logger = logging.getLogger(__name__)
 _threads: dict[int, threading.Thread] = {}
 _lock = threading.Lock()
 _CHUNK_SECONDS = 3.0
+_IDLE_SECONDS = 60  # re-check interval outside active hours / over the daily cap
+_BUSY_SECONDS = 30  # another Instagram operation is running: wait, then retry
+
+# Instagram pushed back on sending: "blocked" (the UI explains the action-block).
+_BLOCK_ERRORS = (SendBlockedError, ChallengeRequiredError)
+# The account/session/IP or a safety rail can't send right now: "paused" with the
+# reason. The same target stays pending, so resuming retries it — no target is
+# burned and no new login is attempted per target.
+_PAUSE_ERRORS = (LoginRequiredError, IpBlockedError, RateLimitedError)
+
+
+def _utcnow() -> datetime:
+    return datetime.now(UTC)
 
 
 def start(campaign_id: int) -> None:
@@ -80,6 +98,7 @@ def _sleep_or_stopped(campaign_id: int, seconds: float) -> bool:
 
 def _run(campaign_id: int) -> None:
     settings = get_settings()
+    tz = settings.local_tz()
     source = get_shared_source(settings.resolved_source())
 
     while True:
@@ -88,15 +107,14 @@ def _run(campaign_id: int) -> None:
             if campaign is None or campaign.status != "running":
                 return
 
-            _reset_daily_counter(campaign)
-
-            now = datetime.now(UTC)
-            day_index = (now.date() - campaign.created_at.date()).days
+            now = _utcnow().astimezone(tz)  # hours and days are Argentina local
+            _reset_daily_counter(campaign, now.date())
+            day_index = (now.date() - _local_date(campaign.created_at, tz)).days
             cap = camp.warmup_cap(campaign.daily_cap, day_index)
             if not _within_active_hours(campaign, now) or campaign.sent_today >= cap:
                 session.add(campaign)
                 session.commit()
-                if _sleep_or_stopped(campaign_id, 60):
+                if _sleep_or_stopped(campaign_id, _IDLE_SECONDS):
                     return
                 continue
 
@@ -125,42 +143,58 @@ def _run(campaign_id: int) -> None:
         try:
             source.send_dm(user_pk, message)
             outcome, error = "sent", None
-        except (SendBlockedError, ChallengeRequiredError) as exc:
-            _mark_blocked(campaign_id, str(exc))
-            tasks.log_activity("campaign", "error", f"campaña frenada: {exc}")
-            logger.warning("campaign %d blocked: %s", campaign_id, exc)
+        except IgBusyError:
+            # Another operation holds Instagram; same target, a bit later.
+            if _sleep_or_stopped(campaign_id, _BUSY_SECONDS):
+                return
+            continue
+        except _BLOCK_ERRORS as exc:
+            _halt(campaign_id, "blocked", exc, "campaña frenada")
+            return
+        except _PAUSE_ERRORS as exc:
+            _halt(campaign_id, "paused", exc, "campaña pausada")
             return
         except InstagramError as exc:
+            # This target only (recipient closed DMs, network hiccup): skip it.
             outcome, error = "failed", str(exc)
 
         _record_send(campaign_id, target.id, outcome, error)
-        if outcome == "sent" and _sleep_or_stopped(campaign_id, delay):
+        # Keep the gap after a failed attempt too: it still reached Instagram.
+        if _sleep_or_stopped(campaign_id, delay):
             return
 
 
-def _reset_daily_counter(campaign: models.Campaign) -> None:
-    today = datetime.now(UTC).date().isoformat()
-    if campaign.sent_today_date != today:
+def _local_date(when: datetime, tz: tzinfo) -> date:
+    """Local calendar date of a stored timestamp (naive values are UTC)."""
+    aware = when if when.tzinfo is not None else when.replace(tzinfo=UTC)
+    return aware.astimezone(tz).date()
+
+
+def _reset_daily_counter(campaign: models.Campaign, today: date) -> None:
+    if campaign.sent_today_date != today.isoformat():
         campaign.sent_today = 0
-        campaign.sent_today_date = today
+        campaign.sent_today_date = today.isoformat()
 
 
-def _within_active_hours(campaign: models.Campaign, now: datetime) -> bool:
-    return campaign.hour_start <= now.hour < campaign.hour_end
+def _within_active_hours(campaign: models.Campaign, now_local: datetime) -> bool:
+    return campaign.hour_start <= now_local.hour < campaign.hour_end
 
 
-def _mark_blocked(campaign_id: int, error: str) -> None:
+def _halt(campaign_id: int, status: str, exc: Exception, label: str) -> None:
+    """Stop the campaign with a persisted status + reason the UI shows."""
     with Session(engine) as session:
         campaign = session.get(models.Campaign, campaign_id)
         if campaign is not None:
-            campaign.status = "blocked"
-            campaign.error = error
+            campaign.status = status
+            campaign.error = str(exc)
             session.add(campaign)
             session.commit()
+    tasks.log_activity("campaign", "error", f"{label}: {exc}")
+    logger.warning("campaign %d %s: %s", campaign_id, status, exc)
 
 
 def _record_send(campaign_id: int, target_id: int | None, outcome: str, error: str | None) -> None:
-    now = datetime.now(UTC)
+    now = _utcnow()
     with Session(engine) as session:
         campaign = session.get(models.Campaign, campaign_id)
         target = session.get(models.CampaignTarget, target_id) if target_id is not None else None

@@ -4,8 +4,9 @@ instagrapi is imported lazily so the app (and FakeInstagramSource) boots even
 when the package isn't installed. This is the only module that knows about
 instagrapi's models and exceptions; everything else sees domain entities.
 
-Good-behaviour rules live here: session reuse (login once), randomized delays
-between requests, and a hard cap on requests per run.
+Good-behaviour rules: session reuse (login once) lives here; every port method
+runs as one IgGuard operation (guard.py), which serializes Instagram access and
+enforces the login breaker, cooldown, request budget and human pacing.
 """
 
 from __future__ import annotations
@@ -38,52 +39,58 @@ from app.infrastructure.instagram.errors import (
     SendBlockedError,
     SendRetryableError,
 )
+from app.infrastructure.instagram.guard import IgGuard, get_guard
 from app.infrastructure.instagram.session import build_client, take_relogin_failure
-from app.infrastructure.instagram.throttle import RequestBudget
 
 if TYPE_CHECKING:
     from instagrapi import Client
 
 logger = logging.getLogger(__name__)
 
+
 def _adapts[F: Callable[..., Any]](fn: F) -> F:
-    """Wrap a port method so any raw instagrapi/network exception becomes an
-    InstagramError (our own errors already pass through). Defined before the
-    class because decorators are evaluated when the class body runs.
+    """Run a port method as one guarded Instagram operation, turning any raw
+    instagrapi/network exception into an InstagramError (our own errors already
+    pass through). Defined before the class because decorators are evaluated
+    when the class body runs.
     """
 
     @functools.wraps(fn)
-    def wrapper(*args: Any, **kwargs: Any) -> Any:
-        source = args[0] if args else None
-        if (client := getattr(source, "_client", None)) is not None:
-            take_relogin_failure(client)  # discard a stale record from an earlier call
-        try:
-            return fn(*args, **kwargs)
-        except Exception as exc:  # noqa: BLE001 — normalised at the adapter boundary
-            err = _to_instagram_error(exc)
-            # instagrapi may swallow a failed relogin and report a misleading
-            # fallback error (e.g. "not found"); the real cause wins.
-            client = getattr(source, "_client", None)
-            if client is not None and (failure := take_relogin_failure(client)) is not None:
-                err = _to_instagram_error(failure)
-            if isinstance(err, (LoginRequiredError, ChallengeRequiredError)) and hasattr(
-                source, "_client"
-            ):
-                # The client's cookies are gone; log in from scratch next time.
-                source._client = None  # type: ignore[union-attr]
-            if err is exc:
-                raise
-            raise err from exc
+    def wrapper(source: InstagrapiInstagramSource, *args: Any, **kwargs: Any) -> Any:
+        with source._guard.operation():
+            return _call_adapted(fn, source, *args, **kwargs)
 
     return wrapper  # type: ignore[return-value]
+
+
+def _call_adapted(
+    fn: Callable[..., Any], source: InstagrapiInstagramSource, *args: Any, **kwargs: Any
+) -> Any:
+    if (client := source._client) is not None:
+        take_relogin_failure(client)  # discard a stale record from an earlier call
+    try:
+        return fn(source, *args, **kwargs)
+    except Exception as exc:  # noqa: BLE001 — normalised at the adapter boundary
+        err = _to_instagram_error(exc)
+        # instagrapi may swallow a failed relogin and report a misleading
+        # fallback error (e.g. "not found"); the real cause wins.
+        client = source._client
+        if client is not None and (failure := take_relogin_failure(client)) is not None:
+            err = _to_instagram_error(failure)
+        if isinstance(err, (LoginRequiredError, ChallengeRequiredError)):
+            # The client's cookies are gone; log in from scratch next time.
+            source._client = None
+        if err is exc:
+            raise
+        raise err from exc
 
 
 class InstagrapiInstagramSource:
     """Adapter over instagrapi.Client implementing the InstagramSource port."""
 
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, settings: Settings, guard: IgGuard | None = None) -> None:
         self._settings = settings
-        self._budget = RequestBudget(settings.scan_max_requests)
+        self._guard = guard or get_guard(settings)
         self._client: Client | None = None
 
     # -- login / session -------------------------------------------------
@@ -98,6 +105,9 @@ class InstagrapiInstagramSource:
         Every success is persisted to session.json so the next start reuses it and
         the account keeps a stable device. This is what makes the login survive
         restarts and self-heal on expiry.
+
+        Always runs inside a guard operation: a failure that reached Instagram
+        opens the login breaker, a success closes it.
         """
         if self._client is not None:
             return self._client
@@ -116,8 +126,7 @@ class InstagrapiInstagramSource:
         # 1. Reuse a saved session (build_client already loaded it).
         if session_path.exists() and self._session_valid(client):
             logger.info("reusing saved IG session")
-            self._client = client
-            return client
+            return self._logged_in(client)
 
         # 2. Bootstrap from a browser sessionid.
         sessionid = self._settings.ig_sessionid.strip()
@@ -125,8 +134,7 @@ class InstagrapiInstagramSource:
             try:
                 client.login_by_sessionid(sessionid)
                 self._persist(client, session_path)
-                self._client = client
-                return client
+                return self._logged_in(client)
             except (ChallengeRequired, LoginRequired) as exc:
                 errors.append(f"sessionid vencido/rechazado: {exc}")
             except Exception as exc:  # noqa: BLE001 — surfaced below as handled
@@ -144,8 +152,7 @@ class InstagrapiInstagramSource:
                     verification_code=verification_code,
                 )
                 self._persist(client, session_path)
-                self._client = client
-                return client
+                return self._logged_in(client)
             except TwoFactorRequired as exc:
                 raise ChallengeRequiredError(
                     "IG pide 2FA. Cargá IG_2FA_SECRET en .env para resolverlo solo."
@@ -163,6 +170,11 @@ class InstagrapiInstagramSource:
 
         detail = "; ".join(errors) if errors else "no hay sessionid ni user/pass en .env"
         raise LoginRequiredError(f"no se pudo iniciar sesión de Instagram ({detail})")
+
+    def _logged_in(self, client: Client) -> Client:
+        self._client = client
+        self._guard.login_ok()
+        return client
 
     def _session_valid(self, client: Client) -> bool:
         """Cheap authed probe: True if the loaded session still works.
@@ -213,24 +225,51 @@ class InstagrapiInstagramSource:
     # -- port methods ----------------------------------------------------
 
     def reset_budget(self) -> None:
-        self._budget.reset()
+        """No-op: the real budget is per hour/day across all operations (guard)."""
+
+    def cached_user_pk(self) -> str | None:
+        """Our pk if a logged-in client is in memory — never touches the network."""
+        return str(self._client.user_id) if self._client is not None else None
+
+    def connect_sessionid(self, sessionid: str) -> str:
+        """Explicit user action: adopt a sessionid pasted from a real browser.
+
+        Validated with one cheap probe and persisted to session.json. Fresh
+        credentials may skip an open login breaker once (never an IP block or
+        a cooldown). On failure the current client, if any, is kept.
+        """
+        with self._guard.operation(fresh_credentials=True):
+            client = build_client(self._settings, self._challenge_code_handler)
+            try:
+                client.login_by_sessionid(sessionid)
+                # login_by_sessionid only sets the cookie; probe once so a blocked
+                # account (403) or a dead cookie surfaces here as a clear message.
+                client.account_info()
+            except InstagramError:
+                raise  # already classified (challenge handler / guard rails)
+            except Exception as exc:  # noqa: BLE001 — classify 403/IP-block/expired session
+                raise classify_login_error(exc) from exc
+            self._persist(client, Path(self._settings.ig_session_file))
+            return str(self._logged_in(client).user_id)
 
     def send_dm(self, user_pk: str, text: str) -> None:
+        with self._guard.operation():
+            self._send_dm(user_pk, text)
+
+    def _send_dm(self, user_pk: str, text: str) -> None:
         from instagrapi.exceptions import (
-            BadPassword,
+            ClientForbiddenError,
             ClientThrottledError,
             DirectMessageRequestsDisabled,
             FeedbackRequired,
-            LoginRequired,
             PleaseWaitFewMinutes,
-            ProxyAddressIsBlocked,
             RateLimitError,
             SentryBlock,
         )
 
-        # No self._budget.spend() here: DM sends are governed by the campaign
-        # sender's own rails (per-send delay + daily cap). The scan budget's
-        # process-wide cap must NOT leak in and fake an Instagram block.
+        # Besides the campaign's own rails (per-send delay + daily cap), the send's
+        # HTTP requests count in the guard's hourly/daily budget like any other.
+        # Hitting it raises RateLimitedError (a pause), never a fake action-block.
         try:
             recipient = int(user_pk)
         except (TypeError, ValueError) as exc:
@@ -250,27 +289,39 @@ class InstagrapiInstagramSource:
             raise RecipientUnavailableError(
                 f"@{user_pk} no acepta mensajes nuevos — se saltea"
             ) from exc
-        except (BadPassword, ProxyAddressIsBlocked, LoginRequired) as exc:
-            # IG rejected the (re)login triggered by the send, not the send itself.
-            # Classify IP-block vs expired-session so the UI guides the right fix.
-            raise classify_login_error(exc) from exc
-        except (LoginRequiredError, IpBlockedError) as exc:
-            # The relogin hook already classified a failed relogin. A dead session
-            # leaves the client without cookies, so log in from scratch next time.
-            if isinstance(exc, LoginRequiredError):
-                self._client = None
+        except InstagramError as exc:
+            # Already classified: a failed relogin (hook) or a guard rail.
+            self._drop_dead_session(exc)
             raise
-        except (
-            FeedbackRequired,
-            SentryBlock,
-            PleaseWaitFewMinutes,
-            ClientThrottledError,
-            RateLimitError,
-        ) as exc:
-            # A genuine Instagram push-back on sending — stop and wait.
-            raise SendBlockedError(_send_block_message(exc)) from exc
-        except Exception as exc:  # noqa: BLE001 — network/timeout: transient, not a block
+        except Exception as exc:  # noqa: BLE001 — every raw failure is classified below
+            if _is_session_error(exc):
+                # The session/account/IP is the problem (expired, challenge or
+                # checkpoint, IP block) — never a per-target failure. Classify it so
+                # the campaign pauses/blocks and the UI guides the right fix.
+                err = classify_login_error(exc)
+                self._drop_dead_session(err)
+                raise err from exc
+            if isinstance(
+                exc,
+                (
+                    FeedbackRequired,
+                    SentryBlock,
+                    PleaseWaitFewMinutes,
+                    ClientThrottledError,
+                    RateLimitError,
+                    ClientForbiddenError,  # a 403 on the send endpoint = action-block
+                ),
+            ):
+                # A genuine Instagram push-back on sending — stop and wait.
+                raise SendBlockedError(_send_block_message(exc)) from exc
+            # Network/timeout: transient, not a block.
             raise SendRetryableError(f"envío falló (reintentable): {exc}") from exc
+
+    def _drop_dead_session(self, err: InstagramError) -> None:
+        """A dead or challenged session leaves the client unusable: log in from
+        scratch next time (an IP block keeps the client — the session is fine)."""
+        if isinstance(err, (LoginRequiredError, ChallengeRequiredError)):
+            self._client = None
 
     @_adapts
     def get_friendships(self, user_pks: list[str]) -> dict[str, Friendship]:
@@ -278,7 +329,6 @@ class InstagrapiInstagramSource:
         # to know "te sigue" we read our own followers/following lists and test
         # membership. Heavy + paginated — this is the slow, opt-in enrich step.
         client = self._login()
-        self._budget.spend()
         our_id = str(client.user_id)
         # amount=0 fetches the whole graph (correct, but the heaviest call). On a
         # huge account set relationship_fetch_max>0 to trade completeness for far
@@ -300,7 +350,6 @@ class InstagrapiInstagramSource:
     @_adapts
     def get_profile(self, username: str) -> ProfileInfo:
         client = self._login()
-        self._budget.spend()
         u = client.user_info_by_username(username)
         return ProfileInfo(
             pk=str(u.pk),
@@ -324,7 +373,6 @@ class InstagrapiInstagramSource:
         from instagrapi.exceptions import ClientError, MediaNotFound
 
         client = self._login()
-        self._budget.spend()
         try:
             media_pk = client.media_pk_from_url(url)
             media = client.media_info(media_pk)
@@ -339,20 +387,17 @@ class InstagrapiInstagramSource:
     @_adapts
     def get_recent_posts(self, limit: int) -> list[Post]:
         client = self._login()
-        self._budget.spend()
         medias = client.user_medias(client.user_id, amount=limit)
         return [_to_post(m) for m in medias]
 
     @_adapts
     def get_likers(self, media_pk: str) -> list[IgUser]:
         client = self._login()
-        self._budget.spend()
         return [_to_user(u) for u in client.media_likers(media_pk)]
 
     @_adapts
     def get_comments(self, media_pk: str) -> list[Comment]:
         client = self._login()
-        self._budget.spend()
         comments: list[Comment] = []
         # Cap the fetch: without amount instagrapi pages EVERY comment (hundreds
         # of private-API requests on a viral post). scan_comments_limit is plenty.
@@ -371,7 +416,6 @@ class InstagrapiInstagramSource:
         self, progress: object | None = None, since: datetime | None = None
     ) -> list[DmThread]:
         client = self._login()
-        self._budget.spend()
         threads: list[DmThread] = []
         for t in client.direct_threads(amount=self._settings.recent_posts_limit):
             other = _pick_other_user(t, str(client.user_id))
@@ -420,7 +464,11 @@ def classify_login_error(exc: Exception) -> InstagramError:
             "lo arregla. Probá desde otra red (datos del celu / otra wifi) o esperá "
             "unas horas antes de reintentar."
         )
-    if isinstance(exc, (ChallengeRequired, TwoFactorRequired)):
+    # A checkpoint (often a 400 "checkpoint_required" with no typed exception) is a
+    # challenge too: the account must be verified before anything else works.
+    if isinstance(exc, (ChallengeRequired, TwoFactorRequired)) or any(
+        k in s for k in ("challenge", "checkpoint")
+    ):
         return ChallengeRequiredError(
             "Instagram pidió verificación (challenge). Entrá a la cuenta desde el celu, "
             "confirmá que sos vos, y volvé a pegar el sessionid."
@@ -459,26 +507,35 @@ def _to_instagram_error(exc: Exception) -> InstagramError:
     """
     if isinstance(exc, InstagramError):
         return exc
-    if isinstance(exc, _session_error_types()):
-        return classify_login_error(exc)
-    s = str(exc).lower()
-    login_markers = (
-        "login_required",
-        "login required",
-        "not logged in",
-        "challenge",
-        "redirect",
-        "blacklist",
-        "ip address",
-        "change your ip",
-        "two_factor",
-        "csrf",
-    )
-    if any(k in s for k in login_markers):
+    if _is_session_error(exc):
         return classify_login_error(exc)
     return InstagramError(f"Instagram falló la operación: {exc}")
 
 
+_LOGIN_MARKERS = (
+    "login_required",
+    "login required",
+    "not logged in",
+    "challenge",
+    "checkpoint",
+    "redirect",
+    "blacklist",
+    "ip address",
+    "change your ip",
+    "two_factor",
+    "csrf",
+)
+
+
+def _is_session_error(exc: Exception) -> bool:
+    """True if the failure is about the session/login/IP, not the request itself:
+    a typed instagrapi session error, or a generic one whose message says so."""
+    from instagrapi.exceptions import ProxyAddressIsBlocked
+
+    if isinstance(exc, (*_session_error_types(), ProxyAddressIsBlocked)):
+        return True
+    s = str(exc).lower()
+    return any(k in s for k in _LOGIN_MARKERS)
 
 
 def _session_error_types() -> tuple[type[Exception], ...]:

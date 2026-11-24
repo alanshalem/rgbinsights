@@ -32,7 +32,16 @@ class IpBlockedError(InstagramError):
 
 
 class RateLimitedError(InstagramError):
-    pass
+    """A safety rail stopped the call: request budget spent, Instagram asked us
+    to slow down (cooldown), or another rail is open. Nothing was sent."""
+
+
+class IgBusyError(RateLimitedError):
+    """Another Instagram operation held the process-wide lock for too long.
+
+    Not a problem with the account: the caller may simply retry later (the
+    campaign sender waits and retries the same target).
+    """
 
 
 class SendBlockedError(InstagramError):

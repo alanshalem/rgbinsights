@@ -88,6 +88,12 @@ class FakeInstagramSource:
     def current_user_pk(self) -> str:
         return _OUR_PK
 
+    def cached_user_pk(self) -> str | None:
+        return _OUR_PK
+
+    def connect_sessionid(self, sessionid: str) -> str:
+        return _OUR_PK  # demo: nothing to connect, never touches Instagram
+
     def get_post(self, url: str) -> Post:
         for post in (_POST_A, _POST_B):
             if url.rstrip("/") == post.url.rstrip("/") or post.shortcode in url:

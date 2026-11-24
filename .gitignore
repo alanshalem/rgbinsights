@@ -8,6 +8,10 @@ backend/ig_cookies.json
 # Database
 *.db
 *.db-journal
+*.db-wal
+*.db-shm
+ig_guard.json
+ig_guard.json.tmp
 
 # Cached profile pics (proxied from Instagram's expiring CDN)
 avatar_cache/
