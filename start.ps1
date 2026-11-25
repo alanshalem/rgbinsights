@@ -129,6 +129,12 @@ $reqFile  = "$root\backend\requirements.txt"
 $stamp    = "$root\backend\.venv\.requirements.sha256"
 $reqHash  = (Get-FileHash $reqFile -Algorithm SHA256).Hash
 $prevHash = if (Test-Path $stamp) { (Get-Content $stamp -Raw).Trim() } else { '' }
+# Un .venv creado con otra herramienta (p. ej. uv) puede no traer pip: se lo agregamos.
+if (-not (Test-Path "$root\backend\.venv\Lib\site-packages\pip")) {
+  Info "Agregando pip al entorno virtual..."
+  & $venvPy -m ensurepip --upgrade
+  if ($LASTEXITCODE -ne 0) { Fail "No se pudo agregar pip al entorno virtual (backend\.venv)." }
+}
 if ($venvFresh -or $updated -or ($reqHash -ne $prevHash)) {
   Info "Instalando dependencias de Python..."
   if ($venvFresh) { & $venvPy -m pip install --upgrade pip --disable-pip-version-check }
