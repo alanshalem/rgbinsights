@@ -1,4 +1,5 @@
 import type { Campaign } from '../../api/client';
+import { campaignStatus } from '../../lib/campaign';
 
 export function CampaignProgress({
   c,
@@ -13,33 +14,35 @@ export function CampaignProgress({
 }) {
   const done = c.sent + c.failed;
   const pct = c.total ? Math.round((done / c.total) * 100) : 0;
-  const badge: Record<string, string> = {
-    running: 'text-green',
-    paused: 'text-yellow',
-    blocked: 'text-red',
-    done: 'text-muted',
-  };
+  const st = campaignStatus(c.status);
   return (
     <div className="flex flex-col gap-3 text-sm">
-      <div className="flex items-center gap-2">
-        <span className={`mono font-bold uppercase ${badge[c.status]}`}>{c.status}</span>
-        <span className="mono text-muted">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className={`font-bold uppercase ${st.tone}`}>{st.label}</span>
+        <span className="text-muted">
           {c.sent} enviados · {c.pending} pendientes · {c.failed} fallidos
         </span>
       </div>
-      <div className="h-2 overflow-hidden rounded-full bg-panel-2">
+      <div
+        role="progressbar"
+        aria-label="Avance de la campaña"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={pct}
+        className="h-2 overflow-hidden rounded-full bg-panel-2"
+      >
         <div className="h-full rounded-full bg-green" style={{ width: `${pct}%` }} />
       </div>
-      <p className="mono text-xs text-muted">
-        hoy {c.sent_today}/{c.daily_cap} · 1 cada {c.delay_min}-{c.delay_max}s · {c.hour_start}-
-        {c.hour_end}h
+      <p className="text-xs text-muted">
+        Hoy: {c.sent_today} de {c.daily_cap} · 1 DM cada {c.delay_min}–{c.delay_max} seg · de{' '}
+        {c.hour_start} a {c.hour_end} h (hora argentina)
       </p>
       {c.status === 'blocked' && (
         <div className="rounded-lg border border-yellow/50 bg-yellow/10 px-3 py-2 text-xs text-yellow">
-          <p className="font-semibold">⚠ Instagram frenó el envío (action-block)</p>
-          <p className="mt-1 opacity-90">{c.error}</p>
+          <p className="font-semibold">⚠ Instagram frenó los envíos de DMs</p>
+          {c.error && <p className="mt-1 opacity-90">{c.error}</p>}
           <p className="mt-1 font-medium">
-            No reanudes hasta que pase el bloqueo (12-48h). Reintentar ahora lo alarga.
+            No reanudes hasta que pase el bloqueo (suele durar 12 a 48 h). Probar antes lo alarga.
           </p>
         </div>
       )}
@@ -47,12 +50,16 @@ export function CampaignProgress({
         // Paused by the sender itself (session down, IP block, Instagram asked to
         // slow down): the reason, so it is fixed before resuming.
         <div className="rounded-lg border border-yellow/50 bg-yellow/10 px-3 py-2 text-xs text-yellow">
-          <p className="font-semibold">⏸ Campaña pausada</p>
+          <p className="font-semibold">⏸ La app pausó la campaña para cuidar la cuenta</p>
           <p className="mt-1 opacity-90">{c.error}</p>
           <p className="mt-1 font-medium">
-            Revisá la conexión con Instagram (chip IG) y reanudá cuando esté resuelto.
+            Revisá la conexión con Instagram (chip IG arriba a la derecha) y reanudá cuando esté
+            resuelto.
           </p>
         </div>
+      )}
+      {c.status === 'paused' && !c.error && (
+        <p className="text-xs text-muted">La pausaste vos. Reanudala cuando quieras.</p>
       )}
       <div className="flex gap-2">
         {c.status === 'running' ? (
@@ -76,8 +83,8 @@ export function CampaignProgress({
         )}
       </div>
       <p className="text-xs text-muted">
-        La campaña sigue en segundo plano mientras el backend esté corriendo. Podés cerrar esta
-        ventana.
+        La campaña sigue sola mientras la app esté abierta en tu compu (no cierres la ventana donde
+        corre). Podés cerrar este cuadro.
       </p>
     </div>
   );

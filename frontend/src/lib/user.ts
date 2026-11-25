@@ -45,10 +45,11 @@ export const LIGHT_LABEL: Record<TrafficLight, string> = {
   green: 'Verde',
 };
 
+/** What each color means, in the same words on every screen (and in Ayuda). */
 export const LIGHT_HINT: Record<TrafficLight, string> = {
-  red: 'Sin interacción por DM',
-  yellow: 'Le escribimos, no contestó',
-  green: 'Conversación real por DM',
+  red: 'A escribirle (todavía no hubo DM)',
+  yellow: 'Le escribiste, no contestó',
+  green: 'Te contestó',
 };
 
 /** null = relación no sincronizada todavía. */

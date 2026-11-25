@@ -39,17 +39,22 @@ export function FilterBar({
 }) {
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <div className="flex overflow-hidden rounded-lg border border-border">
+      <div
+        role="group"
+        aria-label="Cómo ver la lista"
+        className="flex overflow-hidden rounded-lg border border-border"
+      >
         {(['board', 'table'] as const).map((v) => (
           <button
             key={v}
             type="button"
             onClick={() => onView(v)}
+            aria-pressed={view === v}
             className={`px-3 py-1.5 text-sm font-medium ${
               view === v ? 'bg-panel-2 text-ink' : 'text-muted hover:text-ink'
             }`}
           >
-            {v === 'board' ? 'Board' : 'Tabla'}
+            {v === 'board' ? 'Tarjetas' : 'Tabla'}
           </button>
         ))}
       </div>
@@ -57,8 +62,9 @@ export function FilterBar({
       <input
         value={search}
         onChange={(e) => onSearch(e.target.value)}
+        type="search"
         placeholder="Buscar @usuario o nombre…"
-        aria-label="Buscar usuario"
+        aria-label="Buscar por @usuario o nombre"
         className={`${INPUT_CLS} placeholder:text-muted`}
       />
 
@@ -84,15 +90,16 @@ export function FilterBar({
         aria-label="Ordenar por"
         className={INPUT_CLS}
       >
-        <option value="status">Orden: estado</option>
-        <option value="fans">Orden: fans 🔥</option>
-        <option value="followers">Orden: seguidores 🌟</option>
-        <option value="username">Orden: usuario</option>
+        <option value="status">Orden: color del semáforo</option>
+        <option value="fans">Orden: más interacciones 🔥</option>
+        <option value="followers">Orden: más seguidores</option>
+        <option value="username">Orden: @usuario (A-Z)</option>
       </select>
 
       <button
         type="button"
         onClick={onToggleFollowers}
+        aria-pressed={onlyFollowers}
         title="Mostrar solo los que te siguen (más seguros para escribir)"
         className={`rounded-lg border px-3 py-1.5 text-sm font-medium ${
           onlyFollowers
@@ -106,6 +113,7 @@ export function FilterBar({
       <button
         type="button"
         onClick={onTogglePosts}
+        aria-expanded={showPosts}
         className="rounded-lg border border-border px-3 py-1.5 text-sm hover:bg-panel"
       >
         {showPosts ? 'Ocultar posts' : 'Ver posts'}

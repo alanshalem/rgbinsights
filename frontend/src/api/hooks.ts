@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
 import {
+  keepPreviousData,
   useInfiniteQuery,
   useMutation,
   useQuery,
@@ -33,10 +34,13 @@ export function useUserPages(query: Omit<UsersQuery, 'limit' | 'offset'>, pageSi
   });
 }
 
+/** Keeps the previous numbers on screen while a new search/filter loads, so the
+ * board doesn't flash "nobody matches" between two keystrokes. */
 export function useCounts(query: Pick<UsersQuery, 'event' | 'post' | 'search' | 'follows'>) {
   return useQuery({
     queryKey: ['counts', query],
     queryFn: () => api.counts(query),
+    placeholderData: keepPreviousData,
   });
 }
 
@@ -120,8 +124,10 @@ export function useCreateEvent() {
 
 // -- background jobs (S16) ---------------------------------------------------
 
-const LOST_JOB = 'Se perdió el seguimiento de la tarea (¿se reinició el backend?).';
-const UNKNOWN_OUTCOME = 'La tarea terminó mientras no estabas mirando — se actualizaron los datos.';
+const LOST_JOB =
+  'Se cortó la conexión con la app y no pudimos seguir la tarea. Fijate en Actividad si terminó.';
+const UNKNOWN_OUTCOME =
+  'Perdimos el seguimiento de la tarea (quizás se reinició la app). Actualizamos los datos por las dudas.';
 /** Waits before retrying GET /tasks/{id} after a network error; then give up. */
 const RETRY_MS = [1000, 2000, 4000, 8000];
 
@@ -143,12 +149,13 @@ function waitForJob(qc: QueryClient, job: Task): Promise<Task | null> {
   );
   return new Promise((resolve, reject) => {
     let settled = false;
-    let checking = false; // a GET /tasks/{id}, or the wait before its retry
+    let inFlight = false; // a GET /tasks/{id} is running
+    // Set while waiting before retrying that GET (after a network error).
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
     let failures = 0; // consecutive network errors of that GET
-    let retry: ReturnType<typeof setTimeout> | undefined;
     const settle = () => {
       settled = true;
-      clearTimeout(retry);
+      clearTimeout(retryTimer);
       unsubscribe();
     };
     const finish = (t: Task) => {
@@ -169,26 +176,29 @@ function waitForJob(qc: QueryClient, job: Task): Promise<Task | null> {
         if (t.status !== 'running') finish(t);
         return;
       }
-      if (checking) return;
-      checking = true;
+      if (inFlight || retryTimer !== undefined) return;
+      inFlight = true;
       api.getTask(job.id).then(
         (fresh) => {
-          checking = false;
+          inFlight = false;
           failures = 0;
           if (!settled && fresh.status !== 'running') finish(fresh);
         },
         (e: unknown) => {
+          inFlight = false;
           if (settled) return;
           if (e instanceof ApiError && e.status === 404) return lost();
           if (failures >= RETRY_MS.length) {
             settle();
             return reject(new ApiError(0, 'unknown', LOST_JOB));
           }
+          const wait = RETRY_MS[failures];
+          failures += 1;
           // The list may bring the job meanwhile (check settles it from there).
-          retry = setTimeout(() => {
-            checking = false;
+          retryTimer = setTimeout(() => {
+            retryTimer = undefined;
             check();
-          }, RETRY_MS[failures++]);
+          }, wait);
         }
       );
     };

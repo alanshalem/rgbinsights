@@ -1,15 +1,7 @@
 import { useState } from 'react';
 import { useActivity } from '../api/hooks';
+import { kindMeta } from '../lib/jobs';
 import { ResetModal } from './ResetModal';
-
-const KIND_LABEL: Record<string, string> = {
-  scan: 'Escaneo',
-  rescan: 'Re-escaneo',
-  sync: 'Sync DMs',
-  refresh: 'Actualización',
-  enrich: 'Enriquecer',
-  campaign: 'Campaña',
-};
 
 function fmtTime(iso: string): string {
   return new Date(iso).toLocaleString('es-AR', {
@@ -38,12 +30,13 @@ export function ActivityPage({ onBack }: { onBack: () => void }) {
         </button>
       </div>
       <p className="mb-4 text-sm text-muted">
-        Historial de lo que corrió (escaneos, syncs, enriquecidos, campañas) y si anduvo.
+        Historial de lo que hizo la app (escaneos, sincronizaciones de DMs, campañas) y si salió
+        bien.
       </p>
 
       {rows.length === 0 ? (
         <p className="rounded-2xl border border-border bg-panel py-12 text-center text-sm text-muted">
-          Sin actividad todavía.
+          Todavía no pasó nada. Cuando escanees posts o sincronices DMs, aparece acá.
         </p>
       ) : (
         <ul className="flex flex-col gap-1.5">
@@ -52,11 +45,15 @@ export function ActivityPage({ onBack }: { onBack: () => void }) {
               key={a.id}
               className="flex items-center gap-3 rounded-lg border border-border bg-panel px-3 py-2.5 text-sm"
             >
-              <span className={a.status === 'error' ? 'text-red' : 'text-green'}>
+              <span
+                role="img"
+                aria-label={a.status === 'error' ? 'Falló' : 'Salió bien'}
+                className={a.status === 'error' ? 'text-red' : 'text-green'}
+              >
                 {a.status === 'error' ? '✕' : '✓'}
               </span>
-              <span className="mono w-28 shrink-0 text-xs text-muted">
-                {KIND_LABEL[a.kind] ?? a.kind}
+              <span className="w-44 shrink-0 text-xs text-muted">
+                {kindMeta(a.kind, a.kind).title}
               </span>
               <span className="min-w-0 flex-1 truncate">{a.message}</span>
               <span className="mono shrink-0 text-xs text-muted">{fmtTime(a.created_at)}</span>

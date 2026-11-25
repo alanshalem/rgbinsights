@@ -9,7 +9,15 @@ import {
   useUsers,
 } from '../../api/hooks';
 import { toParams } from '../../lib/campaign';
-import { DEFAULT_MSG, audienceToFlags, stripLinks, type Audience, type Params } from './types';
+import {
+  AUDIENCE,
+  DEFAULT_MSG,
+  RECOMMENDED_PRESET,
+  audienceToFlags,
+  stripLinks,
+  type Audience,
+  type Params,
+} from './types';
 
 /** All the state, data and actions behind the campaign modal. Extracted so the
  * modal + its sub-panels stay presentational. Behaviour is unchanged. */
@@ -21,7 +29,8 @@ export function useCampaignForm(event: number, eventName: string) {
   const resume = useResumeCampaign();
 
   const [templates, setTemplates] = useState<string[]>([DEFAULT_MSG, '', '']);
-  const [presetName, setPresetName] = useState<string>('max');
+  const [presetName, setPresetName] = useState<string>(RECOMMENDED_PRESET);
+  // Until /campaigns/presets answers: the same numbers as the backend's "max".
   const [params, setParams] = useState<Params>({
     delay_min: 60,
     delay_max: 180,
@@ -78,7 +87,8 @@ export function useCampaignForm(event: number, eventName: string) {
     onError: (e) => setError(toApiError(e).message),
   });
   const testMut = useMutation({
-    mutationFn: () => api.testCampaign(event, body, testTarget.trim() || undefined),
+    mutationFn: () =>
+      api.testCampaign(event, body, testTarget.trim().replace(/^@/, '') || undefined),
     onSuccess: (r) => setTestedTo(r.username),
     onError: (e) => setError(toApiError(e).message),
   });
@@ -111,9 +121,12 @@ export function useCampaignForm(event: number, eventName: string) {
   const launch = () => {
     setError(null);
     const n = preview?.targets_count ?? 0;
+    const days = preview?.estimate.days ?? 0;
+    const who = AUDIENCE.find((a) => a.key === audience)?.short ?? '';
     if (
       !confirm(
-        `Vas a enviar DMs a ${n} rojos de "${eventName}". Enviar masivo tiene riesgo de ban. ¿Confirmás?`
+        `Vas a mandar ${n} DM${n === 1 ? '' : 's'} (${who}) de "${eventName}", ` +
+          `~${days} día${days === 1 ? '' : 's'}. Mandar muchos DMs tiene riesgo de bloqueo. ¿Arrancamos?`
       )
     )
       return;

@@ -1,26 +1,37 @@
 import type { ApiError } from '../../api/client';
 
-/** The dismissable-looking error strip under the toolbar. A challenge/expired
+/** The error strip under the toolbar, closable with ✕. A challenge/expired
  * session gets the amber "reconnect" copy; everything else is a red error. */
-export function ErrorBanner({ error }: { error: ApiError | null }) {
+export function ErrorBanner({ error, onClose }: { error: ApiError | null; onClose: () => void }) {
   if (!error) return null;
   return (
     <div
       role="alert"
-      className={`rounded-xl border px-4 py-3 text-sm ${
+      className={`flex items-start gap-3 rounded-xl border px-4 py-3 text-sm ${
         error.isChallenge
           ? 'border-yellow/50 bg-yellow/10 text-yellow'
           : 'border-red/50 bg-red/10 text-red'
       }`}
     >
-      {error.isChallenge ? (
-        <>
-          <strong>Instagram pide verificación.</strong> La sesión se venció: reconectá desde el chip{' '}
-          <b>IG</b> arriba a la derecha y reintentá. {error.message}
-        </>
-      ) : (
-        <>Error: {error.message}</>
-      )}
+      <p className="min-w-0 flex-1">
+        {error.isChallenge ? (
+          <>
+            <strong>Instagram pide verificación.</strong> Tocá el chip <b>IG</b> arriba a la derecha
+            → <b>Volver a conectar</b>, y después probá de nuevo. {error.message}
+          </>
+        ) : (
+          error.message
+        )}
+      </p>
+      <button
+        type="button"
+        onClick={onClose}
+        aria-label="Cerrar el aviso de error"
+        title="Cerrar"
+        className="-my-1 -mr-2 shrink-0 rounded px-2 py-1 hover:bg-black/20"
+      >
+        ✕
+      </button>
     </div>
   );
 }

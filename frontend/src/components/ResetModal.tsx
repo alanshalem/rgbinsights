@@ -5,6 +5,18 @@ import { Modal } from './ui/Modal';
 
 const PHRASE = 'BORRAR TODO';
 
+/** The backend's table names, in plain words (an unknown one shows as is). */
+const WHAT: Record<string, string> = {
+  events: 'Fiestas',
+  posts: 'Posts',
+  engagements: 'Likes y comentarios',
+  users: 'Personas',
+  dm_threads: 'Chats de DM',
+  campaigns: 'Campañas',
+  campaign_targets: 'Destinatarios de campañas',
+  activity_log: 'Historial (Actividad)',
+};
+
 export function ResetModal({ onClose }: { onClose: () => void }) {
   const [text, setText] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -21,7 +33,7 @@ export function ResetModal({ onClose }: { onClose: () => void }) {
   };
 
   return (
-    <Modal onClose={onClose} center>
+    <Modal onClose={onClose} center label="Borrar todo">
       <div className="flex flex-col gap-3 text-sm">
         <h2 className="display text-lg font-black tracking-tight text-red uppercase">
           Borrar todo
@@ -30,10 +42,10 @@ export function ResetModal({ onClose }: { onClose: () => void }) {
         {done ? (
           <>
             <p className="text-green">✓ Listo. Se borró todo:</p>
-            <ul className="mono flex flex-col gap-0.5 text-xs text-muted">
+            <ul className="flex flex-col gap-0.5 text-xs text-muted">
               {Object.entries(done).map(([table, n]) => (
                 <li key={table}>
-                  {table}: {n}
+                  {WHAT[table] ?? table}: <span className="mono">{n}</span>
                 </li>
               ))}
             </ul>

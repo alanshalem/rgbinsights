@@ -3,7 +3,7 @@ import { followLabel, formatCount, summarize } from '../../lib/user';
 import { Avatar } from '../ui/Avatar';
 import { PostLink } from '../ui/PostLink';
 
-const CHIP_CLS = 'rounded-full border border-border bg-panel-2 px-2 py-0.5 text-[11px] text-muted';
+const CHIP_CLS = 'rounded-full border border-border bg-panel-2 px-2 py-0.5 text-xs text-muted';
 
 function Chip({ children, url, title }: { children: string; url?: string | null; title?: string }) {
   if (url) {
@@ -17,7 +17,11 @@ function Chip({ children, url, title }: { children: string; url?: string | null;
       </PostLink>
     );
   }
-  return <span className={CHIP_CLS}>{children}</span>;
+  return (
+    <span title={title} className={CHIP_CLS}>
+      {children}
+    </span>
+  );
 }
 
 const FOLLOW_STYLE = {
@@ -33,7 +37,7 @@ export function UserCard({ user }: { user: UserOut }) {
   const follow = followLabel(user);
   const followers = formatCount(user.follower_count);
   const eventPct =
-    user.event_posts_total > 1 ? `${user.event_engaged}/${user.event_posts_total} posts` : null;
+    user.event_posts_total > 1 ? `${user.event_engaged} de ${user.event_posts_total} posts` : null;
 
   return (
     <div className="rounded-xl border border-border bg-panel p-3 transition-[transform,border-color,box-shadow] duration-150 hover:-translate-y-0.5 hover:border-muted/40 hover:shadow-lg hover:shadow-black/20">
@@ -49,14 +53,22 @@ export function UserCard({ user }: { user: UserOut }) {
             >
               @{user.username}
             </a>
-            {user.is_verified && <span title="verificado">✔️</span>}
-            {user.is_private && <span title="cuenta privada">🔒</span>}
+            {user.is_verified && (
+              <span role="img" aria-label="Cuenta verificada" title="Cuenta verificada">
+                ✔️
+              </span>
+            )}
+            {user.is_private && (
+              <span role="img" aria-label="Cuenta privada" title="Cuenta privada">
+                🔒
+              </span>
+            )}
             {regular && (
               <span
-                title={`enganchó ${user.engagement_count} posts en total`}
-                className="ml-auto shrink-0 rounded-full bg-red/15 px-1.5 py-0.5 text-[10px] font-semibold text-red"
+                title={`Interactuó con ${user.engagement_count} posts en total (todas las fiestas)`}
+                className="ml-auto shrink-0 rounded-full border border-blue/40 bg-blue/10 px-2 py-0.5 text-xs font-semibold whitespace-nowrap text-blue"
               >
-                🔥 {user.engagement_count}
+                🔥 {user.engagement_count} posts
               </span>
             )}
           </div>
@@ -64,12 +76,12 @@ export function UserCard({ user }: { user: UserOut }) {
           <div className="mt-2 flex flex-wrap items-center gap-1.5">
             {follow && (
               <span
-                className={`rounded-full border px-2 py-0.5 text-[11px] font-medium ${FOLLOW_STYLE[follow.kind]}`}
+                className={`rounded-full border px-2 py-0.5 text-xs font-medium ${FOLLOW_STYLE[follow.kind]}`}
               >
                 {follow.text}
               </span>
             )}
-            {followers && <Chip>{`🌟 ${followers}`}</Chip>}
+            {followers && <Chip>{`${followers} seguidores`}</Chip>}
             {commented && (
               <Chip url={commentUrl} title="Abrir el comentario en Instagram">
                 comentó
@@ -80,7 +92,9 @@ export function UserCard({ user }: { user: UserOut }) {
                 likeó
               </Chip>
             )}
-            {eventPct && <Chip>{eventPct}</Chip>}
+            {eventPct && (
+              <Chip title="Con cuántos posts de esta fiesta interactuó">{eventPct}</Chip>
+            )}
           </div>
           {commentPreview && (
             <PostLink

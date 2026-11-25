@@ -1,7 +1,9 @@
 import { useMemo } from 'react';
 import type { Order, TrafficLight, UserOut } from '../../api/client';
 import { useUserPages } from '../../api/hooks';
+import { hasFilters, type ActiveFilters } from '../../lib/filters';
 import { LIGHT_HINT, LIGHT_LABEL } from '../../lib/user';
+import { NoResults } from './NoResults';
 import { UserCard } from './UserCard';
 
 const PAGE = 20;
@@ -31,10 +33,12 @@ function Column({
   light,
   total,
   query,
+  filtered,
 }: {
   light: TrafficLight;
   total: number;
   query: ColumnQuery;
+  filtered: boolean;
 }) {
   const users = useUserPages({ ...query, status: light }, PAGE);
   const rows = useMemo(() => uniqueRows(users.data?.pages), [users.data]);
@@ -58,13 +62,19 @@ function Column({
               {LIGHT_LABEL[light]}
             </h2>
           </div>
-          <span className="mono text-sm text-muted">{total}</span>
+          <span className="mono text-sm text-muted" aria-label={`${total} personas`}>
+            {total}
+          </span>
         </div>
         <p className="mt-0.5 text-xs text-muted">{LIGHT_HINT[light]}</p>
       </header>
       <div className="flex flex-col gap-2.5 overflow-y-auto p-3">
         {total === 0 ? (
-          <p className="py-8 text-center text-sm text-muted">—</p>
+          <p className="py-8 text-center text-sm text-muted">
+            {filtered
+              ? `Nadie en ${LIGHT_LABEL[light]} con estos filtros`
+              : `Nadie en ${LIGHT_LABEL[light]} todavía`}
+          </p>
         ) : (
           rows.map((u) => <UserCard key={u.pk} user={u} />)
         )}
@@ -80,7 +90,7 @@ function Column({
             }}
             className="rounded-lg border border-border py-1.5 text-sm text-muted hover:text-ink"
           >
-            Cargar más ({rows.length}/{total})
+            {users.isFetchingNextPage ? 'Cargando…' : `Cargar más (${rows.length} de ${total})`}
           </button>
         )}
       </div>
@@ -94,18 +104,27 @@ export function Board({
   order,
   follows,
   counts,
+  filters,
+  onClearFilters,
 }: {
   event?: number;
   search?: string;
   order: Order;
   follows?: boolean;
   counts: Record<TrafficLight, number>;
+  filters: ActiveFilters;
+  onClearFilters: () => void;
 }) {
   const query: ColumnQuery = { event, search, order, follows };
+  const filtered = hasFilters(filters);
+  // Filters that hide everyone: one clear message instead of three empty columns.
+  if (filtered && counts.red + counts.yellow + counts.green === 0) {
+    return <NoResults filters={filters} onClear={onClearFilters} />;
+  }
   return (
     <div className="flex flex-col gap-4 md:flex-row md:items-start">
       {(['red', 'yellow', 'green'] as const).map((light) => (
-        <Column key={light} light={light} total={counts[light]} query={query} />
+        <Column key={light} light={light} total={counts[light]} query={query} filtered={filtered} />
       ))}
     </div>
   );

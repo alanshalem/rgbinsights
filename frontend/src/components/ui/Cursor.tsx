@@ -2,10 +2,14 @@ import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 const INTERACTIVE = 'a, button, select, summary, label, [role="button"]';
+// Inside dialogs and forms the native cursor is back (index.css): precise
+// clicking and typing matter more there than the flourish.
+const NATIVE = '[role="dialog"], form';
 
 /** Signature cursor: a precise center dot + a ring that trails with easing and
  * echoes the wordmark's red/blue aberration. Desktop + motion-ok only; disables
- * itself (native cursor) on touch or prefers-reduced-motion. */
+ * itself (native cursor) on touch or prefers-reduced-motion, and hides over
+ * modals and forms, where the native cursor shows instead. */
 export function Cursor() {
   const dotRef = useRef<HTMLDivElement>(null);
   const ringRef = useRef<HTMLDivElement>(null);
@@ -30,9 +34,11 @@ export function Cursor() {
       pos.x = e.clientX;
       pos.y = e.clientY;
       place(dotRef.current, pos.x, pos.y); // dot is exact (precision preserved)
-      if (dotRef.current) dotRef.current.style.opacity = '1';
-      if (ringRef.current) ringRef.current.style.opacity = '1';
-      const hovering = (e.target as HTMLElement)?.closest?.(INTERACTIVE);
+      const target = e.target as HTMLElement | null;
+      const shown = target?.closest?.(NATIVE) ? '0' : '1';
+      if (dotRef.current) dotRef.current.style.opacity = shown;
+      if (ringRef.current) ringRef.current.style.opacity = shown;
+      const hovering = target?.closest?.(INTERACTIVE);
       ringRef.current?.classList.toggle('is-hover', !!hovering);
       wake();
     };

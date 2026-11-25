@@ -19,7 +19,7 @@ export function CampaignModal({
   const f = useCampaignForm(event, eventName);
 
   return (
-    <Modal onClose={onClose} size="xl">
+    <Modal onClose={onClose} size="xl" label={`Campaña de DMs · ${eventName}`}>
       <div>
         <div className="mb-5 flex items-start justify-between gap-3">
           <div className="flex flex-col gap-0.5">
@@ -58,8 +58,9 @@ export function CampaignModal({
                 f.preview.targets_count > f.preview.follower_targets && (
                   <div className="rounded-lg border border-yellow/50 bg-yellow/10 p-2.5 text-xs text-yellow">
                     ⚠ {f.preview.targets_count - f.preview.follower_targets} de{' '}
-                    {f.preview.targets_count} <strong>no te siguen</strong>. Instagram bloquea los
-                    DMs a no-seguidores mucho más rápido. Lo más seguro: “Solo a los que me siguen”.
+                    {f.preview.targets_count} <strong>no te siguen</strong>. Instagram bloquea mucho
+                    más rápido los DMs a quien no te sigue. Lo más seguro: “Solo a los que me
+                    siguen”.
                   </div>
                 )}
               <CautelaPicker

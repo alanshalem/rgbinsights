@@ -51,6 +51,19 @@ export function estimateFor(count: number, p: SendParams): LocalEstimate {
   };
 }
 
+/** A campaign's state in plain words (backend: running | paused | blocked | done).
+ * `tone` colors the badge; the word itself carries the meaning. */
+export const CAMPAIGN_STATUS: Record<string, { label: string; tone: string }> = {
+  running: { label: 'Enviando', tone: 'text-green' },
+  paused: { label: 'Pausada', tone: 'text-yellow' },
+  blocked: { label: 'Frenada por Instagram', tone: 'text-red' },
+  done: { label: 'Terminada', tone: 'text-muted' },
+};
+
+export function campaignStatus(status: string): { label: string; tone: string } {
+  return CAMPAIGN_STATUS[status] ?? { label: status, tone: 'text-muted' };
+}
+
 /** "1 cada ~2 min" style gap. */
 export function fmtGap(seconds: number): string {
   return seconds >= 90 ? `~${Math.round(seconds / 60)} min` : `~${Math.round(seconds)}s`;

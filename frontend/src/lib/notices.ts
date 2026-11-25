@@ -15,11 +15,17 @@ function set(next: readonly Notice[]) {
   for (const l of listeners) l();
 }
 
-/** Show a notice for a few seconds. `kind` is the job kind it is about. */
+/** Close a notice now (its ✕), instead of waiting for it to go away. */
+export function dismissNotice(id: number): void {
+  if (notices.some((n) => n.id === id)) set(notices.filter((n) => n.id !== id));
+}
+
+/** Show a notice for a few seconds. `kind` is the job kind it is about (or
+ * another kind known to lib/jobs, e.g. 'export'). */
 export function notify(kind: string, text: string): void {
   const id = nextId++;
   set([...notices, { id, kind, text }]);
-  setTimeout(() => set(notices.filter((n) => n.id !== id)), SHOW_MS);
+  setTimeout(() => dismissNotice(id), SHOW_MS);
 }
 
 function subscribe(listener: () => void): () => void {

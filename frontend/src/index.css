@@ -175,6 +175,18 @@ html.custom-cursor textarea,
 html.custom-cursor [contenteditable='true'] {
   cursor: auto;
 }
+/* Modals and forms get the native cursor back (Cursor.tsx hides the ring there). */
+html.custom-cursor :is([role='dialog'], form) {
+  cursor: auto;
+}
+html.custom-cursor
+  :is([role='dialog'], form)
+  :is(a, button, select, summary, label, [role='button']) {
+  cursor: pointer;
+}
+html.custom-cursor :is([role='dialog'], form) :is(button, select):disabled {
+  cursor: not-allowed;
+}
 
 .cursor-dot,
 .cursor-ring {

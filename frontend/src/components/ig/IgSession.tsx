@@ -35,6 +35,11 @@ const LABEL: Record<string, string> = {
   connected: 'IG conectado',
   disconnected: 'IG desconectado',
 };
+/** Same meaning on narrow screens, where the full label doesn't fit. */
+const SHORT: Record<string, string> = {
+  connected: 'IG ✓',
+  disconnected: 'IG ✕',
+};
 
 export function IgSession() {
   const qc = useQueryClient();
@@ -52,8 +57,8 @@ export function IgSession() {
   if (s.demo) {
     return (
       <span
-        title="Modo demo (datos de ejemplo). Para usar tu Instagram real: poné USE_FAKE_INSTAGRAM=false en backend/.env y reiniciá."
-        className="cursor-help rounded-full border border-border px-2 py-0.5 text-[11px] text-muted"
+        title="Modo demo (datos de ejemplo). Para usar tu Instagram real: poné IG_SOURCE=instagrapi en backend/.env y reiniciá."
+        className="cursor-help rounded-full border border-border px-2 py-0.5 text-xs text-muted"
       >
         demo · sin IG
       </span>
@@ -156,10 +161,12 @@ export function IgSession() {
       ? untilLabel(s.cooldown_until)
       : null;
   const dot = until ? 'bg-yellow' : (DOT[s.state] ?? DOT.disconnected);
+  const chipLabel = until ? `IG en pausa ${until}` : (LABEL[s.state] ?? 'IG');
+  const chipShort = until ? 'IG ⏸' : (SHORT[s.state] ?? 'IG');
   const chipTitle = [
     `Instagram · última conexión ${fmtAgo(s.last_ok_at)}`,
     until && `en pausa ${until}`,
-    s.last_error && `último error: ${s.last_error}`,
+    s.last_error && `último problema: ${s.last_error}`,
   ]
     .filter(Boolean)
     .join(' · ');
@@ -170,19 +177,23 @@ export function IgSession() {
         type="button"
         onClick={() => setOpen(true)}
         title={chipTitle}
-        className="flex items-center gap-1.5 rounded-full border border-border px-2.5 py-1 text-[11px] font-medium hover:bg-panel"
+        aria-label={`${chipLabel}. Ver la conexión con Instagram`}
+        className="flex items-center gap-1.5 rounded-full border border-border px-2.5 py-1 text-xs font-medium whitespace-nowrap hover:bg-panel"
       >
-        <span className={`h-2 w-2 rounded-full ${dot}`} />
-        <span className="hidden sm:inline">
-          {until ? `IG en pausa ${until}` : (LABEL[s.state] ?? 'IG')}
+        <span aria-hidden="true" className={`h-2 w-2 rounded-full ${dot}`} />
+        <span aria-hidden="true" className="sm:hidden">
+          {chipShort}
+        </span>
+        <span aria-hidden="true" className="hidden sm:inline">
+          {chipLabel}
         </span>
       </button>
 
       {open && (
-        <Modal onClose={close} center>
+        <Modal onClose={close} center label="Conexión con Instagram">
           <div className="flex w-[22rem] max-w-full flex-col gap-4 text-sm">
             <div className="flex items-center gap-2">
-              <span className={`h-2.5 w-2.5 rounded-full ${DOT[s.state] ?? DOT.disconnected}`} />
+              <span aria-hidden="true" className={`h-2.5 w-2.5 rounded-full ${dot}`} />
               <h2 className="display text-lg font-black tracking-tight uppercase">
                 Conexión con Instagram
               </h2>
@@ -192,13 +203,15 @@ export function IgSession() {
               <div className="rounded-lg border border-yellow/50 bg-yellow/10 p-3 text-xs text-yellow">
                 <p className="font-semibold">⏸ Instagram en pausa {until}</p>
                 <p className="mt-1 opacity-90">
-                  Para cuidar la cuenta no se hace ningún pedido a Instagram hasta entonces.
+                  Para cuidar la cuenta, la app no le pide nada a Instagram hasta entonces. Esperá a
+                  que pase y después volvé a usar las acciones (una campaña pausada se reanuda a
+                  mano).
                 </p>
               </div>
             )}
             {s.last_error && (
               <p className="text-xs text-muted">
-                Último error: <span className="text-red">{s.last_error}</span>
+                Último problema con Instagram: <span className="text-red">{s.last_error}</span>
               </p>
             )}
 
@@ -316,7 +329,7 @@ export function IgSession() {
                     disabled={busy}
                     className="text-xs text-muted underline hover:text-ink disabled:opacity-50"
                   >
-                    Reconectar igual
+                    Volver a conectar
                   </button>
                   <button
                     type="button"
@@ -340,7 +353,7 @@ export function IgSession() {
                 <>
                   <p className="text-muted">
                     {s.has_credentials
-                      ? 'Instagram cerró la sesión. Reconectá en un paso:'
+                      ? 'Instagram cerró la sesión. Volvé a conectar en un paso:'
                       : 'Pegá el sessionid de tu navegador para conectar.'}
                   </p>
 
@@ -351,7 +364,7 @@ export function IgSession() {
                       disabled={busy}
                       className="rounded-xl bg-blue px-4 py-3 text-center font-semibold text-bg disabled:opacity-50"
                     >
-                      {busy ? 'Conectando…' : '🔄  Reconectar con Instagram'}
+                      {busy ? 'Conectando…' : '🔄 Volver a conectar'}
                       <span className="mt-0.5 block text-xs font-normal opacity-80">
                         Usa la cuenta ya configurada · automático
                       </span>

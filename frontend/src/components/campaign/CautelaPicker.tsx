@@ -30,7 +30,8 @@ function Field({
   );
 }
 
-/** Cautela preset cards (Óptimo / Máxima / Media / Custom) + the custom knobs. */
+/** Pace preset cards (Máxima cautela / Media / Automático / A mano) + the
+ * "A mano" knobs. The recommended (safest) one comes first. */
 export function CautelaPicker({
   presetName,
   applyPreset,
@@ -55,14 +56,13 @@ export function CautelaPicker({
     const p = presets.find((x) => x.name === name);
     return p ? toParams(p) : params;
   };
-  const cards = ['optimo', ...presets.map((p) => p.name), 'custom'];
+  const cards = [...presets.map((p) => p.name), 'optimo', 'custom'];
 
   return (
     <>
       <div className="flex flex-col gap-1.5">
-        <span className="text-muted">Cautela (ritmo de envío)</span>
+        <span className="text-muted">Velocidad de envío (más lento = más seguro)</span>
         <div className="grid gap-2 sm:grid-cols-2">
-          {/* the first card is the auto-computed sweet spot */}
           {cards.map((name) => {
             const p = paramsFor(name);
             const est = estimateFor(count, p);
@@ -72,64 +72,79 @@ export function CautelaPicker({
                 type="button"
                 key={name}
                 onClick={() => applyPreset(name)}
+                aria-pressed={selected}
                 className={`flex flex-col gap-1 rounded-lg border px-3 py-2 text-left ${
                   selected ? 'border-blue bg-blue/10' : 'border-border hover:border-muted'
                 }`}
               >
                 <span className="font-semibold">{PRESET_LABEL[name] ?? name}</span>
-                <span className="mono text-xs text-muted">
-                  {p.delay_min}–{p.delay_max}s · {p.daily_cap}/día · {p.hour_start}–{p.hour_end}h
+                <span className="text-xs text-muted">
+                  1 DM cada {p.delay_min}–{p.delay_max} seg · hasta {p.daily_cap} por día · de{' '}
+                  {p.hour_start} a {p.hour_end} h
                 </span>
-                <span className="mono text-xs">
-                  {count > 0 ? `~${est.days} día${est.days === 1 ? '' : 's'}` : 'sin rojos'}
+                <span className="text-xs">
+                  {count > 0
+                    ? `Tarda ~${est.days} día${est.days === 1 ? '' : 's'}`
+                    : 'No hay rojos para mandar'}
                 </span>
               </button>
             );
           })}
         </div>
         <span className="text-xs text-muted">
-          <b>Óptimo</b>: la app calcula el ritmo más seguro que igual termina en ~2-3 días, según
-          cuántos rojos haya. Si son muchos, respeta un tope diario y puede tardar un poco más.
+          <b>Máxima cautela</b> es lo recomendado. <b>Automático</b>: la app calcula el ritmo para
+          terminar en ~2-3 días según cuántos rojos haya (con un tope por día); con listas grandes
+          manda más DMs por día que Máxima cautela, o sea más riesgo. Las horas son de Argentina.
         </span>
       </div>
 
       {presetName === 'custom' && (
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
           <Field
-            label="delay min (s)"
+            label="Espera mínima entre DMs (seg)"
             value={params.delay_min}
             onChange={(n) => setParams({ ...params, delay_min: n })}
             min={10}
             max={3600}
           />
           <Field
-            label="delay max (s)"
+            label="Espera máxima entre DMs (seg)"
             value={params.delay_max}
             onChange={(n) => setParams({ ...params, delay_max: n })}
             min={10}
             max={3600}
           />
           <Field
-            label="tope/día"
+            label="Máximo por día"
             value={params.daily_cap}
             onChange={(n) => setParams({ ...params, daily_cap: n })}
             min={1}
             max={200}
           />
           <Field
-            label="hora inicio"
+            label="Desde (hora)"
             value={params.hour_start}
             onChange={(n) => setParams({ ...params, hour_start: n })}
             min={0}
             max={23}
           />
           <Field
-            label="hora fin"
+            label="Hasta (hora)"
             value={params.hour_end}
             onChange={(n) => setParams({ ...params, hour_end: n })}
             min={1}
             max={24}
           />
+          {params.delay_max < params.delay_min && (
+            <p role="alert" className="col-span-full text-xs text-red">
+              La espera máxima tiene que ser igual o mayor que la mínima.
+            </p>
+          )}
+          {params.hour_end <= params.hour_start && (
+            <p role="alert" className="col-span-full text-xs text-red">
+              La hora “Hasta” tiene que ser después de “Desde”.
+            </p>
+          )}
         </div>
       )}
     </>

@@ -8,28 +8,36 @@ export type Audience = 'only' | 'first' | 'all';
 export const DEFAULT_MSG =
   'Hola {nombre}, ¿cómo estás? Vi que te copó RGB 🔴🟢🔵 — se viene fecha nueva y te queríamos invitar. Cualquier cosa te paso la data 🙌';
 
+/** The preset the form starts on: the slowest fixed pace (backend PRESETS
+ * "max": longest waits, lowest daily cap). The same one is called
+ * "(recomendado)" here, in the risk note and in Ayuda. */
+export const RECOMMENDED_PRESET = 'max';
+
 export const PRESET_LABEL: Record<string, string> = {
-  optimo: 'Óptimo (recomendado)',
-  max: 'Máxima cautela',
+  max: 'Máxima cautela (recomendado)',
   media: 'Media cautela',
-  custom: 'Custom',
+  optimo: 'Automático (~2-3 días)',
+  custom: 'A mano',
 };
 
-export const AUDIENCE: { key: Audience; label: string; hint: string }[] = [
+export const AUDIENCE: { key: Audience; label: string; short: string; hint: string }[] = [
   {
     key: 'only',
     label: 'Solo a los que me siguen (recomendado)',
+    short: 'solo a los que te siguen',
     hint: 'Lo más seguro: casi nunca bloquean un DM a un seguidor. Llega a menos gente.',
   },
   {
     key: 'first',
     label: 'Seguidores primero',
+    short: 'seguidores primero',
     hint: 'Le manda a todos los rojos, pero arranca por los que te siguen. Más alcance, más riesgo de bloqueo.',
   },
   {
     key: 'all',
     label: 'Todos, sin orden',
-    hint: 'Todos los rojos en el orden del board. Máximo alcance, más riesgo.',
+    short: 'todos los rojos',
+    hint: 'Todos los rojos, en el orden de la lista. Máximo alcance, más riesgo.',
   },
 ];
 

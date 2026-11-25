@@ -1,6 +1,6 @@
 import type { CampaignPreview } from '../../api/client';
 import { fmtGap } from '../../lib/campaign';
-import type { Params } from './types';
+import { PRESET_LABEL, RECOMMENDED_PRESET, type Params } from './types';
 
 /** Risk note + the "se enviarán N" card (count, ETA, follower split, samples). */
 export function CampaignSummary({
@@ -17,8 +17,9 @@ export function CampaignSummary({
   return (
     <>
       <div className="rounded-xl border border-red/40 bg-red/10 px-3 py-2 text-xs text-red">
-        <b>Riesgo:</b> el envío masivo es lo más riesgoso de Instagram (action-block / ban). Se
-        frena solo si IG avisa — empezá con <b>Óptimo</b> o Máxima cautela.
+        <b>Riesgo:</b> mandar muchos DMs es lo más riesgoso en Instagram (te puede bloquear los DMs
+        o la cuenta). La campaña se frena sola si Instagram avisa. Empezá con{' '}
+        <b>{PRESET_LABEL[RECOMMENDED_PRESET]}</b>.
       </div>
 
       {/* summary card — big count, ETA, and the follower / non-follower split */}
@@ -26,7 +27,7 @@ export function CampaignSummary({
         {preview ? (
           <>
             <div className="flex items-center justify-between">
-              <span className="text-[11px] font-semibold uppercase tracking-wider text-muted">
+              <span className="text-xs font-semibold tracking-wider text-muted uppercase">
                 Se enviarán
               </span>
               <button
@@ -35,7 +36,7 @@ export function CampaignSummary({
                 disabled={recalcBusy}
                 className="rounded-lg border border-border px-2.5 py-1 text-xs hover:bg-panel disabled:opacity-40"
               >
-                {recalcBusy ? '…' : 'Recalcular'}
+                {recalcBusy ? 'Calculando…' : 'Recalcular'}
               </button>
             </div>
             <div className="mt-1 flex items-baseline gap-2">
@@ -44,10 +45,11 @@ export function CampaignSummary({
               </span>
               <span className="text-muted">mensaje{preview.targets_count === 1 ? '' : 's'}</span>
             </div>
-            <p className="mono mt-2 text-xs text-muted">
-              ~{preview.estimate.days} día{preview.estimate.days === 1 ? '' : 's'} ·{' '}
-              {preview.estimate.per_day}/día · 1 cada {fmtGap(preview.estimate.avg_delay_seconds)} ·
-              franja {params.hour_start}–{params.hour_end}h
+            <p className="mt-2 text-xs text-muted">
+              Tarda ~{preview.estimate.days} día{preview.estimate.days === 1 ? '' : 's'} · hasta{' '}
+              {preview.estimate.per_day} por día · 1 cada{' '}
+              {fmtGap(preview.estimate.avg_delay_seconds)} · de {params.hour_start} a{' '}
+              {params.hour_end} h
             </p>
             {/* follower split — green = safest (already follow you) */}
             {preview.targets_count > 0 && (
@@ -62,7 +64,10 @@ export function CampaignSummary({
                 </div>
                 <div className="mt-1.5 flex justify-between text-xs text-muted">
                   <span>
-                    <span className="text-green">●</span> {preview.follower_targets} te siguen
+                    <span aria-hidden="true" className="text-green">
+                      ●
+                    </span>{' '}
+                    {preview.follower_targets} te siguen
                   </span>
                   <span>{preview.targets_count - preview.follower_targets} no te siguen</span>
                 </div>
@@ -70,10 +75,13 @@ export function CampaignSummary({
             )}
           </>
         ) : (
-          <span className="mono text-sm text-muted">Calculando resumen…</span>
+          <span className="text-sm text-muted">Calculando a cuántos les llega…</span>
         )}
         {preview && preview.samples.length > 0 && (
-          <ul className="mt-3 flex flex-col gap-1.5 border-t border-border pt-3 text-xs text-muted">
+          <ul
+            aria-label="Así les llega el mensaje (ejemplos)"
+            className="mt-3 flex flex-col gap-1.5 border-t border-border pt-3 text-xs text-muted"
+          >
             {preview.samples.map((s) => (
               <li key={s.username} className="truncate">
                 <b className="text-ink">@{s.username}:</b> {s.message}

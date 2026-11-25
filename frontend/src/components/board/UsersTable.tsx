@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react';
 import type { Order, TrafficLight } from '../../api/client';
 import { useUsers } from '../../api/hooks';
+import type { ActiveFilters } from '../../lib/filters';
 import { summarize } from '../../lib/user';
 import { Avatar } from '../ui/Avatar';
 import { PostLink } from '../ui/PostLink';
-import { TrafficChip } from '../ui/TrafficChip';
+import { TrafficChip, TrafficLegend } from '../ui/TrafficChip';
+import { NoResults } from './NoResults';
 
 const PAGE = 50;
 
@@ -16,33 +18,46 @@ type TableQuery = {
   follows?: boolean;
 };
 
-export function UsersTable({ query, total }: { query: TableQuery; total: number }) {
+export function UsersTable({
+  query,
+  total,
+  filters,
+  onClearFilters,
+}: {
+  query: TableQuery;
+  total: number;
+  filters: ActiveFilters;
+  onClearFilters: () => void;
+}) {
   const [page, setPage] = useState(0);
-  // Reset to first page whenever the filters change.
-  useEffect(() => setPage(0), [query.event, query.status, query.search, query.order]);
+  // Reset to first page whenever the filters change (every field of the query).
+  useEffect(
+    () => setPage(0),
+    [query.event, query.status, query.search, query.order, query.follows]
+  );
 
-  const users = useUsers({ ...query, limit: PAGE, offset: page * PAGE });
-  const rows = users.data ?? [];
   const pages = Math.max(1, Math.ceil(total / PAGE));
+  // The list can also shrink under us (a sync moves people to another color):
+  // never ask for, or show, a page past the last one.
+  const current = Math.min(page, pages - 1);
+  const users = useUsers({ ...query, limit: PAGE, offset: current * PAGE });
+  const rows = users.data ?? [];
 
-  if (total === 0) {
-    return (
-      <p className="rounded-2xl border border-border bg-panel py-12 text-center text-sm text-muted">
-        Sin usuarios. Escaneá un post para empezar.
-      </p>
-    );
-  }
+  if (total === 0) return <NoResults filters={filters} onClear={onClearFilters} />;
 
   return (
     <div className="flex flex-col gap-3">
+      <TrafficLegend />
       <div className="overflow-x-auto rounded-2xl border border-border bg-panel">
         <table className="w-full min-w-[680px] text-left text-sm">
           <thead className="border-b border-border text-xs text-muted">
             <tr>
               <th className="px-4 py-3 font-medium">Usuario</th>
               <th className="px-4 py-3 font-medium">Estado</th>
-              <th className="px-4 py-3 font-medium">🔥</th>
-              <th className="px-4 py-3 font-medium">Engagement</th>
+              <th className="px-4 py-3 font-medium" title="Con cuántos posts interactuó">
+                Posts
+              </th>
+              <th className="px-4 py-3 font-medium">Interacción</th>
               <th className="px-4 py-3 font-medium">Comentario</th>
               <th className="px-4 py-3 font-medium">Acción</th>
             </tr>
@@ -118,19 +133,19 @@ export function UsersTable({ query, total }: { query: TableQuery; total: number 
         <div className="flex items-center justify-center gap-3 text-sm">
           <button
             type="button"
-            disabled={page === 0}
-            onClick={() => setPage((p) => p - 1)}
+            disabled={current === 0}
+            onClick={() => setPage(current - 1)}
             className="rounded-lg border border-border px-3 py-1 disabled:opacity-40"
           >
             ← Anterior
           </button>
           <span className="text-muted">
-            Página {page + 1} de {pages}
+            Página {current + 1} de {pages}
           </span>
           <button
             type="button"
-            disabled={page + 1 >= pages}
-            onClick={() => setPage((p) => p + 1)}
+            disabled={current + 1 >= pages}
+            onClick={() => setPage(current + 1)}
             className="rounded-lg border border-border px-3 py-1 disabled:opacity-40"
           >
             Siguiente →
