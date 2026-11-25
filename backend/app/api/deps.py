@@ -14,6 +14,7 @@ from app import bootstrap
 from app.api.schemas import TaskOut
 from app.application.campaign_sender import CampaignSender
 from app.application.ports import InstagramSource, UnitOfWork, UnitOfWorkFactory
+from app.application.runtime_config import RuntimeConfigService
 from app.application.tasks import JobConflictError, JobWork, TaskView
 from app.application.use_cases import map_instagram_error
 from app.bootstrap import InstagramAccess
@@ -61,12 +62,25 @@ def uow_factory_dep(
     return lambda: bootstrap.unit_of_work(new_session())
 
 
+def runtime_config_dep() -> RuntimeConfigService:
+    return bootstrap.runtime_config
+
+
+def settings_dep(
+    settings: Settings = Depends(get_settings),
+    runtime: RuntimeConfigService = Depends(runtime_config_dep),
+) -> Settings:
+    """The settings with the effective in-app configuration (S25) over them:
+    what every route reads its limits and caches from."""
+    return settings.with_runtime(runtime.effective(settings.runtime_defaults()))
+
+
 def instagram_dep() -> InstagramAccess:
     return bootstrap.instagram
 
 
 def source_dep(
-    settings: Settings = Depends(get_settings),
+    settings: Settings = Depends(settings_dep),
     instagram: InstagramAccess = Depends(instagram_dep),
 ) -> InstagramSource:
     return instagram.source(settings)

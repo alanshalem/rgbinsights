@@ -35,6 +35,9 @@ export type Activity =
 export type Status = paths['/status']['get']['responses']['200']['content']['application/json'];
 export type IgStatus =
   paths['/ig/status']['get']['responses']['200']['content']['application/json'];
+/** The in-app Configuración: every setting with its value, default and bounds. */
+export type ConfigOut = paths['/config']['get']['responses']['200']['content']['application/json'];
+export type ConfigEntry = ConfigOut['entries'][number];
 
 type ApiErrorDetail = { code: string; message: string };
 
@@ -178,6 +181,17 @@ export const api = {
   igDisconnect: () => request<IgStatus>('/ig/disconnect', { method: 'POST' }),
   igSetSessionid: (sessionid: string) =>
     request<IgStatus>('/ig/sessionid', { method: 'POST', body: JSON.stringify({ sessionid }) }),
+
+  getConfig: () => request<ConfigOut>('/config'),
+  /** Save only these settings (422 with the reason when one is out of bounds). */
+  updateConfig: (values: Record<string, number>) =>
+    request<ConfigOut>('/config', { method: 'PUT', body: JSON.stringify({ values }) }),
+  /** Back to the default: one setting (`key`) or all of them. */
+  resetConfig: (key?: string) =>
+    request<ConfigOut>('/config/reset', {
+      method: 'POST',
+      body: JSON.stringify({ key: key ?? null }),
+    }),
 
   listPresets: () => request<Preset[]>('/campaigns/presets'),
 

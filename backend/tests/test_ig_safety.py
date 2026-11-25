@@ -107,9 +107,6 @@ def _settings(tmp_path: Path, **overrides: Any) -> Settings:
         "ig_source": "instagrapi",
         "ig_guard_file": str(tmp_path / "ig_guard.json"),
         "ig_session_file": str(tmp_path / "session.json"),
-        "ig_sessionid": "",
-        "ig_username": "",
-        "ig_password": "",
         "ig_proxy": "",
         "scan_min_delay_seconds": 2.0,
         "scan_max_delay_seconds": 6.0,
@@ -388,7 +385,8 @@ def test_busy_lock_waits_bounded_then_fails_fast(tmp_path: Path) -> None:
 
 
 class LoginStub:
-    """A fresh instagrapi client whose login makes one (stubbed) request."""
+    """A fresh instagrapi client: its sessionid login and the probe of a saved
+    session make one (stubbed) request each."""
 
     def __init__(self, http: FakeHttp, fail: Exception | None) -> None:
         self.private = _session(http)
@@ -406,6 +404,8 @@ class LoginStub:
 
     def account_info(self) -> Any:
         self.private.get(URL)
+        if self._fail is not None:
+            raise self._fail
         return SimpleNamespace(pk=42)
 
     def dump_settings(self, path: Path) -> None:
@@ -431,7 +431,8 @@ class LoginFactory:
 def _login_setup(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, clock: Clock
 ) -> tuple[InstagrapiInstagramSource, IgGuard, LoginFactory]:
-    settings = _settings(tmp_path, ig_sessionid="abc")
+    settings = _settings(tmp_path)
+    (tmp_path / "session.json").write_text("{}", encoding="utf-8")  # a saved session (L24)
     guard = IgGuard(settings, clock=clock, sleep=lambda _: None, rng=random.Random(3))
     factory = LoginFactory(guard, FakeHttp())
     monkeypatch.setattr(login, "build_client", factory)
@@ -515,7 +516,7 @@ def test_ip_block_breaker_is_not_bypassed_by_a_sessionid(
 
 def test_login_without_any_request_does_not_open_breaker(tmp_path: Path) -> None:
     guard = _guard(tmp_path)
-    source = InstagrapiInstagramSource(_settings(tmp_path), guard=guard)  # no creds at all
+    source = InstagrapiInstagramSource(_settings(tmp_path), guard=guard)  # no saved session
 
     with pytest.raises(LoginRequiredError):
         source.current_user_pk()
@@ -549,7 +550,8 @@ def test_send_dm_surfaces_cooldown_instead_of_a_retryable_failure(tmp_path: Path
 def _status_setup(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> tuple[Settings, InstagrapiInstagramSource, IgGuard, list[int]]:
-    settings = _settings(tmp_path, ig_sessionid="abc", ig_username="u", ig_password="p")
+    settings = _settings(tmp_path)
+    (tmp_path / "session.json").write_text("{}", encoding="utf-8")  # a saved session
     guard = IgGuard(settings, clock=Clock(), sleep=lambda _: None)
     source = InstagrapiInstagramSource(settings, guard=guard)
     logins: list[int] = []
@@ -864,20 +866,6 @@ def test_same_failed_sessionid_does_not_bypass_the_breaker(
     assert "hasta las" in str(info.value)
 
     assert source.connect_sessionid("new-cookie") == "42"  # a different one may try
-
-
-def test_env_sessionid_that_failed_is_not_a_fresh_paste(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    clock = Clock()
-    source, _, factory = _login_setup(tmp_path, monkeypatch, clock)  # IG_SESSIONID=abc
-    with pytest.raises(LoginRequiredError):
-        source.current_user_pk()
-    attempts = len(factory.built)
-
-    with pytest.raises(LoginRequiredError):
-        source.connect_sessionid(" abc ".strip())
-    assert len(factory.built) == attempts
 
 
 def test_guard_file_stores_only_a_hash_of_the_failed_sessionid(

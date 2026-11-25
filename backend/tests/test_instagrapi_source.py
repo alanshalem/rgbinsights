@@ -1,8 +1,10 @@
-"""Adapter error mapping for get_post and the relogin hook.
+"""Adapter error mapping for get_post / send_dm and instagrapi's exception hook.
 
 Uses a stub client injected into the adapter (no network): the stub mimics
 instagrapi's media_info, which routes private-API failures through the
 handle_exception hook and then silently falls back to the public endpoint.
+Since L24 there is no relogin: a dead session surfaces as LoginRequiredError,
+drops the client and is never retried with a login.
 """
 
 from __future__ import annotations
@@ -18,8 +20,9 @@ from app.domain.errors import (
     PostNotFoundError,
 )
 from app.infrastructure.config.settings import Settings
+from app.infrastructure.instagram.error_mapping import DEAD_SESSION
 from app.infrastructure.instagram.instagrapi_source import InstagrapiInstagramSource
-from app.infrastructure.instagram.session import _make_handle_exception
+from app.infrastructure.instagram.session import _handle_exception
 from instagrapi.exceptions import (
     BadPassword,
     ClientError,
@@ -30,54 +33,49 @@ from instagrapi.exceptions import (
 )
 
 URL = "https://www.instagram.com/p/DfZ69nZEeFv/"
-RELOGIN_TYPEERROR = (
-    "int() argument must be a string, a bytes-like object or a real number, not 'NoneType'"
-)
 
 
 @pytest.fixture(autouse=True)
 def _isolated_guard_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    # The adapter persists breaker/budget state; keep it out of the repo.
+    # The adapter persists breaker/budget state and reads the saved session:
+    # keep both out of the repo (a real session.json must never be probed).
     monkeypatch.setenv("IG_GUARD_FILE", str(tmp_path / "ig_guard.json"))
+    monkeypatch.setenv("IG_SESSION_FILE", str(tmp_path / "session.json"))
 
 
 def _settings() -> Settings:
-    return Settings(use_fake_instagram=False, ig_username="user", ig_password="pass")
+    return Settings()
 
 
 class StubClient:
-    """Mimics the parts of instagrapi.Client that get_post touches."""
+    """Mimics the parts of instagrapi.Client that get_post / send_dm touch.
+    Any login method called on it is recorded (none may be)."""
 
-    def __init__(
-        self,
-        settings: Settings,
-        media_error: Exception,
-        relogin_error: Exception | None = None,
-    ) -> None:
-        self.handle_exception = _make_handle_exception(settings)
+    def __init__(self, media_error: Exception, private_error: Exception | None = None) -> None:
+        self.handle_exception = _handle_exception
         self._media_error = media_error
-        self._relogin_error = relogin_error
-        self.relogin_calls = 0
+        self._private_error = private_error
+        self.login_calls: list[str] = []
+
+    def __getattr__(self, name: str) -> Any:
+        if name in ("login", "relogin", "login_by_sessionid", "totp_generate_code"):
+            return lambda *a, **k: self.login_calls.append(name)
+        raise AttributeError(name)
 
     def media_pk_from_url(self, url: str) -> str:
         return "123"
 
-    def relogin(self) -> bool:
-        self.relogin_calls += 1
-        if self._relogin_error is not None:
-            raise self._relogin_error
-        return True
-
     def media_info(self, media_pk: str) -> Any:
-        # instagrapi: the private request fails with LoginRequired -> hook runs;
-        # whatever the hook raises is swallowed and the public path is tried.
-        with contextlib.suppress(Exception):  # mirrors instagrapi's broad fallback
-            self.handle_exception(self, LoginRequired())
+        # instagrapi: a failed private request runs the hook; whatever the hook
+        # raises is swallowed and the public path is tried.
+        if self._private_error is not None:
+            with contextlib.suppress(Exception):  # mirrors instagrapi's broad fallback
+                self.handle_exception(self, self._private_error)
         raise self._media_error
 
     def direct_send(self, text: str, user_ids: list[int]) -> None:
         # instagrapi does not swallow hook errors on sends: they propagate.
-        self.handle_exception(self, LoginRequired())
+        self.handle_exception(self, self._private_error or LoginRequired())
 
 
 def _source_with(client: object) -> InstagrapiInstagramSource:
@@ -86,28 +84,60 @@ def _source_with(client: object) -> InstagrapiInstagramSource:
     return source
 
 
-def test_get_post_reports_login_error_when_relogin_crashes() -> None:
-    client = StubClient(
-        _settings(), ClientError("public fallback failed"), TypeError(RELOGIN_TYPEERROR)
-    )
+def test_get_post_dead_session_is_login_required_and_never_relogs() -> None:
+    client = StubClient(ClientError("public fallback failed"), private_error=LoginRequired())
     source = _source_with(client)
 
     with pytest.raises(LoginRequiredError) as info:
         source.get_post(URL)
 
+    assert str(info.value) == DEAD_SESSION
     assert not isinstance(info.value, PostNotFoundError)
-    assert "sessionid" in str(info.value)
-    assert "int()" not in str(info.value)
-    assert source._client is None  # broken client dropped; next call logs in again
+    assert client.login_calls == []  # no relogin, no login of any kind
+    assert source._client is None  # the dead client is dropped
 
 
-def test_handle_exception_turns_relogin_crash_into_login_error() -> None:
-    client = StubClient(_settings(), ClientError(), TypeError(RELOGIN_TYPEERROR))
+def test_after_a_dead_session_the_next_operation_never_logs_in(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.infrastructure.instagram import login
+
+    built: list[object] = []
+    monkeypatch.setattr(login, "build_client", lambda *a: built.append(a))
+    client = StubClient(ClientError(), private_error=LoginRequired())
+    source = _source_with(client)
+    with pytest.raises(LoginRequiredError):
+        source.get_post(URL)
+
+    with pytest.raises(LoginRequiredError) as again:
+        source.get_post(URL)  # no client, no saved session: refused, no request
+
+    assert "pegá tu sessionid desde el chip IG" in str(again.value)
+    assert built == []  # no new client, so no request of any kind
+    assert client.login_calls == []
+
+
+def test_env_credentials_and_sessionid_no_longer_log_in(monkeypatch: pytest.MonkeyPatch) -> None:
+    """L24: with no saved session, an old IG_SESSIONID / user+password in the
+    environment are not used: LoginRequiredError and no client, no request."""
+    from app.infrastructure.instagram import login
+
+    for name, value in (
+        ("IG_SESSIONID", "abc"),
+        ("IG_USERNAME", "u"),
+        ("IG_PASSWORD", "p"),
+        ("IG_2FA_SECRET", "JBSWY3DPEHPK3PXP"),
+    ):
+        monkeypatch.setenv(name, value)
+    built: list[object] = []
+    monkeypatch.setattr(login, "build_client", lambda *a: built.append(a))
+    source = InstagrapiInstagramSource(Settings(_env_file=None))
 
     with pytest.raises(LoginRequiredError) as info:
-        client.handle_exception(client, LoginRequired())
+        source.current_user_pk()
 
-    assert isinstance(info.value.__cause__, TypeError)
+    assert str(info.value) == login.NO_SESSION
+    assert built == []
 
 
 @pytest.mark.parametrize(
@@ -116,7 +146,7 @@ def test_handle_exception_turns_relogin_crash_into_login_error() -> None:
     ids=["LoginRequired", "ReloginAttemptExceeded", "ClientLoginRequired"],
 )
 def test_get_post_maps_session_errors_to_login_required(exc: Exception) -> None:
-    source = _source_with(StubClient(_settings(), exc))
+    source = _source_with(StubClient(exc))
 
     with pytest.raises(LoginRequiredError) as info:
         source.get_post(URL)
@@ -125,11 +155,33 @@ def test_get_post_maps_session_errors_to_login_required(exc: Exception) -> None:
     assert source._client is None
 
 
+def test_hook_never_returns_so_instagrapi_never_resends() -> None:
+    """A hook that returns makes instagrapi re-send the request; none may."""
+    client = StubClient(ClientError())
+    original = LoginRequired()
+
+    with pytest.raises(LoginRequired) as info:
+        _handle_exception(client, original)
+
+    assert info.value is original
+    assert client.login_calls == []
+
+
+def test_hook_reraises_non_session_errors_unchanged() -> None:
+    client = StubClient(ClientError())
+    original = ClientError("throttled")
+
+    with pytest.raises(ClientError) as info:
+        _handle_exception(client, original)
+
+    assert info.value is original
+
+
 # -- previous behaviour that must still hold -------------------------------
 
 
 def test_get_post_media_not_found_is_post_not_found() -> None:
-    client = StubClient(_settings(), MediaNotFound("gone"))
+    client = StubClient(MediaNotFound("gone"))
     source = _source_with(client)
 
     with pytest.raises(PostNotFoundError):
@@ -139,30 +191,18 @@ def test_get_post_media_not_found_is_post_not_found() -> None:
 
 
 def test_get_post_other_client_error_is_still_post_not_found() -> None:
-    client = StubClient(_settings(), ClientError("not available"))
+    client = StubClient(ClientError("not available"))
     source = _source_with(client)
 
     with pytest.raises(PostNotFoundError):
         source.get_post(URL)
 
-    assert client.relogin_calls == 1  # relogin succeeded; the post itself failed
     assert source._client is client
 
 
-def test_handle_exception_still_reraises_non_login_errors() -> None:
-    client = StubClient(_settings(), ClientError())
-    original = ClientError("throttled")
-
-    with pytest.raises(ClientError) as info:
-        client.handle_exception(client, original)
-
-    assert info.value is original
-    assert client.relogin_calls == 0
-
-
-def test_send_dm_relogin_ip_block_stays_ip_blocked() -> None:
+def test_send_dm_ip_block_stays_ip_blocked() -> None:
     blocked = BadPassword("Your IP address is on a blacklist")
-    client = StubClient(_settings(), ClientError(), blocked)
+    client = StubClient(ClientError(), private_error=blocked)
     source = _source_with(client)
 
     with pytest.raises(IpBlockedError):
@@ -171,33 +211,27 @@ def test_send_dm_relogin_ip_block_stays_ip_blocked() -> None:
     assert source._client is client  # an IP block is not a dead session
 
 
-def test_send_dm_relogin_crash_is_login_error_and_drops_client() -> None:
-    client = StubClient(_settings(), ClientError(), TypeError(RELOGIN_TYPEERROR))
+def test_send_dm_dead_session_is_login_error_and_drops_client() -> None:
+    client = StubClient(ClientError())
     source = _source_with(client)
 
     with pytest.raises(LoginRequiredError) as info:
         source.send_dm("5", "hola")
 
     assert "sessionid" in str(info.value)
+    assert client.login_calls == []
     assert source._client is None
-
-
-def test_handle_exception_successful_relogin_returns_quietly() -> None:
-    client = StubClient(_settings(), ClientError())
-
-    assert client.handle_exception(client, LoginRequired()) is None
-    assert client.relogin_calls == 1
 
 
 # -- L15: every adapter message is Spanish (a failed job shows it as is) -------
 
 
-def test_challenge_code_and_bad_totp_seed_messages_are_spanish() -> None:
+def test_challenge_code_message_is_spanish() -> None:
     from app.domain.errors import ChallengeRequiredError
     from app.infrastructure.instagram.guard import IgGuard
     from app.infrastructure.instagram.login import IgLogin
 
-    settings = Settings(_env_file=None, ig_2fa_secret="not-base32")
+    settings = Settings(_env_file=None)
     login = IgLogin(settings, IgGuard(settings, sleep=lambda _: None))
 
     with pytest.raises(ChallengeRequiredError) as challenge:
@@ -205,17 +239,6 @@ def test_challenge_code_and_bad_totp_seed_messages_are_spanish() -> None:
     assert str(challenge.value) == (
         "Instagram pidió un código de verificación para rgb.collective: "
         "confirmá que sos vos desde el celu y volvé a conectar."
-    )
-
-    class BadSeed:
-        def totp_generate_code(self, secret: str) -> str:
-            raise ValueError("Incorrect padding")
-
-    with pytest.raises(LoginRequiredError) as totp:
-        login._totp_code(BadSeed())
-    assert str(totp.value) == (
-        "IG_2FA_SECRET no es una semilla TOTP válida (base32); "
-        "dejalo vacío si la cuenta no tiene 2FA."
     )
 
 

@@ -7,18 +7,20 @@ FastAPI + SQLModel (SQLite) + instagrapi. Clean architecture pragmática.
 ```
 app/
   domain/          # entidades, errores de Instagram, TrafficLight, classify() — sin deps
+    config.py      # los ajustes de "Configuración": valores de fábrica y topes de seguridad
   application/     # casos de uso, tareas en segundo plano, envío de campañas + DTOs
-    ports.py       # las interfaces que usan: InstagramSource, repos, UnitOfWork, CampaignStore
+    ports.py       # las interfaces que usan: InstagramSource, repos, UnitOfWork, CampaignStore, ConfigStore
+    runtime_config.py  # la configuración efectiva (DB > entorno > fábrica), leída en cada pedido
   infrastructure/
     instagram/     # adapter instagrapi (fachada) + FakeInstagramSource + guardián anti-ban
       instagrapi_source.py  # fachada fina que implementa InstagramSource
-      login.py              # sesión / login (un cliente logueado, reusado)
+      login.py              # la sesión (sessionid pegado -> session.json, reusada)
       reads.py              # posts, comentarios, likers, perfiles, seguidores/seguidos
       direct.py             # inbox de DMs y envío
       error_mapping.py      # excepciones de instagrapi -> errores del dominio
     persistence/   # rows SQLModel, engine, repos (upserts idempotentes), SqlUnitOfWork
     export/        # Excel / PDF del semáforo
-    config/        # settings desde .env
+    config/        # settings del entorno (solo IG_PROXY + overrides de desarrollo)
   api/             # routers FastAPI, schemas, deps, mapeo Result->HTTP
   bootstrap.py     # raíz de composición: el único lugar que arma y conecta todo
   main.py
@@ -69,7 +71,14 @@ Docs interactivas: http://localhost:8000/docs · OpenAPI: `/openapi.json`.
 | GET    | `/tasks/{id}`              | Una tarea: progreso, `result` o `error` (404 si ya se purgó).   |
 | GET    | `/users`                   | Usuarios + semáforo. Query: `post`, `status`, `search`, `order`.|
 | GET    | `/posts`                   | Posts escaneados.                                               |
-| GET    | `/health`                  | Estado + si está en modo fake.                                  |
+| GET    | `/health`                  | Estado (+ si corre la fuente de prueba de desarrollo).          |
+| GET    | `/config`                  | Cada ajuste: valor, por defecto, topes, etiqueta y ayuda.       |
+| PUT    | `/config`                  | Cambia algunos ajustes `{ values: {...} }` (422 en castellano). |
+| POST   | `/config/reset`            | Vuelve al valor por defecto uno (`{ key }`) o todos (`{}`).     |
+| GET    | `/ig/status`               | Estado de la sesión (nunca le pide nada a Instagram).           |
+| POST   | `/ig/sessionid`            | Pega un sessionid: lo valida una vez y lo guarda.               |
+| POST   | `/ig/reauth`               | "Volver a conectar": revisa una vez la sesión guardada.         |
+| POST   | `/ig/disconnect`           | Borra la sesión guardada (`session.json`).                      |
 
 ### Tareas en segundo plano (escaneo, sync, actualizar, enriquecer)
 
@@ -80,7 +89,7 @@ sesión de DB) y responde enseguida **202** con la tarea (`Location:
 /tasks/{id}`). La tarea es `{ id, kind, label, status: running|done|error,
 current, total, message, result, warning, error, error_code, started_at,
 finished_at }`: `result` es el resumen ("2 posts · 4 nuevos"), `warning` un aviso
-aparte (p. ej. si la sync de DMs llegó al tope `DM_THREADS_LIMIT`; por ahora
+aparte (p. ej. si la sync de DMs llegó al tope de chats por sync; por ahora
 también va en `result.aviso` para la UI actual) y `error` el motivo, siempre en
 castellano (`error_code`, p. ej. `challenge_required`, para el aviso de
 reconectar). Para escanear un solo post se usa la misma `/scan/posts` con una
@@ -106,30 +115,95 @@ URL (el viejo `POST /scan/post` sincrónico se eliminó: la UI no lo usaba).
   en memoria: se purgan 25 s después de terminar y un reinicio las pierde (lo ya
   guardado en la DB queda).
 
-## Login a Instagram real
+## Conectar Instagram real
 
-Todo desde la app, sin terminal: en el chip **IG** de arriba,
+Hay **una sola forma**, desde la app: chip **IG** de arriba → **"Pegá tu
+sesión"**. Pegás la cookie `sessionid` de un navegador donde ya estés logueado a
+la cuenta (lo más seguro: no hay login nuevo). Se valida con un solo pedido y se
+guarda en `session.json` (`POST /ig/sessionid`); después se reusa en cada
+arranque y nunca se vuelve a loguear de cero.
 
-- **"Pegá tu sesión"**: pegá la cookie `sessionid` de un navegador donde ya
-  estés logueado a la cuenta (lo más seguro: no hay login nuevo). Se valida con
-  un solo pedido y se guarda en `session.json` (`POST /ig/sessionid`).
-- o completá `IG_USERNAME` + `IG_PASSWORD` (y `IG_2FA_SECRET` si la cuenta tiene
-  2FA) en `.env` y apretá **Reconectar** (`POST /ig/reauth`).
+- **No hay login con usuario y contraseña** (ni 2FA) **ni reconexión
+  automática**: si la sesión vence, la operación falla con "La sesión venció:
+  pegá un sessionid nuevo desde el chip IG", el cliente se descarta y no se
+  intenta ningún login. `IG_USERNAME`, `IG_PASSWORD`, `IG_2FA_SECRET` e
+  `IG_SESSIONID` ya no se leen (un `.env` viejo que los tenga se ignora).
+- **"Volver a conectar"** (`POST /ig/reauth`) revisa **una vez** la sesión
+  guardada (`session.json`, un solo pedido liviano), por ejemplo después de
+  confirmar en el celu un "¿Fuiste vos?". Sin sesión guardada responde 401 sin
+  ningún pedido. Respeta el breaker de login.
+- Si Instagram pide verificación (challenge), confirmá desde el celu y volvé a
+  pegar el sessionid. **Desconectar** (`POST /ig/disconnect`) borra
+  `session.json`.
 
-Después la API reusa `session.json` y no vuelve a loguear de cero — la mejor
-forma de evitar bloqueos. Si Instagram pide verificación (challenge), confirmá
-desde el celu y volvé a pegar el sessionid. **Desconectar** (`POST
-/ig/disconnect`) borra `session.json`.
+## Configuración (en la app, no en `.env`)
 
-## Config (`.env`)
+Todo lo que cambia cómo trabaja la app se edita en la pantalla
+**Configuración** (`GET/PUT /config`, `POST /config/reset`) y se guarda en la DB
+(tabla `app_config`; "Borrar todo" no la toca). Se aplica desde el **próximo
+pedido** a Instagram, sin reiniciar (nunca en medio de uno): el guardián lee el
+ritmo, el presupuesto, la pausa y la espera del candado en cada pedido, y las
+lecturas leen sus topes en cada lectura. Valor efectivo = lo guardado en la app;
+si no, el valor por defecto: el de un `.env` viejo si lo tenía (así una
+instalación existente sigue igual), si no el de fábrica — siempre dentro de los
+topes.
 
-Ver `.env.example`. Clave: `IG_SOURCE` — `fake` (default: datos de ejemplo,
-nunca toca Instagram) o `instagrapi` (tu cuenta real). Los `.env` viejos siguen
-andando: si `IG_SOURCE` está vacío, `USE_FAKE_INSTAGRAM=false` elige la cuenta
-real (y cualquier otro valor viejo de `IG_SOURCE` que no sea `fake`, también); si
-`IG_SOURCE` está puesto, manda sobre `USE_FAKE_INSTAGRAM`.
-Anti-bloqueo (opcional): `IG_PROXY` (uno estable), `IG_COUNTRY`, `IG_LOCALE`,
-`IG_TIMEZONE_OFFSET` (default `-10800`, Argentina).
+**Solo se puede ir hacia lo más seguro** (S0), y lo controla el backend
+(`domain/config.py`), no solo la pantalla: un valor fuera de los topes responde
+**422** con el motivo en castellano (p. ej. "«Tope de pedidos por hora» no puede
+ser mayor que 200 pedidos (el valor de fábrica): …"); un `.env` viejo más
+rápido que la fábrica se lleva al tope.
+
+| Ajuste (clave) | Fábrica | Topes |
+| --- | --- | --- |
+| Espera mínima / máxima entre pedidos (`scan_min_delay_seconds` / `scan_max_delay_seconds`) | 2 s / 6 s | fábrica … 60 s, mínima ≤ máxima |
+| Descanso largo cada (`ig_rest_every_requests`) | 25 pedidos | 5 … 25 |
+| Descanso mínimo / máximo (`ig_rest_min_seconds` / `ig_rest_max_seconds`) | 45 s / 150 s | fábrica … 900 s, mínimo ≤ máximo |
+| Tope de pedidos por hora / día (`ig_max_requests_per_hour` / `_per_day`) | 200 / 1500 | 1 … fábrica |
+| Pausa si Instagram pide frenar (`ig_throttle_cooldown_minutes`) | 60 min | 60 … 1440 min |
+| Espera si Instagram está ocupado (`ig_lock_wait_seconds`) | 600 s | 30 … 3600 s |
+| Posts recientes a revisar (`recent_posts_limit`) | 50 | 1 … 50 |
+| Chats por sincronización (`dm_threads_limit`) | 60 | 1 … 60 |
+| Comentarios por post (`scan_comments_limit`) | 200 | 1 … 200 |
+| Tope de seguidores/seguidos a leer (`relationship_fetch_max`) | 0 (todos) | 0 … 1.000.000 (un tope solo baja pedidos) |
+| Perfiles por corrida / por día (`enrich_profiles_per_run` / `_per_day`) | 60 / 150 | 1 … fábrica |
+| Reusar tus seguidores durante (`relationship_cache_hours`) | 12 h | 12 … 168 h |
+| No releer un post escaneado hace menos de (`rescan_skip_hours`) | 6 h | 6 … 168 h |
+| Lectura completa de seguidores cada (`relationship_full_refresh_days`) | 7 días | 7 … 90 días |
+
+- **Siempre Instagram real** (L25, L27): sin una sesión pegada la app no hace
+  **ningún** pedido a Instagram (no hay cliente: estado "desconectado";
+  escanear, sincronizar, enriquecer, el DM de prueba, la campaña y "Volver a
+  conectar" fallan al toque con "No hay una sesión de Instagram guardada: pegá tu
+  sessionid desde el chip IG"; una campaña queda en pausa sin gastar
+  destinatarios). No hay modo demo en la app.
+- Un cuerpo que `/config` no puede leer (p. ej. `PUT /config` con `{}`) responde
+  **422** en castellano, como sus otros errores. Si un valor viejo del `.env` se
+  tuvo que llevar al tope, se avisa una vez en el log al arrancar y `GET /config`
+  lo informa en `clamped_from` (la pantalla lo muestra en amarillo). Una fila
+  guardada ilegible (o de un ajuste que ya no existe) se ignora y no cuenta como
+  "cambiado".
+- El descanso largo cuenta los pedidos **desde el último descanso**: si cambiás
+  "Descanso largo cada", nunca pasan más pedidos seguidos sin descanso que el
+  valor viejo o el nuevo.
+- La sync de DMs es **siempre incremental** (salvo "Traer todo de cero"): ya no
+  se puede apagar.
+- País, idioma y zona horaria que se le informan a Instagram están **fijos en
+  Argentina** (`AR`, `es_AR`, UTC-3) en el código.
+
+### Variables de entorno
+
+La única documentada es **`IG_PROXY`** (opcional: un proxy estable,
+residencial/móvil y fijo). Para desarrollo y tests existen `DATABASE_URL`,
+`IG_SESSION_FILE` e `IG_GUARD_FILE`.
+
+**Nota para desarrollo y tests**: `RGB_DEV_FAKE_INSTAGRAM=1` cambia la cuenta real
+por `FakeInstagramSource` (datos inventados, nunca toca Instagram; el chip dice
+"prueba · sin IG"). No es una opción para usuarios. Los tests lo fuerzan con
+`Settings(dev_fake_instagram=True)`. Las viejas `IG_SOURCE` y `USE_FAKE_INSTAGRAM`
+**ya no se leen** (L28): un `.env` copiado del ejemplo viejo con
+`USE_FAKE_INSTAGRAM=true` o `IG_SOURCE=fake` no deja la app trabada en datos
+inventados.
 
 ## Anti-ban: cómo se protege la cuenta
 
@@ -140,28 +214,33 @@ llamada del código.
 
 - **`/ig/status` nunca se loguea**: solo informa el último estado conocido
   (sesión en memoria, último OK, error y hasta cuándo hay pausa — campos
-  `cooldown_until` y `last_error`). El login ocurre solo al apretar
-  "conectar"/pegar el sessionid, o al lanzar una operación (escaneo, sync,
-  enriquecer, campaña) que lo necesite.
-- **Circuit breaker de login**: si un login falla, no se reintenta por 15 min,
-  después 1 h y después 6 h (tope). Un login exitoso lo resetea. Pegar un
-  sessionid nuevo puede saltearlo una vez, salvo si Instagram bloqueó la IP.
+  `cooldown_until` y `last_error`). Nunca hay login: la sesión sale del
+  sessionid pegado (guardado en `session.json`), que se revisa con un pedido
+  liviano al pegarlo, al apretar "Volver a conectar" o en la primera operación
+  (escaneo, sync, enriquecer, campaña) después de arrancar.
+- **Circuit breaker de login**: si esa revisión (o el sessionid pegado) falla,
+  no se reintenta por 15 min, después 1 h y después 6 h (tope). Una conexión
+  exitosa lo resetea. Pegar un sessionid nuevo puede saltearlo una vez, salvo si
+  Instagram bloqueó la IP.
 - **Una sola operación contra Instagram a la vez** (candado global entre la
-  campaña y los pedidos de la UI). Quien llega segundo espera hasta
-  `IG_LOCK_WAIT_SECONDS` (600 s) y si no, avisa que está ocupado.
-- **Presupuesto real**: `IG_MAX_REQUESTS_PER_HOUR` (200) e
-  `IG_MAX_REQUESTS_PER_DAY` (1500) cuentan todos los pedidos HTTP, en horas/días
+  campaña y los pedidos de la UI). Quien llega segundo espera hasta "Espera si
+  Instagram está ocupado" (Configuración, 600 s) y si no, avisa que está
+  ocupado.
+- **Presupuesto real**: los topes de pedidos por hora (200) y por día (1500)
+  de Configuración cuentan todos los pedidos HTTP, en horas/días
   de Argentina (cada salto de una redirección cuenta y espera como un pedido
   más; como máximo 3 saltos). Al llegar al tope se frena todo hasta que cambie
   la ventana.
 - **Cooldown**: ante un 429, "please wait a few minutes", `feedback_required`,
-  `rate_limit_error` o `sentry_block`, no se hace ningún pedido por
-  `IG_THROTTLE_COOLDOWN_MINUTES` (60). Los reintentos automáticos del transporte
-  están desactivados para no repetir un 429 por detrás.
+  `rate_limit_error` o `sentry_block`, no se hace ningún pedido durante "Pausa
+  si Instagram pide frenar" (60 min). Los reintentos automáticos del transporte
+  están desactivados para no repetir un 429 por detrás, y el hook
+  `handle_exception` de instagrapi nunca reintenta, reloguea ni resuelve un
+  challenge.
 - **Ritmo humano**: antes de cada pedido, una espera variable (triangular entre
-  `SCAN_MIN_DELAY_SECONDS`=2 y `SCAN_MAX_DELAY_SECONDS`=6, más alguna distracción
-  larga ocasional) y un descanso de `IG_REST_MIN_SECONDS`–`IG_REST_MAX_SECONDS`
-  (45–150 s) cada `IG_REST_EVERY_REQUESTS` (25) pedidos.
+  la espera mínima de 2 s y la máxima de 6 s, más alguna distracción larga
+  ocasional) y un descanso de 45–150 s cada 25 pedidos (todo en Configuración →
+  Ritmo humano, solo hacia lo más lento).
 - **Campañas**: el horario activo y el tope diario usan hora argentina. Ante
   sesión caída, IP bloqueada o un cooldown (Instagram pidió frenar: 429 /
   "please wait" / `feedback_required`) la campaña queda `paused` con el motivo en
@@ -195,8 +274,8 @@ SQLite de un caso de uso. Si el archivo está corrupto o mal formado, se ignora
   transacción de escritura de SQLite queda abierta mientras se habla con
   Instagram. Si falla a la mitad (tope, cooldown, red), lo ya traído queda
   guardado y la próxima corrida pide solo los que faltan (el error y el resumen
-  de la tarea dicen cuántos faltan). Topes: `ENRICH_PROFILES_PER_RUN` (60) por
-  corrida y `ENRICH_PROFILES_PER_DAY` (150) por día argentino.
+  de la tarea dicen cuántos faltan). Topes (Configuración): 60 perfiles por
+  corrida y 150 por día argentino.
 - **Mismos pedidos que instagrapi**: cada pedido (endpoint, método, parámetros,
   tamaño de página) es exactamente el que arma instagrapi para la misma lectura
   — instagrapi imita la app oficial y cualquier diferencia es una huella. Nuestro
@@ -207,10 +286,10 @@ SQLite de un caso de uso. Si el archivo está corrupto o mal formado, se ignora
   y se corta en la primera página sin nadie nuevo; las listas leídas se guardan
   en la tabla `follow_edges`. Así solo se suman seguidores; para ver los que
   dejaron de seguir hay una lectura completa cada
-  `RELATIONSHIP_FULL_REFRESH_DAYS` (7) días o al forzar. **Seguidos** (a quién
-  seguís) no tiene un orden garantizado, así que se lee entero como antes cada
-  vez que vence el caché. Se sigue respetando `RELATIONSHIP_CACHE_HOURS` (12 h
-  sin volver a leer) y `RELATIONSHIP_FETCH_MAX`.
+  7 días ("Lectura completa de seguidores cada") o al forzar. **Seguidos** (a
+  quién seguís) no tiene un orden garantizado, así que se lee entero como antes
+  cada vez que vence el caché. Se sigue respetando "Reusar tus seguidores
+  durante" (12 h sin volver a leer) y "Tope de seguidores/seguidos a leer".
 - **Rescan sin volver a pedir el post**: si el post ya está guardado (mismo
   shortcode) no se pide `media_info`; el rango de fechas usa los posts que ya
   devolvió `user_medias`. Además, comentarios y likers usan el id completo del
@@ -219,14 +298,16 @@ SQLite de un caso de uso. Si el archivo está corrupto o mal formado, se ignora
 - **Comentarios incrementales**: se pagina de los más nuevos a los más viejos y
   se corta después de la primera página en la que **todos** los comentarios son
   iguales o anteriores al más nuevo ya guardado (`posts.last_comment_at`); uno
-  viejo fijado arriba no corta. Siempre con el tope `SCAN_COMMENTS_LIMIT`.
+  viejo fijado arriba no corta. Siempre con el tope "Comentarios por post"
+  (200).
 - **DMs realmente incrementales**: el inbox se pagina de lo más reciente a lo
   más viejo y se corta en el primer chat sin actividad desde la sync anterior
   (los fijados no cortan); la marca es la hora de inicio de la sync anterior,
   redondeada al segundo como las horas de Instagram. **Toda** sync (primera,
-  forzada o incremental) trae como máximo `DM_THREADS_LIMIT` (60) chats = 3
+  forzada o incremental) trae como máximo "Chats por sincronización" (60) = 3
   páginas, las mismas que antes; cada chat trae sus últimos 10 mensajes. Si una
   sync incremental llega a ese tope antes de alcanzar la sync anterior, la marca
   igual avanza a su hora de inicio y se avisa (log, progreso de la tarea y el
   `warning` de la tarea "Sincronizar DMs" y de "Actualizar fiesta") que los
-  chats más viejos con mensajes nuevos no se sincronizaron; subí `DM_THREADS_LIMIT` si pasa seguido.
+  chats más viejos con mensajes nuevos no se sincronizaron (el tope no se puede
+  subir por encima de los 60 de fábrica, S0).

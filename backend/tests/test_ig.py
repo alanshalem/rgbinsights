@@ -7,7 +7,7 @@ from sqlmodel import Session
 
 
 def _fake_settings() -> Settings:
-    return Settings(use_fake_instagram=True, ig_source="")
+    return Settings(dev_fake_instagram=True)
 
 
 def test_ig_status_connected_in_demo(session: Session) -> None:

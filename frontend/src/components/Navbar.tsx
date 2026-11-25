@@ -3,11 +3,12 @@ import { LIGHT_HINT, LIGHT_LABEL, LIGHTS } from '../lib/user';
 import { IgSession } from './ig/IgSession';
 import { TrafficDot } from './ui/TrafficChip';
 
-export type Page = 'app' | 'activity' | 'help';
+export type Page = 'app' | 'activity' | 'config' | 'help';
 
 const NAV: { page: Page; label: string }[] = [
   { page: 'app', label: 'Panel' },
   { page: 'activity', label: 'Actividad' },
+  { page: 'config', label: 'Configuración' },
   { page: 'help', label: 'Ayuda' },
 ];
 

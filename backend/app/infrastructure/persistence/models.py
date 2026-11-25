@@ -146,6 +146,16 @@ class AppState(SQLModel, table=True):
     value: str
 
 
+class ConfigOverride(SQLModel, table=True):
+    """One in-app configuration value the user changed (S25), as JSON. Settings
+    without a row use their default. Its own table: "Borrar todo" never touches it."""
+
+    __tablename__ = "app_config"
+
+    key: str = Field(primary_key=True)
+    value: str  # JSON
+
+
 class CampaignTarget(SQLModel, table=True):
     __tablename__ = "campaign_targets"
     # The sender's "next pending target of this campaign" lookup.

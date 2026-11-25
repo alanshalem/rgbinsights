@@ -16,6 +16,8 @@ from typing import Any
 import pytest
 from app.application import campaign_sender
 from app.application.campaign_sender import CampaignSender
+from app.application.runtime_config import RuntimeConfigService
+from app.domain.config import FACTORY
 from app.domain.errors import (
     BudgetExhaustedError,
     ChallengeRequiredError,
@@ -33,6 +35,7 @@ from app.infrastructure.instagram.guard import IgGuard
 from app.infrastructure.instagram.instagrapi_source import InstagrapiInstagramSource
 from app.infrastructure.persistence import models
 from app.infrastructure.persistence.campaigns import SqlCampaignStore
+from app.infrastructure.persistence.config_store import SqlConfigStore
 from instagrapi.exceptions import ChallengeRequired
 from sqlalchemy.engine import Engine
 from sqlalchemy.pool import StaticPool
@@ -279,8 +282,6 @@ def test_raw_challenge_from_instagrapi_blocks_the_campaign(
 
     settings = Settings(
         _env_file=None,
-        use_fake_instagram=False,
-        ig_source="instagrapi",
         ig_guard_file=str(tmp_path / "ig_guard.json"),
         ig_session_file=str(tmp_path / "session.json"),
     )
@@ -292,6 +293,33 @@ def test_raw_challenge_from_instagrapi_blocks_the_campaign(
 
     assert harness.campaign().status == "blocked"
     assert [t.status for t in harness.targets()] == ["pending", "pending"]
+
+
+def test_preserve_send_loop_through_the_adapter_with_the_default_config(
+    harness: Harness, tmp_path: Path
+) -> None:
+    """S25: the real adapter wired to the in-app configuration (nothing stored:
+    the factory values) still sends every target, paced by the campaign."""
+    runtime = RuntimeConfigService(SqlConfigStore(lambda: Session(harness.engine)), lambda: FACTORY)
+    runtime.load()
+    settings = Settings(
+        _env_file=None,
+        ig_guard_file=str(tmp_path / "ig_guard.json"),
+        ig_session_file=str(tmp_path / "session.json"),
+    )
+    guard = IgGuard(settings, config=runtime.current, sleep=lambda _: None)
+    source = InstagrapiInstagramSource(settings, guard=guard, config=runtime.current)
+    sent: list[list[str]] = []
+    source._client = SimpleNamespace(
+        user_id=1, direct_send=lambda text, user_ids: sent.append([text, *map(str, user_ids)])
+    )
+    _seed(harness)
+
+    harness.run(source)
+
+    assert sent == [["m1", "1"], ["m2", "2"]]
+    assert harness.campaign().status == "done"
+    assert harness.sleeps[:2] == [10.0, 10.0]  # the campaign's own delay between sends
 
 
 # -- L10 R4-1: a spent request budget waits for its window, it never pauses ----

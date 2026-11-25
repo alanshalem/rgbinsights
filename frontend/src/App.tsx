@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import { ApiError, type ExportQuery, type Order, type TrafficLight } from './api/client';
-import { useCounts, useEvents, useStatus } from './api/hooks';
+import { useCounts, useEvents, useIgStatus, useStatus } from './api/hooks';
 import { ActionsMenu } from './components/ActionsMenu';
 import { ActivityPage } from './components/ActivityPage';
 import { Board } from './components/board/Board';
 import { CampaignModal } from './components/campaign/CampaignModal';
+import { ConfigPage } from './components/ConfigPage';
 import { ExportButtons } from './components/board/ExportButtons';
 import { Cursor } from './components/ui/Cursor';
 import { ErrorBanner } from './components/ui/ErrorBanner';
@@ -41,6 +42,9 @@ export default function App() {
 
   const events = useEvents();
   const dataStatus = useStatus(); // shared with Actualizar ▾ (one local read)
+  // The same cached query as the IG chip (no request of its own, never to Instagram).
+  const ig = useIgStatus();
+  const igReady = Boolean(ig.data && (ig.data.demo || ig.data.state === 'connected'));
   const follows = onlyFollowers || undefined;
   // Debounced so the derived queries (counts + users) only refetch once typing
   // pauses, instead of on every keystroke.
@@ -94,6 +98,8 @@ export default function App() {
         <HelpPage onBack={() => setPage('app')} />
       ) : page === 'activity' ? (
         <ActivityPage onBack={() => setPage('app')} />
+      ) : page === 'config' ? (
+        <ConfigPage onBack={() => setPage('app')} />
       ) : (
         <div className="mx-auto flex min-h-full max-w-7xl flex-col gap-4 p-4 md:p-6">
           {/* Row 1 — the fiesta: drives the filter, where scans go and the counts */}
@@ -182,8 +188,9 @@ export default function App() {
 
           <ErrorBanner error={error} onClose={() => setError(null)} />
 
-          {events.data && dataStatus.data && (
+          {events.data && dataStatus.data && ig.data && (
             <GettingStarted
+              igReady={igReady}
               hasFiesta={fiestas.length > 0}
               hasPosts={fiestas.some((e) => e.posts_count > 0)}
               dmsSynced={dataStatus.data.dms_synced_at != null}

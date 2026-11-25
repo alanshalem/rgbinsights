@@ -20,19 +20,22 @@ function Step({ n, done, children }: { n: number; done: boolean; children: React
   );
 }
 
-/** First-run guide: the three steps to a useful semáforo, each ticked from data
- * the app already has locally (fiestas, their posts, the last DM sync). It never
- * starts anything by itself, and it goes away once the three are done. */
+/** First-run guide: the steps to a useful semáforo, each ticked from what the
+ * app already knows locally (the Instagram session, fiestas, their posts, the
+ * last DM sync). It never starts anything by itself, and it goes away once all
+ * are done. */
 export function GettingStarted({
+  igReady,
   hasFiesta,
   hasPosts,
   dmsSynced,
 }: {
+  igReady: boolean;
   hasFiesta: boolean;
   hasPosts: boolean;
   dmsSynced: boolean;
 }) {
-  if (hasFiesta && hasPosts && dmsSynced) return null;
+  if (igReady && hasFiesta && hasPosts && dmsSynced) return null;
   return (
     <section
       aria-labelledby="getting-started"
@@ -45,13 +48,16 @@ export function GettingStarted({
         Cómo empezar
       </h2>
       <ol className="flex flex-col gap-1.5 text-sm">
-        <Step n={1} done={hasFiesta}>
+        <Step n={1} done={igReady}>
+          Conectá tu Instagram: chip <b>IG</b> arriba a la derecha → <b>Pegá tu sesión</b>.
+        </Step>
+        <Step n={2} done={hasFiesta}>
           Creá una fiesta con <b>+ Nueva fiesta</b>.
         </Step>
-        <Step n={2} done={hasPosts}>
+        <Step n={3} done={hasPosts}>
           Pegá los links de sus posts y tocá <b>Escanear</b>: aparece la gente que comentó o likeó.
         </Step>
-        <Step n={3} done={dmsSynced}>
+        <Step n={4} done={dmsSynced}>
           <b>Actualizar ▾ → {JOB_META.sync.title}</b>: pinta a cada uno de 🔴, 🟡 o 🟢 según sus
           DMs.
         </Step>

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -163,9 +163,9 @@ class IgStatusOut(BaseModel):
     state: str  # connected | disconnected
     pk: str | None
     last_ok_at: datetime | None
-    demo: bool  # fake source (no real Instagram)
+    demo: bool  # the dev/test fake source (RGB_DEV_FAKE_INSTAGRAM), never for users
     source: str  # fake | instagrapi — drives the reconnect UI
-    has_credentials: bool  # user/pass present in .env (enables the 1-click reauth)
+    has_saved_session: bool  # session.json exists ("Volver a conectar" can re-check it)
     # No Instagram request before this (login breaker or throttle cooldown open).
     cooldown_until: datetime | None = None
     last_error: str | None = None  # the most recent Instagram failure, if any
@@ -229,3 +229,40 @@ class CampaignOut(BaseModel):
     hour_end: int
     last_sent_at: datetime | None
     error: str | None
+
+
+# -- in-app configuration (S25) ---------------------------------------------
+
+
+class ConfigEntryOut(BaseModel):
+    """One setting of the "Configuración" screen. Numbers may only move inside
+    [min, max] (the safer side of the factory value, S0)."""
+
+    key: str
+    kind: Literal["int", "float"]
+    value: int | float
+    default: int | float  # an older install's environment value, else the factory one
+    min: float | None
+    max: float | None
+    unit: str
+    group: str
+    label: str
+    help: str
+    overridden: bool  # changed in the app (else it follows `default`)
+    at_most: str | None = None  # the key this one may not exceed (a min/max pair)
+    # What an older .env asked for, when it had to be pulled inside the bounds.
+    clamped_from: float | None = None
+
+
+class ConfigOut(BaseModel):
+    entries: list[ConfigEntryOut]
+
+
+class ConfigUpdateIn(BaseModel):
+    """A partial update: only the settings to change, key -> new value."""
+
+    values: dict[str, Any]
+
+
+class ConfigResetIn(BaseModel):
+    key: str | None = None  # null: every setting back to its default

@@ -10,13 +10,17 @@ from contextlib import asynccontextmanager
 from types import FrameType
 from typing import Any
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, Response
 
 from app.api.routers import (
     admin,
     avatars,
     campaigns,
+    config,
     events,
     health,
     ig,
@@ -26,7 +30,7 @@ from app.api.routers import (
     tasks,
     users,
 )
-from app.bootstrap import campaign_sender, engine
+from app.bootstrap import campaign_sender, engine, runtime_config
 from app.infrastructure.persistence.db import create_db_and_tables
 
 logging.basicConfig(
@@ -58,6 +62,7 @@ def _stop_streams_on_exit_signals() -> None:
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     create_db_and_tables(engine)
+    runtime_config.load()  # the in-app configuration, before any Instagram work
     tasks.reset_streams()  # a stop left over from an earlier shutdown must not end new streams
     campaign_sender.resume_all()  # resume any campaign left running
     _stop_streams_on_exit_signals()
@@ -79,6 +84,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.exception_handler(RequestValidationError)
+async def _validation_error(request: Request, exc: RequestValidationError) -> Response:
+    """/config answers an unreadable body in Spanish, like its other errors (the
+    other routes keep FastAPI's default shape)."""
+    message = config.bad_body_message(request.method, request.url.path)
+    if message is None:
+        return await request_validation_exception_handler(request, exc)
+    return JSONResponse(
+        status_code=422, content={"detail": {"code": "bad_request", "message": message}}
+    )
+
+
 app.include_router(health.router)
 app.include_router(events.router)
 app.include_router(campaigns.router)
@@ -90,3 +108,4 @@ app.include_router(tasks.router)  # /tasks (+ /stream SSE) + /activity
 app.include_router(admin.router)  # /reset (danger zone)
 app.include_router(ig.router)  # /ig/status + reconnect (session)
 app.include_router(avatars.router)  # /avatar/{pk} — cached profile pics
+app.include_router(config.router)  # /config — the in-app "Configuración" (S25)

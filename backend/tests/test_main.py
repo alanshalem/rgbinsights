@@ -63,6 +63,7 @@ def test_startup_clears_a_stop_left_by_an_earlier_shutdown(
 ) -> None:
     resumed: list[bool] = []
     monkeypatch.setattr(main, "create_db_and_tables", lambda _engine: None)
+    monkeypatch.setattr(bootstrap.runtime_config, "load", lambda: None)  # no DB here
     monkeypatch.setattr(main, "_stop_streams_on_exit_signals", lambda: None)
     monkeypatch.setattr(bootstrap.campaign_sender, "resume_all", lambda: resumed.append(True))
     tasks_router.stop_streams()  # e.g. a uvicorn --reload in the same process

@@ -111,7 +111,7 @@ def send_text(
             f"@{user_pk} no acepta mensajes nuevos — se saltea"
         ) from exc
     except InstagramError as exc:
-        # Already classified: a failed relogin (hook) or a guard rail.
+        # Already classified: a guard rail or the challenge handler.
         on_session_error(exc)
         raise
     except Exception as exc:  # noqa: BLE001 — every raw failure is classified below

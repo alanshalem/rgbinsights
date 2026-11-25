@@ -14,11 +14,11 @@ from app.domain.result import Ok, Result
 
 logger = logging.getLogger(__name__)
 
-# Said (log + task progress + the refresh summary) when DM_THREADS_LIMIT cut an
-# incremental sync short: the watermark still moves to this sync's start.
+# Said (log + task progress + the refresh summary) when the chats-per-sync cap
+# cut an incremental sync short: the watermark still moves to this sync's start.
 CAPPED_NOTE = (
-    "se llegó al tope de chats por sync (DM_THREADS_LIMIT): los chats más viejos "
-    "con mensajes nuevos no se sincronizaron"
+    "se llegó al tope de chats por sync (Configuración → «Chats por sincronización»): "
+    "los chats más viejos con mensajes nuevos no se sincronizaron"
 )
 
 
@@ -38,10 +38,10 @@ class SyncDmsUseCase:
         self,
         progress: ProgressFn | None = None,
         force: bool = False,
-        incremental: bool = True,
     ) -> Result[DmSyncResult]:
+        """Incremental (only the chats active since the last sync) unless forced."""
         state = self._uow.app_state
-        since = None if (force or not incremental) else state.get_dt(KEY_DMS_SYNCED)
+        since = None if force else state.get_dt(KEY_DMS_SYNCED)
         # The next sync pages back to when THIS one started: a thread that gets a
         # message while we page is re-read next time instead of being missed.
         started = _now()

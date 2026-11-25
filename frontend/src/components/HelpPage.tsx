@@ -17,6 +17,7 @@ const SECTIONS: { id: string; title: string }[] = [
   { id: 'campana', title: 'Campaña de DMs' },
   { id: 'campana-pausada', title: 'Campaña pausada o frenada' },
   { id: 'ig-pausa', title: 'IG en pausa' },
+  { id: 'configuracion', title: 'Configuración' },
   { id: 'progreso', title: 'Avisos y actividad' },
   { id: 'problemas', title: 'Si algo falla' },
 ];
@@ -106,6 +107,11 @@ export function HelpPage({ onBack }: { onBack: () => void }) {
             <p>
               Mientras falte algo, el panel muestra <b>Cómo empezar</b> con estos pasos y los va
               tildando solo.
+            </p>
+            <p>
+              <b>Antes que nada:</b> conectá tu Instagram con el chip <b>IG</b> arriba a la derecha
+              → <b>Pegá tu sesión</b> (es la única forma; queda guardada para la próxima vez). Hasta
+              entonces la app no le pide nada a Instagram.
             </p>
             <p>
               <b>1.</b> Creá una fiesta (<b>+ Nueva fiesta</b>) con nombre y fechas.
@@ -254,6 +260,27 @@ export function HelpPage({ onBack }: { onBack: () => void }) {
             </p>
           </Section>
 
+          <Section id="configuracion" title="Configuración">
+            <p>
+              En <b>Configuración</b> (arriba) ajustás cómo trabaja la app con Instagram: las{' '}
+              <b>esperas</b> entre pedidos, los <b>topes</b> de pedidos por hora y por día, cuánto
+              trae cada lectura y cuánto reusa lo que ya tiene. Cada ajuste explica qué hace y
+              muestra su valor <b>por defecto</b>.
+            </p>
+            <p>
+              Solo podés ir hacia lo más seguro: <b>esperas más largas y topes más bajos</b> que los
+              de fábrica. Si ponés algo fuera de rango, te dice el límite y no lo guarda.
+              <b> Guardar cambios</b> lo aplica desde el próximo pedido a Instagram, sin reiniciar;
+              <b> restaurar</b> vuelve un ajuste a su valor por defecto y <b>Restaurar todo</b>,
+              todos.
+            </p>
+            <p>
+              Si un valor viejo de tu archivo <b>.env</b> pedía ir más rápido que lo permitido, el
+              ajuste lo avisa en amarillo y usa el valor de fábrica. Si pedía ir más lento (más
+              seguro), se respeta tal cual, aunque quede fuera del rango que se puede escribir.
+            </p>
+          </Section>
+
           <Section id="progreso" title="Avisos y actividad">
             <p>
               Toda acción larga muestra un <b>aviso abajo a la derecha</b> con el avance en vivo y
@@ -270,8 +297,9 @@ export function HelpPage({ onBack }: { onBack: () => void }) {
             <p>
               <b>“Instagram pide verificación”</b> (cartel amarillo) o <b>IG desconectado</b>: entrá
               a la cuenta desde el celu y confirmá que sos vos. Después tocá el chip <b>IG</b>{' '}
-              arriba a la derecha → <b>Volver a conectar</b>. Si no anda, tocá{' '}
-              <b>“Pegá tu sesión”</b> y seguí los pasos que aparecen ahí.
+              arriba a la derecha → <b>Volver a conectar</b> (revisa una vez la sesión que ya
+              pegaste). Si no anda, tocá <b>“Pegá tu sesión”</b> y seguí los pasos que aparecen ahí:
+              es la única forma de conectar la cuenta (la app nunca se loguea sola).
             </p>
             <p>
               <b>“No se pudo conectar con la app”</b>: cerrá la app y abrila de nuevo.

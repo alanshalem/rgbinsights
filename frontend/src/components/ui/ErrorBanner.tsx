@@ -1,7 +1,7 @@
 import type { ApiError } from '../../api/client';
 
-/** The error strip under the toolbar, closable with ✕. A challenge/expired
- * session gets the amber "reconnect" copy; everything else is a red error. */
+/** The error strip under the toolbar, closable with ✕. No/expired session and
+ * a challenge get the amber "what to do" copy; everything else is a red error. */
 export function ErrorBanner({ error, onClose }: { error: ApiError | null; onClose: () => void }) {
   if (!error) return null;
   return (
@@ -14,10 +14,16 @@ export function ErrorBanner({ error, onClose }: { error: ApiError | null; onClos
       }`}
     >
       <p className="min-w-0 flex-1">
-        {error.isChallenge ? (
+        {error.code === 'login_required' ? (
           <>
-            <strong>Instagram pide verificación.</strong> Tocá el chip <b>IG</b> arriba a la derecha
-            → <b>Volver a conectar</b>, y después probá de nuevo. {error.message}
+            <strong>Falta conectar Instagram.</strong> Tocá el chip <b>IG</b> arriba a la derecha →{' '}
+            <b>Pegá tu sesión</b>, y después probá de nuevo. {error.message}
+          </>
+        ) : error.isChallenge ? (
+          <>
+            <strong>Instagram pide verificación.</strong> Confirmá que sos vos desde el celu, tocá
+            el chip <b>IG</b> arriba a la derecha → <b>Volver a conectar</b> y probá de nuevo.{' '}
+            {error.message}
           </>
         ) : (
           error.message

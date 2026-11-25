@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
+import random
 from datetime import datetime, timedelta, timezone
 
 import pytest
 from app.domain.errors import BudgetExhaustedError
-from app.infrastructure.instagram.throttle import RequestBudget, format_local, non_negative_int
+from app.infrastructure.instagram.throttle import (
+    HumanPacer,
+    RequestBudget,
+    format_local,
+    non_negative_int,
+)
 
 AR = timezone(timedelta(hours=-3))
 T = datetime(2026, 11, 24, 13, 20, tzinfo=AR)
@@ -84,3 +90,63 @@ def test_helpers() -> None:
     with pytest.raises(ValueError):
         non_negative_int(False)
     assert format_local(T) == "13:20 del 24/11"
+
+
+# -- L29 B1: reconfiguring the pacer never stretches the gap between long rests --
+
+
+def _rest_stretches(delays: list[float]) -> list[int]:
+    """Requests between long rests (a delay >= 45 s is a long rest: the base gap
+    plus a distraction tops out at 6 + 18 s)."""
+    stretches, since = [], 0
+    for delay in delays:
+        since += 1
+        if delay >= 45.0:
+            stretches.append(since)
+            since = 0
+    return [*stretches, since]
+
+
+@pytest.mark.parametrize(("before", "after"), [(25, 20), (20, 25), (25, 5), (5, 25)])
+def test_reconfigured_rests_never_exceed_the_longer_of_both_spacings(
+    before: int, after: int
+) -> None:
+    pacer = HumanPacer(2, 6, rest_every=before, rest_min=45, rest_max=150, rng=random.Random(1))
+    delays = [pacer.next_delay() for _ in range(before - 1)]  # one short of a rest
+    pacer.configure(2, 6, rest_every=after, rest_min=45, rest_max=150)
+    delays += [pacer.next_delay() for _ in range(60)]
+
+    stretches = _rest_stretches(delays)
+    assert max(stretches) <= max(before, after)
+    assert all(s <= after for s in _rest_stretches(delays[before:])[1:-1])
+
+
+def test_the_verifier_probe_rests_by_request_25() -> None:
+    pacer = HumanPacer(2, 6, rest_every=25, rest_min=45, rest_max=150, rng=random.Random(1))
+    delays = [pacer.next_delay() for _ in range(24)]
+    pacer.configure(2, 6, rest_every=20, rest_min=45, rest_max=150)
+    delays += [pacer.next_delay() for _ in range(30)]
+
+    assert max(_rest_stretches(delays)) <= 25
+    assert delays[24] >= 45.0  # 24 since the last rest >= the new 20: rest now
+
+
+def test_a_steady_spacing_still_rests_every_n_requests() -> None:
+    pacer = HumanPacer(2, 6, rest_every=10, rest_min=45, rest_max=150, rng=random.Random(2))
+    delays = [pacer.next_delay() for _ in range(35)]
+    assert [i + 1 for i, d in enumerate(delays) if d >= 45.0] == [10, 20, 30]
+
+
+def test_lowered_rest_every_mid_run_never_exceeds_the_larger() -> None:
+    for a, b in [(24, 20), (25, 5), (20, 24)]:
+        for s in range(60):
+            p = HumanPacer(0, 0, rest_every=a, rest_min=1000, rest_max=1000, rng=random.Random(1))
+            run = worst = 0
+            for i in range(200):
+                if i == s:
+                    p.configure(0, 0, rest_every=b, rest_min=1000, rest_max=1000)
+                run += 1
+                if p.next_delay() >= 1000:
+                    worst = max(worst, run)
+                    run = 0
+            assert max(worst, run) <= max(a, b), (a, b, s)

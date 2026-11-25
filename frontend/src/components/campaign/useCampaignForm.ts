@@ -9,6 +9,7 @@ import {
   useUsers,
 } from '../../api/hooks';
 import { toParams } from '../../lib/campaign';
+import { useConfirm } from '../ui/confirmContext';
 import {
   AUDIENCE,
   DEFAULT_MSG,
@@ -23,6 +24,7 @@ import {
  * modal + its sub-panels stay presentational. Behaviour is unchanged. */
 export function useCampaignForm(event: number, eventName: string) {
   const qc = useQueryClient();
+  const confirm = useConfirm();
   const presets = usePresets();
   const campaign = useCampaign(event);
   const stop = useStopCampaign();
@@ -118,18 +120,20 @@ export function useCampaignForm(event: number, eventName: string) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [optimalCap, optimalDelay]);
 
-  const launch = () => {
+  const launch = async () => {
     setError(null);
     const n = preview?.targets_count ?? 0;
     const days = preview?.estimate.days ?? 0;
     const who = AUDIENCE.find((a) => a.key === audience)?.short ?? '';
-    if (
-      !confirm(
+    const ok = await confirm({
+      title: '¿Lanzamos la campaña?',
+      message:
         `Vas a mandar ${n} DM${n === 1 ? '' : 's'} (${who}) de "${eventName}", ` +
-          `~${days} día${days === 1 ? '' : 's'}. Mandar muchos DMs tiene riesgo de bloqueo. ¿Arrancamos?`
-      )
-    )
-      return;
+        `~${days} día${days === 1 ? '' : 's'}. Mandar muchos DMs tiene riesgo de bloqueo.`,
+      confirmLabel: `Lanzar · ${n} DM${n === 1 ? '' : 's'}`,
+      danger: true,
+    });
+    if (!ok) return;
     createMut.mutate();
   };
 

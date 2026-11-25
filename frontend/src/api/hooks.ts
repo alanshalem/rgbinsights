@@ -7,7 +7,14 @@ import {
   useQueryClient,
   type QueryClient,
 } from '@tanstack/react-query';
-import { api, ApiError, type EventCreate, type Task, type UsersQuery } from './client';
+import {
+  api,
+  ApiError,
+  type ConfigOut,
+  type EventCreate,
+  type Task,
+  type UsersQuery,
+} from './client';
 import { notify } from '../lib/notices';
 
 export function useEvents() {
@@ -259,6 +266,30 @@ export function useRunningJob(): Task | undefined {
   );
   const tasks = useSyncExternalStore(subscribe, () => qc.getQueryData<Task[]>(['tasks']));
   return tasks?.find((t) => t.status === 'running');
+}
+
+// -- configuración (local reads/writes only: never an Instagram request) -------
+
+/** The settings of the Configuración screen. */
+export function useConfig() {
+  return useQuery({ queryKey: ['config'], queryFn: () => api.getConfig() });
+}
+
+/** Save or restore settings: the answer is the new configuration. */
+function useConfigWrite<A>(write: (arg: A) => Promise<ConfigOut>) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: write,
+    onSuccess: (next) => qc.setQueryData(['config'], next),
+  });
+}
+
+export function useUpdateConfig() {
+  return useConfigWrite((values: Record<string, number>) => api.updateConfig(values));
+}
+
+export function useResetConfig() {
+  return useConfigWrite((key?: string) => api.resetConfig(key));
 }
 
 // -- campaigns -------------------------------------------------------------

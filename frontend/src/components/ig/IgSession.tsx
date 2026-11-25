@@ -4,6 +4,7 @@ import { api, toApiError } from '../../api/client';
 import { useIgStatus } from '../../api/hooks';
 import { fmtAgo } from '../../lib/time';
 import { Modal } from '../ui/Modal';
+import { useConfirm } from '../ui/confirmContext';
 
 // cooldown_until is shown in Argentina time, like every other hour in the app.
 const AR_TZ = 'America/Argentina/Buenos_Aires';
@@ -42,6 +43,7 @@ const SHORT: Record<string, string> = {
 };
 
 export function IgSession() {
+  const confirm = useConfirm();
   const qc = useQueryClient();
   const status = useIgStatus();
   const [open, setOpen] = useState(false);
@@ -54,13 +56,14 @@ export function IgSession() {
   const s = status.data;
 
   if (!s) return null;
+  // Development/tests only (RGB_DEV_FAKE_INSTAGRAM=1): invented data, never Instagram.
   if (s.demo) {
     return (
       <span
-        title="Modo demo (datos de ejemplo). Para usar tu Instagram real: poné IG_SOURCE=instagrapi en backend/.env y reiniciá."
+        title="Fuente de prueba para desarrollo: datos inventados, no toca Instagram."
         className="cursor-help rounded-full border border-border px-2 py-0.5 text-xs text-muted"
       >
-        demo · sin IG
+        prueba · sin IG
       </span>
     );
   }
@@ -82,7 +85,7 @@ export function IgSession() {
     setErrorCode(null);
   };
 
-  // Reconnect: saved session -> sessionid -> user/pass (handled server-side).
+  // Reconnect: re-checks the saved session once (server-side, no login).
   const reauth = async () => {
     clearErr();
     setSuccess(false);
@@ -91,7 +94,7 @@ export function IgSession() {
       const r = await api.igReauth();
       refresh();
       if (r.state === 'connected') setSuccess(true);
-      else showMsg('No se pudo conectar con la cuenta guardada. Probá pegar tu sesión (abajo).');
+      else showMsg('No se pudo conectar con la sesión guardada. Pegá una sesión nueva (abajo).');
     } catch (e) {
       // A flagged IP won't be fixed by a new sessionid — don't push the paste flow.
       const code = showErr(e);
@@ -125,12 +128,14 @@ export function IgSession() {
   };
 
   const disconnect = async () => {
-    if (
-      !confirm(
-        '¿Desconectar Instagram? Se borra la sesión guardada. Para reconectar vas a tener que pegar el sessionid de nuevo.'
-      )
-    )
-      return;
+    const ok = await confirm({
+      title: '¿Desconectar Instagram?',
+      message:
+        'Se borra la sesión guardada. Para reconectar vas a tener que pegar el sessionid de nuevo.',
+      confirmLabel: 'Desconectar',
+      danger: true,
+    });
+    if (!ok) return;
     clearErr();
     setSuccess(false);
     setBusy(true);
@@ -161,7 +166,13 @@ export function IgSession() {
       ? untilLabel(s.cooldown_until)
       : null;
   const dot = until ? 'bg-yellow' : (DOT[s.state] ?? DOT.disconnected);
-  const chipLabel = until ? `IG en pausa ${until}` : (LABEL[s.state] ?? 'IG');
+  // Never connected (no saved session): say what to do, not just "desconectado".
+  const neverConnected = s.state !== 'connected' && !s.has_saved_session;
+  const chipLabel = until
+    ? `IG en pausa ${until}`
+    : neverConnected
+      ? 'IG · pegá tu sesión'
+      : (LABEL[s.state] ?? 'IG');
   const chipShort = until ? 'IG ⏸' : (SHORT[s.state] ?? 'IG');
   const chipTitle = [
     `Instagram · última conexión ${fmtAgo(s.last_ok_at)}`,
@@ -352,12 +363,12 @@ export function IgSession() {
               !success && (
                 <>
                   <p className="text-muted">
-                    {s.has_credentials
-                      ? 'Instagram cerró la sesión. Volvé a conectar en un paso:'
-                      : 'Pegá el sessionid de tu navegador para conectar.'}
+                    {s.has_saved_session
+                      ? 'Instagram no está conectado ahora. Tu sesión guardada se puede revisar en un paso:'
+                      : 'Todavía no conectaste Instagram. Pegá tu sesión (el sessionid de tu navegador) para empezar: hasta entonces la app no le pide nada a Instagram.'}
                   </p>
 
-                  {s.has_credentials && (
+                  {s.has_saved_session && (
                     <button
                       type="button"
                       onClick={reauth}
@@ -366,7 +377,7 @@ export function IgSession() {
                     >
                       {busy ? 'Conectando…' : '🔄 Volver a conectar'}
                       <span className="mt-0.5 block text-xs font-normal opacity-80">
-                        Usa la cuenta ya configurada · automático
+                        Revisa una vez la sesión que ya pegaste · sin login
                       </span>
                     </button>
                   )}
@@ -379,8 +390,8 @@ export function IgSession() {
                     }}
                     className="text-xs text-muted underline hover:text-ink"
                   >
-                    {s.has_credentials
-                      ? '¿No anduvo o te pide un código? Pegá tu sesión →'
+                    {s.has_saved_session
+                      ? '¿No anduvo o venció? Pegá una sesión nueva →'
                       : 'Pegá tu sesión de Instagram →'}
                   </button>
 

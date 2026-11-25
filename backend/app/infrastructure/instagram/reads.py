@@ -10,9 +10,11 @@ client; the facade runs it as one guarded operation.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
+from app.domain.config import RuntimeConfig
 from app.domain.entities import Comment, FollowGraph, IgUser, Post, ProfileInfo
 from app.domain.errors import InstagramError, PostNotFoundError
 from app.infrastructure.config.settings import Settings
@@ -29,8 +31,12 @@ _FOLLOW_PAGE_SIZE = 200
 
 
 class IgReader:
-    def __init__(self, settings: Settings) -> None:
-        self._settings = settings
+    def __init__(
+        self, settings: Settings, config: Callable[[], RuntimeConfig] | None = None
+    ) -> None:
+        """`config`: the effective in-app configuration, read at every read (the
+        caps of the next read follow a saved change); default: `settings`."""
+        self._config = config or settings.runtime_defaults
         # media pk -> full media id ("<pk>_<owner pk>"), learned from posts we
         # already fetched. instagrapi needs the full id for comments/likers and
         # spends one extra media lookup per call to find it when it only has the pk.
@@ -46,7 +52,7 @@ class IgReader:
         # Following has no guaranteed order, so it is always read whole, with
         # exactly the call the app made before (instagrapi's user_following).
         our_id = str(client.user_id)
-        cap = self._settings.relationship_fetch_max
+        cap = self._config().relationship_fetch_max
         followers, saw_followers = self._read_followers(
             client, our_id, known.followers if known else None
         )
@@ -78,7 +84,7 @@ class IgReader:
         `known`, stopping after the first page that brings nobody new. Also
         returns whether IG listed anyone.
         """
-        cap = self._settings.relationship_fetch_max
+        cap = self._config().relationship_fetch_max
         listed: set[str] = set()  # instagrapi's `unique_set`: drives count and cap
         found: set[str] = set()
         max_id = ""
@@ -176,7 +182,7 @@ class IgReader:
         on a page proves nothing. Comments at or after `since` are returned.
         """
         endpoint = f"media/{self._media_id(client, media_pk)}/comments/"
-        cap = self._settings.scan_comments_limit
+        cap = self._config().scan_comments_limit
         comments: list[Comment] = []
         result = client.private_request(endpoint, None)
         all_known = _take_comments(result, since, comments)

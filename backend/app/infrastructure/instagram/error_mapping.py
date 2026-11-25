@@ -14,8 +14,16 @@ from app.domain.errors import (
     LoginRequiredError,
 )
 
+# A session that stopped working (L24: no relogin; a new paste is the way back).
+DEAD_SESSION = "La sesión venció: pegá un sessionid nuevo desde el chip IG."
+# A pasted sessionid Instagram did not accept.
+REJECTED_SESSIONID = (
+    "Instagram no aceptó ese sessionid (vencido o mal copiado): copiá el valor COMPLETO "
+    "de la cookie 'sessionid', recién sacado del navegador donde estés logueado a la cuenta."
+)
 
-def classify_login_error(exc: Exception) -> InstagramError:
+
+def classify_login_error(exc: Exception, *, pasted: bool = False) -> InstagramError:
     """Turn an instagrapi login/auth failure into a specific domain error so the
     UI can tell an IP block apart from an expired session.
 
@@ -23,8 +31,8 @@ def classify_login_error(exc: Exception) -> InstagramError:
       help; change network).
     - challenge / 2FA                    -> ChallengeRequiredError (verify on the
       phone, then repaste).
-    - anything else (dead sessionid, bad password) -> LoginRequiredError (paste a
-      fresh sessionid).
+    - anything else (dead session, or a `pasted` sessionid IG refused) ->
+      LoginRequiredError (paste a fresh sessionid).
     """
     from instagrapi.exceptions import (
         ChallengeRequired,
@@ -67,10 +75,7 @@ def classify_login_error(exc: Exception) -> InstagramError:
             "Esperá 12-48h sin automatizar, usá la cuenta a mano desde el celu, y "
             "probá desde otra red. No reintentes seguido — lo alarga."
         )
-    return LoginRequiredError(
-        "La sesión venció o el sessionid es inválido. Pegá un sessionid nuevo del "
-        "navegador donde estés logueado a la cuenta."
-    )
+    return LoginRequiredError(REJECTED_SESSIONID if pasted else DEAD_SESSION)
 
 
 def to_instagram_error(exc: Exception) -> InstagramError:

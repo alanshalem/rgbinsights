@@ -36,22 +36,39 @@ class HumanPacer:
         rest_max: float,
         rng: random.Random | None = None,
     ) -> None:
+        self.configure(
+            min_delay, max_delay, rest_every=rest_every, rest_min=rest_min, rest_max=rest_max
+        )
+        self._rng = rng or random.Random()
+        self._since_rest = 0  # requests since the last long rest
+
+    def configure(
+        self,
+        min_delay: float,
+        max_delay: float,
+        *,
+        rest_every: int,
+        rest_min: float,
+        rest_max: float,
+    ) -> None:
+        """Use these bounds from the next gap on. The requests since the last
+        long rest carry on, so a new spacing applies right away: if that many
+        already went by, the next request rests (never a longer stretch)."""
         self._min = max(0.0, min_delay)
         self._max = max(self._min, max_delay)
         self._rest_every = rest_every
         self._rest_min = max(0.0, rest_min)
         self._rest_max = max(self._rest_min, rest_max)
-        self._rng = rng or random.Random()
-        self._count = 0
 
     def next_delay(self) -> float:
-        self._count += 1
+        self._since_rest += 1
         lo, hi = self._min, self._max
         delay = self._rng.triangular(lo, hi, (lo + hi) / 2)
         if self._rng.random() < _DISTRACTION_CHANCE:
             delay += self._rng.uniform(hi, hi * _DISTRACTION_FACTOR)
-        if self._rest_every > 0 and self._count % self._rest_every == 0:
+        if self._rest_every > 0 and self._since_rest >= self._rest_every:
             delay += self._rng.uniform(self._rest_min, self._rest_max)
+            self._since_rest = 0
         return delay
 
 
@@ -89,7 +106,7 @@ class RequestBudget:
 
     def counters(self) -> dict[str, Any]:
         data = asdict(self)
-        del data["per_hour"], data["per_day"]  # caps come from settings, not the file
+        del data["per_hour"], data["per_day"]  # caps come from the configuration, not the file
         return data
 
     def restore(self, data: dict[str, Any]) -> None:

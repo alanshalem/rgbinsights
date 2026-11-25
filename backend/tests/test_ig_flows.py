@@ -55,7 +55,6 @@ class Wiring:
     def __init__(self, tmp_path: Path) -> None:
         self.settings = Settings(
             _env_file=None,
-            ig_source="instagrapi",
             ig_session_file=str(tmp_path / "session.json"),
             ig_guard_file=str(tmp_path / "ig_guard.json"),
         )

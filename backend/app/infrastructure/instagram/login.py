@@ -1,9 +1,12 @@
-"""Session/login for the instagrapi adapter: the one logged-in client.
+"""Session for the instagrapi adapter: the one logged-in client.
 
-Good-behaviour rule: log in once and reuse the session (saved to session.json,
-which also keeps a stable device). Every login runs inside an IgGuard
-operation: a failure that reached Instagram opens the login breaker, a success
-closes it. instagrapi is imported lazily to keep it optional at import time.
+The only way in is a sessionid pasted in the app (chip IG -> "Pegá tu sesión",
+L24): it is validated once and saved to session.json (which also keeps a stable
+device), then reused across restarts. There is no username/password login and
+no automatic relogin: a dead session just surfaces as LoginRequiredError and
+waits for a new paste. Every attempt runs inside an IgGuard operation: a
+failure that reached Instagram opens the login breaker, a success closes it.
+instagrapi is imported lazily to keep it optional at import time.
 """
 
 from __future__ import annotations
@@ -19,7 +22,11 @@ from app.domain.errors import (
     LoginRequiredError,
 )
 from app.infrastructure.config.settings import Settings
-from app.infrastructure.instagram.error_mapping import classify_login_error, is_dead_session
+from app.infrastructure.instagram.error_mapping import (
+    DEAD_SESSION,
+    classify_login_error,
+    is_dead_session,
+)
 from app.infrastructure.instagram.guard import IgGuard
 from app.infrastructure.instagram.session import build_client
 
@@ -28,10 +35,15 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+NO_SESSION = (
+    "No hay una sesión de Instagram guardada: pegá tu sessionid desde el chip IG "
+    "(arriba a la derecha)."
+)
+
 
 class IgLogin:
-    """Owns the instagrapi client: layered login, sessionid connect, and
-    dropping a dead session so the next operation logs in from scratch."""
+    """Owns the instagrapi client: the saved session, the sessionid paste, and
+    dropping a dead session (never replaced by a login: a new paste is needed)."""
 
     def __init__(self, settings: Settings, guard: IgGuard) -> None:
         self._settings = settings
@@ -48,81 +60,23 @@ class IgLogin:
             self.client = None
 
     def client_or_login(self) -> Client:
-        """The logged-in client, authenticating with the cheapest/lowest-risk path first.
+        """The logged-in client: the one in memory, else the saved session.json
+        (loaded by build_client, reuses the device) validated with one cheap probe.
 
-        1. A saved session.json (reuses the device; no network login) — validated.
-        2. IG_SESSIONID from a real browser (low ban risk; recommended bootstrap).
-        3. username/password (+ TOTP) — auto-renews when the session finally dies.
-
-        Every success is persisted to session.json so the next start reuses it and
-        the account keeps a stable device. This is what makes the login survive
-        restarts and self-heal on expiry.
-
-        Always runs inside a guard operation: a failure that reached Instagram
-        opens the login breaker, a success closes it.
+        No saved session -> LoginRequiredError without any request. Never a
+        login: a dead session needs a new paste. Always runs inside a guard
+        operation: a probe that fails opens the login breaker (15 min -> 1 h ->
+        6 h), so a dead session.json is re-checked at most that often.
         """
         if self.client is not None:
             return self.client
-
-        # Lazy import: keeps instagrapi optional at import time.
-        from instagrapi.exceptions import (
-            ChallengeRequired,
-            LoginRequired,
-            TwoFactorRequired,
-        )
-
-        client = build_client(self._settings, self._challenge_code_handler)
         session_path = Path(self._settings.ig_session_file)
-        errors: list[str] = []
-
-        # 1. Reuse a saved session (build_client already loaded it).
-        if session_path.exists() and self._session_valid(client):
-            logger.info("reusing saved IG session")
-            return self._logged_in(client)
-
-        # 2. Bootstrap from a browser sessionid.
-        sessionid = self._settings.ig_sessionid.strip()
-        if sessionid:
-            self._guard.note_sessionid(sessionid)
-            try:
-                client.login_by_sessionid(sessionid)
-                self._persist(client, session_path)
-                return self._logged_in(client)
-            except (ChallengeRequired, LoginRequired) as exc:
-                errors.append(f"sessionid vencido/rechazado: {exc}")
-            except Exception as exc:  # noqa: BLE001 — surfaced below as handled
-                if isinstance(domain := classify_login_error(exc), IpBlockedError):
-                    raise domain from exc  # a flagged IP breaks every path — stop now
-                errors.append(f"sessionid: {exc}")
-
-        # 3. username/password (auto-renews when the session dies).
-        if self._settings.has_password_login:
-            try:
-                verification_code = self._totp_code(client)
-                client.login(
-                    self._settings.ig_username,
-                    self._settings.ig_password,
-                    verification_code=verification_code,
-                )
-                self._persist(client, session_path)
-                return self._logged_in(client)
-            except TwoFactorRequired as exc:
-                raise ChallengeRequiredError(
-                    "IG pide 2FA. Cargá IG_2FA_SECRET en .env para resolverlo solo."
-                ) from exc
-            except ChallengeRequired as exc:
-                raise ChallengeRequiredError(
-                    "Instagram pidió verificación (challenge). Reconectá con el sessionid."
-                ) from exc
-            except InstagramError:
-                raise  # already a handled type (e.g. from the TOTP guard)
-            except Exception as exc:  # noqa: BLE001
-                if isinstance(domain := classify_login_error(exc), IpBlockedError):
-                    raise domain from exc  # a flagged IP breaks every path — stop now
-                errors.append(f"user/pass: {exc}")
-
-        detail = "; ".join(errors) if errors else "no hay sessionid ni user/pass en .env"
-        raise LoginRequiredError(f"no se pudo iniciar sesión de Instagram ({detail})")
+        if not session_path.exists():
+            raise LoginRequiredError(NO_SESSION)
+        client = build_client(self._settings, self._challenge_code_handler)
+        self._probe(client)
+        logger.info("reusing saved IG session")
+        return self._logged_in(client)
 
     def connect_sessionid(self, sessionid: str) -> str:
         """Explicit user action: adopt a sessionid pasted from a real browser.
@@ -142,7 +96,7 @@ class IgLogin:
             except InstagramError:
                 raise  # already classified (challenge handler / guard rails)
             except Exception as exc:  # noqa: BLE001 — classify 403/IP-block/expired session
-                raise classify_login_error(exc) from exc
+                raise classify_login_error(exc, pasted=True) from exc
             self._persist(client, Path(self._settings.ig_session_file))
             return str(self._logged_in(client).user_id)
 
@@ -151,19 +105,24 @@ class IgLogin:
         self._guard.login_ok()
         return client
 
-    def _session_valid(self, client: Client) -> bool:
-        """Cheap authed probe: True if the loaded session still works.
+    def _probe(self, client: Client) -> None:
+        """Cheap authed probe of the saved session.
 
         Uses account_info() (/accounts/current_user/) on purpose: it is gentler
         than the timeline feed, which IG heavily monitors and 403s on the
-        slightest throttle/flag even when the session is fine for scraping. We'd
-        rather keep a usable-but-throttled session connected than mark it dead.
+        slightest throttle/flag even when the session is fine for scraping. An IP
+        block or a challenge keeps its own message; anything else means the
+        session is dead.
         """
         try:
             client.account_info()
-            return True
-        except Exception:  # noqa: BLE001 — any failure means fall through to re-login
-            return False
+        except InstagramError:
+            raise  # our own rails (cooldown, budget) or the challenge handler
+        except Exception as exc:  # noqa: BLE001 — classified below
+            domain = classify_login_error(exc)
+            if isinstance(domain, IpBlockedError | ChallengeRequiredError):
+                raise domain from exc
+            raise LoginRequiredError(DEAD_SESSION) from exc
 
     def _persist(self, client: Client, session_path: Path) -> None:
         try:
@@ -171,24 +130,6 @@ class IgLogin:
             logger.info("saved IG session to %s", session_path)
         except Exception:  # noqa: BLE001 — persistence is best-effort
             logger.warning("could not save IG session", exc_info=True)
-
-    def _totp_code(self, client: Client) -> str:
-        """Generate a 2FA code from the seed, or "" if none is configured.
-
-        The seed is stripped first (a stray inline comment or whitespace in
-        .env must not be treated as a real seed), and a malformed seed becomes
-        a clear handled error rather than an unhandled base32 crash.
-        """
-        secret = self._settings.ig_2fa_secret.strip()
-        if not secret:
-            return ""
-        try:
-            return str(client.totp_generate_code(secret))
-        except Exception as exc:
-            raise LoginRequiredError(
-                "IG_2FA_SECRET no es una semilla TOTP válida (base32); "
-                "dejalo vacío si la cuenta no tiene 2FA."
-            ) from exc
 
     def _challenge_code_handler(self, username: str, choice: Any) -> str:
         # We can't prompt interactively from the API. Surface it as a handled

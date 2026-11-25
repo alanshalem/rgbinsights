@@ -48,9 +48,7 @@ def test_every_client_call_runs_inside_a_guard_operation(tmp_path: Path) -> None
 
             return call
 
-    settings = Settings(
-        _env_file=None, ig_source="instagrapi", ig_session_file=str(tmp_path / "s.json")
-    )
+    settings = Settings(_env_file=None, ig_session_file=str(tmp_path / "s.json"))
     src = InstagrapiInstagramSource(settings, guard=guard)  # type: ignore[arg-type]
     src._client = Client()
     src.current_user_pk()

@@ -5,7 +5,14 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlmodel import Session
 
-from app.api.deps import require_event, session_dep, source_dep, start_job, uow_factory_dep
+from app.api.deps import (
+    require_event,
+    session_dep,
+    settings_dep,
+    source_dep,
+    start_job,
+    uow_factory_dep,
+)
 from app.api.schemas import EventCreate, EventOut, EventUpdate, TaskOut
 from app.application.ports import InstagramSource, UnitOfWork, UnitOfWorkFactory
 from app.application.tasks import Task, scan_summary
@@ -19,7 +26,7 @@ from app.application.use_cases import (
 )
 from app.application.use_cases.sync import CAPPED_NOTE
 from app.domain.traffic_light import TrafficLight
-from app.infrastructure.config.settings import Settings, get_settings
+from app.infrastructure.config.settings import Settings
 from app.infrastructure.persistence import models
 from app.infrastructure.persistence.repositories import EventRepository
 
@@ -90,7 +97,7 @@ def rescan_event(
     force: bool = False,
     session: Session = Depends(session_dep),
     source: InstagramSource = Depends(source_dep),
-    settings: Settings = Depends(get_settings),
+    settings: Settings = Depends(settings_dep),
     new_uow: UnitOfWorkFactory = Depends(uow_factory_dep),
 ) -> TaskOut:
     """Re-scan the fiesta's posts (likes + comments); recently scanned ones are skipped."""
@@ -128,12 +135,12 @@ def refresh_event(
     force: bool = False,
     session: Session = Depends(session_dep),
     source: InstagramSource = Depends(source_dep),
-    settings: Settings = Depends(get_settings),
+    settings: Settings = Depends(settings_dep),
     new_uow: UnitOfWorkFactory = Depends(uow_factory_dep),
 ) -> TaskOut:
     """Re-scan the fiesta's posts (likes + comments) AND sync DMs in one job."""
     require_event(session, event_id)
-    skip_hours, incremental = settings.rescan_skip_hours, settings.dm_incremental
+    skip_hours = settings.rescan_skip_hours
 
     def work(task: Task, uow: UnitOfWork) -> None:
         before = event_counts(uow, event_id)
@@ -142,9 +149,7 @@ def refresh_event(
                 event_id, task.progress, force=force, skip_hours=skip_hours
             )
         )
-        sync = task.unwrap(
-            SyncDmsUseCase(source, uow).execute(task.progress, force=force, incremental=incremental)
-        )
+        sync = task.unwrap(SyncDmsUseCase(source, uow).execute(task.progress, force=force))
         task.set_result(
             {
                 "posts": len(scan.results),
@@ -172,7 +177,7 @@ def enrich_event(
     force: bool = False,
     session: Session = Depends(session_dep),
     source: InstagramSource = Depends(source_dep),
-    settings: Settings = Depends(get_settings),
+    settings: Settings = Depends(settings_dep),
     new_uow: UnitOfWorkFactory = Depends(uow_factory_dep),
 ) -> TaskOut:
     """Fetch follower count / verified / bio for the fiesta's users (slow, opt-in).

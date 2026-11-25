@@ -8,7 +8,7 @@ other. Only what a caller actually uses is declared here.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -240,6 +240,21 @@ class AppStateRepo(Protocol):
 
 class ActivityRepo(Protocol):
     def add(self, kind: str, status: str, message: str) -> None: ...
+
+
+class ConfigStore(Protocol):
+    """The in-app configuration overrides (S25): key -> value, only for the
+    settings the user changed. Each call is its own transaction."""
+
+    def load(self) -> dict[str, object]: ...
+
+    def save(self, values: Mapping[str, object]) -> None:
+        """Insert or replace these overrides."""
+        ...
+
+    def delete(self, keys: Iterable[str] | None = None) -> None:
+        """Drop these overrides (all of them with None): back to the defaults."""
+        ...
 
 
 class UserListReader(Protocol):

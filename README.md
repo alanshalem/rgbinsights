@@ -82,15 +82,17 @@ python -m venv .venv
 source .venv/bin/activate
 
 pip install -r requirements.txt
-copy .env.example .env      # Windows   (Mac/Linux: cp .env.example .env)
 uvicorn app.main:app --reload --port 8000
 ```
 
 Cuando veas `Application startup complete`, dejá esa terminal abierta.
 
-> **Modo demo (por defecto):** viene con `IG_SOURCE=fake`, así que
-> funciona con **datos de ejemplo** sin tocar Instagram. Perfecto para probarlo.
-> Para usar Instagram de verdad, ver [Usar Instagram real](#usar-instagram-real).
+> **No hace falta configurar nada.** El archivo `backend/.env` es opcional y
+> solo sirve para un proxy (`IG_PROXY`, ver abajo). Todo lo demás se ajusta
+> desde la pantalla **Configuración** de la app.
+>
+> **Usa tu Instagram real**, pero no le pide nada a Instagram hasta que pegues
+> tu sesión (ver [Usar Instagram real](#usar-instagram-real)).
 
 ### Terminal 2 — Frontend
 
@@ -122,36 +124,23 @@ Re-escanear un post no duplica nada: podés hacerlo las veces que quieras.
 
 ## Usar Instagram real
 
-La app habla con Instagram por la API móvil (instagrapi). Instagram suele frenar
-el login con usuario y contraseña con un *checkpoint*, así que lo más simple es
-**reusar la sesión de tu navegador** (`sessionid`).
+La app habla con Instagram por la API móvil (instagrapi) y se conecta de
+**una sola forma**: **reusando la sesión de tu navegador** (`sessionid`). No hay
+login con usuario y contraseña (Instagram lo frena con un *checkpoint*).
 
-### Opción recomendada: pegar el `sessionid` desde la app
-
-1. En `backend/.env`: `IG_SOURCE=instagrapi` y reiniciá la app (un `.env` viejo con `USE_FAKE_INSTAGRAM=false` también sirve).
-2. Tocá el chip **IG** (arriba) → **Pegá tu sesión de Instagram** y seguí los
-   pasos en pantalla: abrí instagram.com logueado, `F12` → **Application** →
-   **Cookies** → `https://www.instagram.com`, copiá el valor de `sessionid`.
-3. Pegalo y dale **Guardar y conectar**. La sesión queda guardada en
+1. Tocá el chip **IG · pegá tu sesión** (arriba) → **Pegá tu sesión de
+   Instagram** y seguí los pasos en pantalla: abrí instagram.com logueado, `F12` →
+   **Application** → **Cookies** → `https://www.instagram.com`, copiá el valor de
+   `sessionid`.
+2. Pegalo y dale **Guardar y conectar**. La sesión queda guardada en
    `session.json` y se reusa en cada arranque (no vuelve a loguear de cero).
 
 > `session.json` guarda tu sesión de Instagram: no la compartas (está en
 > `.gitignore`). Para cortarla, chip **IG** → **Desconectar**.
 
-### Alternativa: usuario y contraseña en `.env`
-
-Suele frenar con checkpoint; solo si tu cuenta permite login móvil.
-
-1. Editá `backend/.env`:
-   - `IG_SOURCE=instagrapi`
-   - `IG_USERNAME=` y `IG_PASSWORD=` con la cuenta.
-   - Si la cuenta tiene 2FA, poné el seed TOTP en `IG_2FA_SECRET`.
-2. Levantá la app y tocá chip **IG** → **Reconectar con Instagram**. El login
-   ocurre solo cuando lo pedís (o al lanzar una operación), nunca solo.
-
-Si Instagram pide **verificación** durante el uso, la app lo avisa en
-pantalla (cartel amarillo) y **no se rompe** — pegá un `sessionid` recién
-sacado del navegador para reconectar.
+Si la sesión vence o Instagram pide **verificación**, la app lo avisa en
+pantalla y **no se rompe** ni intenta loguearse sola: confirmá desde el celu si
+te lo pide y pegá un `sessionid` recién sacado del navegador (chip **IG**).
 
 ### Que Instagram no te bloquee
 
@@ -162,11 +151,13 @@ Lo que más ayuda, en orden:
    *"¿Fuiste vos?"*.
 3. Conectá pegando el `sessionid` (chip **IG**): queda la **sesión guardada** y
    se reusa (reusar sesión es la defensa #1).
-4. Poné país/locale en `.env`: `IG_COUNTRY=AR`, `IG_LOCALE=es_AR`.
+4. País, idioma y zona horaria ya van fijos en Argentina (`AR`, `es_AR`).
 5. Si aún así te bloquea, configurá un **proxy estable** (residencial/móvil, uno
-   fijo — no rotativo) en `IG_PROXY=`.
-6. Andá **despacio**: pocas requests. Las demoras y el tope por corrida se
-   configuran con `SCAN_*` en `.env`.
+   fijo — no rotativo) en `backend/.env`: `IG_PROXY=http://usuario:clave@host:puerto`
+   (es la única variable de entorno; reiniciá la app después).
+6. Andá **despacio**: pocas requests. Las esperas, los descansos y los topes se
+   ajustan en **Configuración** — solo hacia lo más seguro (esperas más largas y
+   topes más bajos que los de fábrica).
 
 ---
 
@@ -174,6 +165,8 @@ Lo que más ayuda, en orden:
 
 - Backend: FastAPI + SQLModel sobre SQLite (`backend/rgb.db`). Ver
   [`backend/README.md`](backend/README.md).
+- Configuración: `GET/PUT /config` y `POST /config/reset`, guardada en la DB y
+  aplicada desde el próximo pedido a Instagram (sin reiniciar).
 - Frontend: Vite + React + TypeScript (strict) + TanStack Query, con cliente
   HTTP **tipado generado desde el OpenAPI** del backend.
 - La app escucha solo en `127.0.0.1` (no se expone a internet).

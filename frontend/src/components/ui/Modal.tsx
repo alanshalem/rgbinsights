@@ -1,18 +1,28 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 
+/** The open modals, oldest first. Only the last one (on top) answers Escape and
+ * traps Tab, so a confirm stacked over another modal closes alone. */
+const openModals: symbol[] = [];
+
+function isTopmost(id: symbol): boolean {
+  return openModals[openModals.length - 1] === id;
+}
+
 const FOCUSABLE =
   'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 /** Shared modal shell: dimmed overlay + panel. `center` for short dialogs,
  * default is top-aligned + scrollable for tall content.
  *
- * Closes on Escape, or on a genuine backdrop click — a press that both STARTS
+ * Closes on Escape (only the topmost open modal: a dialog stacked on another,
+ * like a confirm over the campaign form, closes alone and the event goes no
+ * further), or on a genuine backdrop click — a press that both STARTS
  * and ENDS on the overlay. Selecting text inside and releasing outside (a
  * drag-out) does NOT close it, so copying a message never loses your work.
  *
  * Keyboard: focus moves into the dialog on open, Tab / Shift+Tab stay inside
- * it, and on close focus goes back to whatever opened it.
+ * the topmost dialog, and on close focus goes back to whatever opened it.
  *
  * Rendered through a portal to <body>: a `fixed` element is positioned relative
  * to the nearest ancestor with a transform/filter, and the navbar uses
@@ -32,6 +42,7 @@ export function Modal({
   center?: boolean;
 }) {
   const pressedBackdrop = useRef(false);
+  const [id] = useState(() => Symbol('modal'));
   const panelRef = useRef<HTMLDivElement>(null);
   // What had focus when the modal opened (read on the first render, before an
   // autoFocus field inside takes it), to give focus back on close.
@@ -39,9 +50,23 @@ export function Modal({
     document.activeElement instanceof HTMLElement ? document.activeElement : null
   );
 
+  // On top while mounted (a later modal goes above it).
   useEffect(() => {
+    openModals.push(id);
+    return () => {
+      const at = openModals.lastIndexOf(id);
+      if (at !== -1) openModals.splice(at, 1);
+    };
+  }, [id]);
+
+  useEffect(() => {
+    // Capture phase on window: the topmost modal sees the key before anything
+    // else, and an Escape it handles reaches nothing behind it.
     const onKey = (e: KeyboardEvent) => {
+      if (!isTopmost(id)) return;
       if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
         onClose();
         return;
       }
@@ -52,20 +77,23 @@ export function Modal({
       const last = items[items.length - 1];
       if (!first || !last) {
         e.preventDefault();
+        e.stopPropagation();
         return;
       }
       const inside = panelRef.current.contains(document.activeElement);
       if (e.shiftKey && (document.activeElement === first || !inside)) {
         e.preventDefault();
+        e.stopPropagation();
         last.focus();
       } else if (!e.shiftKey && (document.activeElement === last || !inside)) {
         e.preventDefault();
+        e.stopPropagation();
         first.focus();
       }
     };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [onClose]);
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [id, onClose]);
 
   // Move focus into the dialog on open (unless a field inside already took it
   // with autoFocus), so keyboard/screen-reader users land inside it; give it

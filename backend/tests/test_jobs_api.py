@@ -81,7 +81,7 @@ def engine(tmp_path: Path) -> Iterator[Engine]:
 @pytest.fixture
 def use_source(engine: Engine) -> Iterator[Callable[[InstagramSource], None]]:
     """Wire the app to the test DB + a given fake source; FakeInstagramSource by default."""
-    settings = Settings(_env_file=None, use_fake_instagram=True, ig_source="")
+    settings = Settings(_env_file=None, dev_fake_instagram=True)
 
     def session() -> Iterator[Session]:
         with Session(engine) as s:

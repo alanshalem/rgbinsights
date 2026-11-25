@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Response
 
-from app.api.deps import source_dep, start_job, uow_factory_dep
+from app.api.deps import settings_dep, source_dep, start_job, uow_factory_dep
 from app.api.schemas import ScanPostsRequest, TaskOut
 from app.application.ports import InstagramSource, UnitOfWork, UnitOfWorkFactory
 from app.application.tasks import Task, scan_summary
 from app.application.use_cases import ScanPostsUseCase, event_counts
-from app.infrastructure.config.settings import Settings, get_settings
+from app.infrastructure.config.settings import Settings
 
 router = APIRouter(prefix="/scan", tags=["scan"])
 
@@ -17,7 +17,7 @@ def scan_posts(
     body: ScanPostsRequest,
     response: Response,
     source: InstagramSource = Depends(source_dep),
-    settings: Settings = Depends(get_settings),
+    settings: Settings = Depends(settings_dep),
     new_uow: UnitOfWorkFactory = Depends(uow_factory_dep),
 ) -> TaskOut:
     """Background job (202 + the job): progress/result via /tasks/stream or /tasks/{id}."""

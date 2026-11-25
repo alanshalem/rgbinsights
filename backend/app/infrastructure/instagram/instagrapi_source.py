@@ -1,6 +1,6 @@
 """InstagrapiInstagramSource — the real adapter, a thin facade over its parts.
 
-- login.py          session/login (one logged-in client, reused)
+- login.py          the session (pasted sessionid -> session.json, reused)
 - reads.py          posts, comments, likers, profiles, follow graph
 - direct.py         DM inbox and sending
 - error_mapping.py  instagrapi/network exceptions -> domain errors
@@ -19,14 +19,15 @@ from collections.abc import Callable
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
+from app.domain.config import RuntimeConfig
 from app.domain.entities import Comment, DmInbox, FollowGraph, IgUser, Post, ProfileInfo
 from app.infrastructure.config.settings import Settings
 from app.infrastructure.instagram import direct
-from app.infrastructure.instagram.error_mapping import is_dead_session, to_instagram_error
+from app.infrastructure.instagram.error_mapping import to_instagram_error
 from app.infrastructure.instagram.guard import IgGuard, get_guard
 from app.infrastructure.instagram.login import IgLogin
 from app.infrastructure.instagram.reads import IgReader
-from app.infrastructure.instagram.session import take_relogin_failure
+from app.infrastructure.instagram.session import take_session_failure
 
 if TYPE_CHECKING:
     from instagrapi import Client
@@ -51,19 +52,18 @@ def _call_adapted(
     fn: Callable[..., Any], source: InstagrapiInstagramSource, *args: Any, **kwargs: Any
 ) -> Any:
     if (client := source._client) is not None:
-        take_relogin_failure(client)  # discard a stale record from an earlier call
+        take_session_failure(client)  # discard a stale record from an earlier call
     try:
         return fn(source, *args, **kwargs)
     except Exception as exc:  # noqa: BLE001 — normalised at the adapter boundary
         err = to_instagram_error(exc)
-        # instagrapi may swallow a failed relogin and report a misleading
+        # instagrapi may swallow a session failure and report a misleading
         # fallback error (e.g. "not found"); the real cause wins.
         client = source._client
-        if client is not None and (failure := take_relogin_failure(client)) is not None:
+        if client is not None and (failure := take_session_failure(client)) is not None:
             err = to_instagram_error(failure)
-        if is_dead_session(err):
-            # The client's cookies are gone; log in from scratch next time.
-            source._client = None
+        # A dead session's cookies are gone: drop the client (a new paste is needed).
+        source._login.forget_if_dead(err)
         if err is exc:
             raise
         raise err from exc
@@ -72,11 +72,18 @@ def _call_adapted(
 class InstagrapiInstagramSource:
     """Adapter over instagrapi.Client implementing the InstagramSource port."""
 
-    def __init__(self, settings: Settings, guard: IgGuard | None = None) -> None:
-        self._settings = settings
-        self._guard = guard or get_guard(settings)
+    def __init__(
+        self,
+        settings: Settings,
+        guard: IgGuard | None = None,
+        config: Callable[[], RuntimeConfig] | None = None,
+    ) -> None:
+        """`config`: the effective in-app configuration (S25), read at every
+        request/read; without it `settings`' own values are used."""
+        self._config = config or settings.runtime_defaults
+        self._guard = guard or get_guard(settings, config)
         self._login = IgLogin(settings, self._guard)
-        self._reads = IgReader(settings)
+        self._reads = IgReader(settings, self._config)
 
     @property
     def _client(self) -> Client | None:
@@ -130,7 +137,7 @@ class InstagrapiInstagramSource:
     @_adapts
     def get_dm_threads(self, since: datetime | None = None) -> DmInbox:
         client = self._login.client_or_login()
-        return direct.read_inbox(client, self._settings.dm_threads_limit, since)
+        return direct.read_inbox(client, self._config().dm_threads_limit, since)
 
     def send_dm(self, user_pk: str, text: str) -> None:
         # Besides the campaign's own rails (per-send delay + daily cap), the send's

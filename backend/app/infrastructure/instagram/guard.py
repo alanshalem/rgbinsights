@@ -7,6 +7,11 @@
   every request for `ig_throttle_cooldown_minutes`.
 - Real per-hour/per-day budget and human pacing for EVERY HTTP request.
 
+Pacing, budget caps, cooldown length and lock wait come from the in-app
+configuration (S25), read again at every operation/request: a saved change
+applies from the next Instagram request on, never in the middle of one. Counters
+already spent stay (a cap lowered below them just waits for the window).
+
 `install()` wraps the request method of the client's requests sessions, the
 one place all instagrapi traffic (private API, public/GraphQL, every page of a
 paginated read) goes through, so nothing is counted or paced per call site.
@@ -33,6 +38,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from app.domain.config import RuntimeConfig
 from app.domain.errors import (
     ChallengeRequiredError,
     IgBusyError,
@@ -108,28 +114,31 @@ class IgGuard:
         self,
         settings: Settings,
         *,
+        config: Callable[[], RuntimeConfig] | None = None,
         clock: Callable[[], datetime] = _utcnow,
         sleep: Callable[[float], None] = time.sleep,
         rng: random.Random | None = None,
     ) -> None:
-        self._settings = settings
+        """`config` gives the effective in-app configuration (the composition
+        root passes the configuration service's); without it, `settings`' own
+        values are used as they are."""
         self._tz = settings.local_tz()
+        self._config = config or _fixed(settings.runtime_defaults())
         self._clock = clock
         self._sleep = sleep
         self._path = Path(settings.ig_guard_file)
         self._lock = threading.RLock()  # one Instagram operation at a time
         self._state_lock = threading.Lock()  # guards _state/_budget for status readers
+        now = self._config()
         self._pacer = HumanPacer(
-            settings.scan_min_delay_seconds,
-            settings.scan_max_delay_seconds,
-            rest_every=settings.ig_rest_every_requests,
-            rest_min=settings.ig_rest_min_seconds,
-            rest_max=settings.ig_rest_max_seconds,
+            now.scan_min_delay_seconds,
+            now.scan_max_delay_seconds,
+            rest_every=now.ig_rest_every_requests,
+            rest_min=now.ig_rest_min_seconds,
+            rest_max=now.ig_rest_max_seconds,
             rng=rng,
         )
-        self._budget = RequestBudget(
-            settings.ig_max_requests_per_hour, settings.ig_max_requests_per_day
-        )
+        self._budget = RequestBudget(now.ig_max_requests_per_hour, now.ig_max_requests_per_day)
         self._state = _State()
         self._load()
         # Per-operation bookkeeping, touched only by the thread holding _lock.
@@ -151,7 +160,7 @@ class IgGuard:
         is skipped once, but only if it is not the sessionid whose login opened
         it; an IP-block breaker and the cooldown never are.
         """
-        if not self._lock.acquire(timeout=self._settings.ig_lock_wait_seconds):
+        if not self._lock.acquire(timeout=self._config().ig_lock_wait_seconds):
             raise IgBusyError(
                 "Instagram está ocupado con otra operación (campaña o escaneo). "
                 "Probá de nuevo en unos minutos."
@@ -278,11 +287,14 @@ class IgGuard:
         return guarded_send
 
     def _before_request(self) -> None:
+        config = self._config()  # the latest saved values, for this request
         now = self._clock()
         with self._state_lock:
             cooldown, reason = self._state.cooldown_until, self._state.cooldown_reason
             if cooldown is not None and now < cooldown:
                 raise self._remember_stop(self._cooldown_error(cooldown, reason))
+            self._budget.per_hour = config.ig_max_requests_per_hour
+            self._budget.per_day = config.ig_max_requests_per_day
             try:
                 self._budget.spend(now.astimezone(self._tz))
             except RateLimitedError as exc:
@@ -290,6 +302,13 @@ class IgGuard:
             finally:
                 self._save()
         self._attempts += 1
+        self._pacer.configure(
+            config.scan_min_delay_seconds,
+            config.scan_max_delay_seconds,
+            rest_every=config.ig_rest_every_requests,
+            rest_min=config.ig_rest_min_seconds,
+            rest_max=config.ig_rest_max_seconds,
+        )
         self._sleep(self._pacer.next_delay())
 
     def _after_response(self, response: Any) -> None:
@@ -304,7 +323,8 @@ class IgGuard:
         marker = next((m for m in _THROTTLE_MARKERS if m in body), None)
         if status == 429 or marker is not None:
             reason = f"Instagram pidió frenar ({marker or 'HTTP 429'})"
-            until = self._clock() + timedelta(minutes=self._settings.ig_throttle_cooldown_minutes)
+            minutes = self._config().ig_throttle_cooldown_minutes
+            until = self._clock() + timedelta(minutes=minutes)
             logger.warning("%s — cooldown until %s", reason, until)
             self._update(cooldown_until=until, cooldown_reason=reason, last_error=reason)
 
@@ -400,6 +420,13 @@ class IgGuard:
             logger.warning("could not save %s", self._path, exc_info=True)
 
 
+def _fixed(config: RuntimeConfig) -> Callable[[], RuntimeConfig]:
+    def fixed() -> RuntimeConfig:
+        return config
+
+    return fixed
+
+
 def _sessionid_hash(sessionid: str) -> str:
     return hashlib.sha256(sessionid.strip().encode("utf-8")).hexdigest()
 
@@ -428,11 +455,15 @@ _guards: dict[str, IgGuard] = {}
 _guards_lock = threading.Lock()
 
 
-def get_guard(settings: Settings) -> IgGuard:
-    """The process-wide guard for this state file (one lock, one budget)."""
+def get_guard(settings: Settings, config: Callable[[], RuntimeConfig] | None = None) -> IgGuard:
+    """The process-wide guard for this state file (one lock, one budget).
+
+    `config` is used when the guard is first built; the composition root passes
+    it on every path that can build it, so the shared guard reads the in-app
+    configuration."""
     key = str(Path(settings.ig_guard_file).resolve())
     with _guards_lock:
         guard = _guards.get(key)
         if guard is None:
-            guard = _guards[key] = IgGuard(settings)
+            guard = _guards[key] = IgGuard(settings, config=config)
         return guard
