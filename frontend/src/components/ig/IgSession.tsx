@@ -2,16 +2,8 @@ import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { api, toApiError } from '../../api/client';
 import { useIgStatus } from '../../api/hooks';
+import { fmtAgo } from '../../lib/time';
 import { Modal } from '../ui/Modal';
-
-function ago(iso: string | null | undefined): string {
-  if (!iso) return 'nunca';
-  const mins = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
-  if (mins < 1) return 'recién';
-  if (mins < 60) return `hace ${mins}min`;
-  const h = Math.floor(mins / 60);
-  return h < 24 ? `hace ${h}h` : `hace ${Math.floor(h / 24)}d`;
-}
 
 // cooldown_until is shown in Argentina time, like every other hour in the app.
 const AR_TZ = 'America/Argentina/Buenos_Aires';
@@ -165,7 +157,7 @@ export function IgSession() {
       : null;
   const dot = until ? 'bg-yellow' : (DOT[s.state] ?? DOT.disconnected);
   const chipTitle = [
-    `Instagram · última conexión ${ago(s.last_ok_at)}`,
+    `Instagram · última conexión ${fmtAgo(s.last_ok_at)}`,
     until && `en pausa ${until}`,
     s.last_error && `último error: ${s.last_error}`,
   ]
@@ -305,7 +297,7 @@ export function IgSession() {
               <>
                 <p className="text-muted">
                   <b className="text-green">Todo listo.</b> La app está conectada a tu Instagram y
-                  puede escanear y enviar DMs. Última conexión {ago(s.last_ok_at)}.
+                  puede escanear y enviar DMs. Última conexión {fmtAgo(s.last_ok_at)}.
                 </p>
                 <div className="flex items-center justify-end gap-3">
                   <button

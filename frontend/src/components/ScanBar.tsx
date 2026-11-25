@@ -28,7 +28,13 @@ export function ScanBar({
     onError(null);
     scan.mutate(
       { urls, eventId: event },
-      { onError: (e) => onError(toApiError(e)), onSuccess: () => setRaw('') }
+      {
+        onError: (e) => onError(toApiError(e)),
+        // Clear the URLs only on a known success (null = outcome unknown).
+        onSuccess: (done) => {
+          if (done) setRaw('');
+        },
+      }
     );
   };
 

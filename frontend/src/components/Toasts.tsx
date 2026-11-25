@@ -1,17 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
-import { useIsMutating, useQueryClient, type QueryClient } from '@tanstack/react-query';
+import { useIsMutating, useQueryClient } from '@tanstack/react-query';
 import type { Campaign, Task } from '../api/client';
 import {
-  ALL_VIEWS,
-  invalidateAfter,
-  invalidateViews,
   isJobKind,
+  refreshAfterJob,
   useActiveCampaign,
   useTasks,
   useTaskStream,
   type JobKind,
 } from '../api/hooks';
 import { estimateFor } from '../lib/campaign';
+import { useNotices, type Notice } from '../lib/notices';
 
 const KIND: Record<JobKind, { icon: string; title: string }> = {
   sync: { icon: '🔄', title: 'Sincronizar DMs' },
@@ -21,11 +20,8 @@ const KIND: Record<JobKind, { icon: string; title: string }> = {
   rescan: { icon: '↻', title: 'Re-escanear fiesta' },
 };
 
-/** The backend's task kind is a plain string: a kind this build knows refreshes
- * only what it changed; an unknown one (explicit fallback) refreshes every view. */
-function refreshAfter(qc: QueryClient, kind: string) {
-  if (isJobKind(kind)) invalidateAfter(qc, kind);
-  else invalidateViews(qc, ALL_VIEWS);
+function kindMeta(kind: string, fallback: string): { icon: string; title: string } {
+  return isJobKind(kind) ? KIND[kind] : { icon: '•', title: fallback };
 }
 
 // A warning in the result (e.g. the DM sync hit DM_THREADS_LIMIT): its own line.
@@ -89,8 +85,7 @@ function StatChips({ kind, result }: { kind: string; result: Record<string, unkn
 }
 
 function TaskToast({ task }: { task: Task }) {
-  const kind: string = task.kind;
-  const meta = isJobKind(kind) ? KIND[kind] : { icon: '•', title: task.label };
+  const meta = kindMeta(task.kind, task.label);
   const pct = task.total > 0 ? Math.round((task.current / task.total) * 100) : null;
   const accent =
     task.status === 'error'
@@ -143,6 +138,22 @@ function TaskToast({ task }: { task: Task }) {
         <StatChips kind={task.kind} result={task.result as Record<string, unknown>} />
       )}
       {task.status === 'error' && <p className="mt-1 text-xs text-red">{task.error}</p>}
+    </div>
+  );
+}
+
+/** Neutral (not an error): e.g. a job that ended while nobody was following it. */
+function NoticeToast({ notice }: { notice: Notice }) {
+  const meta = kindMeta(notice.kind, 'Tarea');
+  return (
+    <div
+      className="anim-toast rounded-xl border border-border bg-panel p-3 shadow-lg"
+      style={{ borderLeft: '3px solid var(--color-muted)' }}
+    >
+      <span className="block truncate text-sm font-semibold">
+        {meta.icon} {meta.title}
+      </span>
+      <p className="mt-1 text-xs text-muted">{notice.text}</p>
     </div>
   );
 }
@@ -201,6 +212,7 @@ export function Toasts() {
   const streaming = useTaskStream(); // pushed by the server; polling only as fallback
   const tasks = useTasks(active, streaming);
   const campaign = useActiveCampaign(active);
+  const notices = useNotices();
   const [dismissed, setDismissed] = useState<Set<string>>(new Set());
   const processed = useRef<Set<string>>(new Set());
 
@@ -209,7 +221,7 @@ export function Toasts() {
       if ((t.status === 'done' || t.status === 'error') && !processed.current.has(t.id)) {
         processed.current.add(t.id);
         // Refresh only what this kind of task changed.
-        if (t.status === 'done') refreshAfter(qc, t.kind);
+        if (t.status === 'done') refreshAfterJob(qc, t.kind);
         const id = t.id;
         setTimeout(() => setDismissed((s) => new Set(s).add(id)), 7000);
       }
@@ -219,13 +231,16 @@ export function Toasts() {
   const visible = (tasks.data ?? []).filter((t) => !dismissed.has(t.id));
   const camp = campaign.data;
   const showCamp = camp != null && camp.status !== 'done';
-  if (visible.length === 0 && !showCamp) return null;
+  if (visible.length === 0 && notices.length === 0 && !showCamp) return null;
 
   return (
     <div className="fixed right-4 bottom-4 z-40 flex w-80 max-w-[calc(100vw-2rem)] flex-col gap-2">
       {showCamp && camp && <CampaignToast c={camp} />}
       {visible.map((t) => (
         <TaskToast key={t.id} task={t} />
+      ))}
+      {notices.map((n) => (
+        <NoticeToast key={n.id} notice={n} />
       ))}
     </div>
   );

@@ -1,15 +1,6 @@
 import { usePosts, useRescanEvent, useRunningJob } from '../api/hooks';
 import { ApiError, toApiError } from '../api/client';
-
-function timeAgo(iso: string | null): string {
-  if (!iso) return 'nunca';
-  const ms = Date.now() - new Date(iso).getTime();
-  const days = Math.floor(ms / 86_400_000);
-  if (days > 0) return `hace ${days}d`;
-  const hours = Math.floor(ms / 3_600_000);
-  if (hours > 0) return `hace ${hours}h`;
-  return 'recién';
-}
+import { fmtAgo } from '../lib/time';
 
 export function PostsDrawer({
   event,
@@ -71,12 +62,12 @@ export function PostsDrawer({
                 <span className="text-muted">/{p.shortcode}</span>{' '}
                 {p.caption.slice(0, 60) || 'sin caption'}
               </a>
-              <span className="shrink-0 text-xs text-muted">{timeAgo(p.last_scanned_at)}</span>
+              <span className="shrink-0 text-xs text-muted">{fmtAgo(p.last_scanned_at)}</span>
             </li>
           ))}
         </ul>
       )}
-      {rescan.isSuccess && (
+      {rescan.data && (
         <p className="mt-2 text-xs text-muted">
           Re-escaneado: {String(rescan.data.result.usuarios ?? 0)} usuarios (
           {String(rescan.data.result.nuevos ?? 0)} nuevos).

@@ -122,32 +122,23 @@ Re-escanear un post no duplica nada: podés hacerlo las veces que quieras.
 
 ## Usar Instagram real
 
-Instagram bloquea el login por API con un *checkpoint*, y el `sessionid` de web
-solo da acceso a `/users/*` (no a DMs). Por eso el modo real anda con un
-**navegador real logueado** (Playwright): te logueás a mano una vez y la app
-maneja el navegador headless.
+La app habla con Instagram por la API móvil (instagrapi). Instagram suele frenar
+el login con usuario y contraseña con un *checkpoint*, así que lo más simple es
+**reusar la sesión de tu navegador** (`sessionid`).
 
-### Opción recomendada: navegador real (Playwright)
+### Opción recomendada: pegar el `sessionid` desde la app
 
-1. En `backend/.env`: `USE_FAKE_INSTAGRAM=false` y `IG_SOURCE=playwright`.
-2. Logueate una vez (abre una ventana de Chromium):
-   ```bash
-   cd backend
-   .venv\Scripts\python.exe -m app.login_browser   # Mac/Linux: .venv/bin/python -m app.login_browser
-   ```
-   Logueate en la ventana (resolvé cualquier checkpoint como humano), volvé a la
-   terminal y apretá Enter. La sesión queda guardada en `.pw-profile/`.
-3. Verificá que anda (identidad + DMs + un post):
-   ```bash
-   .venv\Scripts\python.exe -m app.web_check https://www.instagram.com/p/TU_POST/
-   ```
-4. Levantá la app (`.\start.ps1`) y escaneá.
+1. En `backend/.env`: `USE_FAKE_INSTAGRAM=false` y reiniciá la app.
+2. Tocá el chip **IG** (arriba) → **Pegá tu sesión de Instagram** y seguí los
+   pasos en pantalla: abrí instagram.com logueado, `F12` → **Application** →
+   **Cookies** → `https://www.instagram.com`, copiá el valor de `sessionid`.
+3. Pegalo y dale **Guardar y conectar**. La sesión queda guardada en
+   `session.json` y se reusa en cada arranque (no vuelve a loguear de cero).
 
-> La carpeta `.pw-profile/` guarda tu sesión de Instagram: no la compartas
-> (está en `.gitignore`). Para más velocidad corre headless (`IG_BROWSER_HEADLESS=true`);
-> poné `false` si querés ver el navegador.
+> `session.json` guarda tu sesión de Instagram: no la compartas (está en
+> `.gitignore`). Para cortarla, chip **IG** → **Desconectar**.
 
-### Alternativa: login con usuario y contraseña (instagrapi)
+### Alternativa: usuario y contraseña en `.env`
 
 Suele frenar con checkpoint; solo si tu cuenta permite login móvil.
 
@@ -155,19 +146,12 @@ Suele frenar con checkpoint; solo si tu cuenta permite login móvil.
    - `USE_FAKE_INSTAGRAM=false`
    - `IG_USERNAME=` y `IG_PASSWORD=` con la cuenta.
    - Si la cuenta tiene 2FA, poné el seed TOTP en `IG_2FA_SECRET`.
-2. **Logueate una sola vez** (resuelve la verificación y guarda la sesión):
-   ```bash
-   cd backend
-   .venv\Scripts\Activate.ps1      # Mac/Linux: source .venv/bin/activate
-   python -m app.login
-   ```
-   Si Instagram pide un código (email/SMS/2FA), te lo pregunta por terminal.
-   Al terminar guarda `session.json`.
-3. Levantá la app normalmente: **reusa esa sesión** y no vuelve a loguear.
+2. Levantá la app y tocá chip **IG** → **Reconectar con Instagram**. El login
+   ocurre solo cuando lo pedís (o al lanzar una operación), nunca solo.
 
-Si Instagram igual pide **verificación** durante el uso, la app lo avisa en
-pantalla (cartel amarillo) y **no se rompe** — corré `python -m app.login` de
-nuevo para re-validar.
+Si Instagram pide **verificación** durante el uso, la app lo avisa en
+pantalla (cartel amarillo) y **no se rompe** — pegá un `sessionid` recién
+sacado del navegador para reconectar.
 
 ### Que Instagram no te bloquee
 
@@ -176,8 +160,8 @@ Lo que más ayuda, en orden:
 1. **Corré desde tu conexión de casa** (la misma donde usás Instagram). **Sin VPN.**
 2. **Logueate primero en la app oficial** de Instagram en esa red y aprobá el
    *"¿Fuiste vos?"*.
-3. Usá `python -m app.login` para dejar la **sesión guardada** (reusar sesión es
-   la defensa #1).
+3. Conectá pegando el `sessionid` (chip **IG**): queda la **sesión guardada** y
+   se reusa (reusar sesión es la defensa #1).
 4. Poné país/locale en `.env`: `IG_COUNTRY=AR`, `IG_LOCALE=es_AR`.
 5. Si aún así te bloquea, configurá un **proxy estable** (residencial/móvil, uno
    fijo — no rotativo) en `IG_PROXY=`.

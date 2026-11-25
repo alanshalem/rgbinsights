@@ -194,9 +194,10 @@ export function HelpPage({ onBack }: { onBack: () => void }) {
 
           <Section id="problemas" title="Si algo falla">
             <p>
-              <b>“Instagram pide verificación”</b> (cartel amarillo): la sesión del navegador se
-              venció. En una terminal: <code>cd backend</code> y{' '}
-              <code>.venv\Scripts\python.exe -m app.login_browser</code>, logueate, y reintentá.
+              <b>“Instagram pide verificación”</b> (cartel amarillo): entrá a la cuenta desde el
+              celu y confirmá que sos vos. Después tocá el chip <b>IG</b> arriba a la derecha →{' '}
+              <b>Pegá tu sesión</b> con un <code>sessionid</code> recién sacado del navegador, y
+              reintentá.
             </p>
             <p>
               <b>Todo lento o se frena</b>: es a propósito (pausas anti-bloqueo). No corras dos

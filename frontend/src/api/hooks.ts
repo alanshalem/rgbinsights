@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
 import {
   useInfiniteQuery,
   useMutation,
@@ -7,6 +7,7 @@ import {
   type QueryClient,
 } from '@tanstack/react-query';
 import { api, ApiError, type EventCreate, type Task, type UsersQuery } from './client';
+import { notify } from '../lib/notices';
 
 export function useEvents() {
   return useQuery({ queryKey: ['events'], queryFn: () => api.listEvents() });
@@ -81,6 +82,14 @@ export function invalidateAfter(qc: QueryClient, kind: ChangeKind) {
   invalidateViews(qc, CHANGES[kind]);
 }
 
+/** After a job ends. The backend's task kind is a plain string: a kind this
+ * build knows refreshes only what it changed; an unknown one (explicit
+ * fallback) refreshes every view. Local reads only (no Instagram request). */
+export function refreshAfterJob(qc: QueryClient, kind: string) {
+  if (isJobKind(kind)) invalidateAfter(qc, kind);
+  else invalidateViews(qc, ALL_VIEWS);
+}
+
 function useInvalidateAfter(kind: ChangeKind) {
   const qc = useQueryClient();
   return () => invalidateAfter(qc, kind);
@@ -112,25 +121,46 @@ export function useCreateEvent() {
 // -- background jobs (S16) ---------------------------------------------------
 
 const LOST_JOB = 'Se perdió el seguimiento de la tarea (¿se reinició el backend?).';
+const UNKNOWN_OUTCOME = 'La tarea terminó mientras no estabas mirando — se actualizaron los datos.';
+/** Waits before retrying GET /tasks/{id} after a network error; then give up. */
+const RETRY_MS = [1000, 2000, 4000, 8000];
 
 /** Settle when the job ends, watching the live ['tasks'] list (SSE, or polling
  * as the fallback): resolve with the finished task, reject with its error as an
  * ApiError (so onError and the challenge banner work as with a plain request).
- * A list without the job (stale, or the backend restarted) is checked against
- * GET /tasks/{id} before giving up. */
-function waitForJob(qc: QueryClient, job: Task): Promise<Task> {
+ * A list without the job (stale, or it was pruned 25 s after ending) is checked
+ * against GET /tasks/{id}:
+ *  - still running → keep waiting (the mutation stays pending);
+ *  - 404 (pruned, or the backend restarted) → the outcome is unknown, not an
+ *    error: refresh the views that kind changes, show a neutral notice and
+ *    resolve with `null`;
+ *  - a network error → retry with backoff (RETRY_MS), then give up (LOST_JOB).
+ * Reads our backend's memory only: never an Instagram request. */
+function waitForJob(qc: QueryClient, job: Task): Promise<Task | null> {
   // Show it right away (the toast), before the stream's next snapshot.
   qc.setQueryData<Task[]>(['tasks'], (old = []) =>
     old.some((t) => t.id === job.id) ? old : [...old, job]
   );
   return new Promise((resolve, reject) => {
     let settled = false;
-    let checking = false;
-    const finish = (t: Task) => {
+    let checking = false; // a GET /tasks/{id}, or the wait before its retry
+    let failures = 0; // consecutive network errors of that GET
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    const settle = () => {
       settled = true;
+      clearTimeout(retry);
       unsubscribe();
+    };
+    const finish = (t: Task) => {
+      settle();
       if (t.status === 'done') resolve(t);
       else reject(new ApiError(0, t.error_code ?? 'unknown', t.error ?? 'La tarea falló.'));
+    };
+    const lost = () => {
+      settle();
+      refreshAfterJob(qc, job.kind);
+      notify(job.kind, UNKNOWN_OUTCOME);
+      resolve(null);
     };
     const check = () => {
       if (settled) return;
@@ -144,13 +174,21 @@ function waitForJob(qc: QueryClient, job: Task): Promise<Task> {
       api.getTask(job.id).then(
         (fresh) => {
           checking = false;
+          failures = 0;
           if (!settled && fresh.status !== 'running') finish(fresh);
         },
-        () => {
+        (e: unknown) => {
           if (settled) return;
-          settled = true;
-          unsubscribe();
-          reject(new ApiError(0, 'unknown', LOST_JOB));
+          if (e instanceof ApiError && e.status === 404) return lost();
+          if (failures >= RETRY_MS.length) {
+            settle();
+            return reject(new ApiError(0, 'unknown', LOST_JOB));
+          }
+          // The list may bring the job meanwhile (check settles it from there).
+          retry = setTimeout(() => {
+            checking = false;
+            check();
+          }, RETRY_MS[failures++]);
         }
       );
     };
@@ -162,9 +200,10 @@ function waitForJob(qc: QueryClient, job: Task): Promise<Task> {
 }
 
 /** A background job: the POST answers 202 + the job at once, and the mutation
- * stays pending until the job ends, so `isPending`, `onError` and `data` keep
- * their meaning. The Toasts refresh the views it changed when its "done"
- * arrives (CHANGES), for every tab, so no onSuccess invalidation here. */
+ * stays pending until the job ends, so `isPending` and `onError` keep their
+ * meaning; `data` is the finished task, or `null` when its outcome could not
+ * be followed (see waitForJob). The Toasts refresh the views it changed when
+ * its "done" arrives (CHANGES), for every tab, so no onSuccess invalidation. */
 function useJob<A>(start: (arg: A) => Promise<Task>) {
   const qc = useQueryClient();
   return useMutation({ mutationFn: async (arg: A) => waitForJob(qc, await start(arg)) });
@@ -199,14 +238,17 @@ export function useSyncDms() {
 
 /** The Instagram job running now, if any: every job talks to Instagram, so the
  * backend runs one at a time (409 for another) and the UI disables the rest.
- * Reads the ['tasks'] cache kept live by the Toasts (no fetch of its own). */
+ * Reads the ['tasks'] cache kept live by the Toasts (useTaskStream + useTasks)
+ * through a plain cache subscription: no query observer, so no fetch of its own
+ * and no options merged into that query. */
 export function useRunningJob(): Task | undefined {
-  return useQuery({
-    queryKey: ['tasks'],
-    queryFn: () => api.listTasks(),
-    staleTime: Infinity,
-    select: (tasks) => tasks.find((t) => t.status === 'running'),
-  }).data;
+  const qc = useQueryClient();
+  const subscribe = useCallback(
+    (onChange: () => void) => qc.getQueryCache().subscribe(onChange),
+    [qc]
+  );
+  const tasks = useSyncExternalStore(subscribe, () => qc.getQueryData<Task[]>(['tasks']));
+  return tasks?.find((t) => t.status === 'running');
 }
 
 // -- campaigns -------------------------------------------------------------

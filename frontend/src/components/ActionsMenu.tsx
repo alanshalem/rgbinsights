@@ -1,23 +1,25 @@
 import { useEffect, useRef, useState } from 'react';
 import { ApiError, toApiError } from '../api/client';
 import {
+  isJobKind,
   useEnrichEvent,
   useRefreshEvent,
   useRunningJob,
   useStatus,
   useSyncDms,
+  type JobKind,
 } from '../api/hooks';
+import { fmtAgo } from '../lib/time';
 
-/** "hace 2h" / "hace 5min" / "recién" / "nunca" from an ISO timestamp. */
-function fmtAgo(iso: string | null | undefined): string {
-  if (!iso) return 'nunca';
-  const mins = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
-  if (mins < 1) return 'recién';
-  if (mins < 60) return `hace ${mins}min`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `hace ${hours}h`;
-  return `hace ${Math.floor(hours / 24)}d`;
-}
+/** The busy button says which job is running (this menu's, or one started
+ * elsewhere: scan bar, posts drawer, another tab). */
+const BUSY_LABEL: Record<JobKind, string> = {
+  scan: 'Escaneando…',
+  rescan: 'Re-escaneando…',
+  sync: 'Sincronizando DMs…',
+  refresh: 'Actualizando…',
+  enrich: 'Enriqueciendo…',
+};
 
 /** One menu entry. Module-level so it keeps its identity across renders (no
  * remount of every item each time the menu re-renders). */
@@ -73,6 +75,17 @@ export function ActionsMenu({
   // a job started elsewhere (scan bar, posts drawer, another tab) runs.
   const running = useRunningJob();
   const busy = sync.isPending || refresh.isPending || enrich.isPending || running !== undefined;
+  // Until the job shows up in the task list, the pending mutation tells the kind.
+  const busyKind: string | undefined =
+    running?.kind ??
+    (sync.isPending
+      ? 'sync'
+      : refresh.isPending
+        ? 'refresh'
+        : enrich.isPending
+          ? 'enrich'
+          : undefined);
+  const busyLabel = busyKind && isJobKind(busyKind) ? BUSY_LABEL[busyKind] : 'Actualizando…';
 
   useEffect(() => {
     const close = (e: MouseEvent) => {
@@ -96,7 +109,7 @@ export function ActionsMenu({
         disabled={busy}
         className="rounded-lg bg-blue px-3 py-1.5 text-sm font-semibold text-bg shadow-[0_0_24px_-6px_var(--color-blue)] transition-opacity hover:opacity-90 disabled:opacity-50"
       >
-        {busy ? '↻ Actualizando…' : '↻ Actualizar ▾'}
+        {busy ? `↻ ${busyLabel}` : '↻ Actualizar ▾'}
       </button>
       {open && (
         <div className="absolute z-20 mt-1 w-72 overflow-hidden rounded-lg border border-border bg-panel shadow-xl">
