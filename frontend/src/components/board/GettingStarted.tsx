@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { JOB_META } from '../../lib/jobs';
 
 function Step({ n, done, children }: { n: number; done: boolean; children: ReactNode }) {
   return (
@@ -51,7 +52,8 @@ export function GettingStarted({
           Pegá los links de sus posts y tocá <b>Escanear</b>: aparece la gente que comentó o likeó.
         </Step>
         <Step n={3} done={dmsSynced}>
-          <b>Actualizar ▾ → Sincronizar DMs</b>: pinta a cada uno de 🔴, 🟡 o 🟢 según sus DMs.
+          <b>Actualizar ▾ → {JOB_META.sync.title}</b>: pinta a cada uno de 🔴, 🟡 o 🟢 según sus
+          DMs.
         </Step>
       </ol>
     </section>

@@ -14,7 +14,7 @@ export type KindMeta = {
 export const JOB_META: Record<JobKind, KindMeta> = {
   scan: { icon: '🔍', title: 'Escanear posts', busy: 'Escaneando posts…' },
   sync: { icon: '🔄', title: 'Sincronizar DMs', busy: 'Sincronizando DMs…' },
-  refresh: { icon: '↻', title: 'Re-escanear la fiesta', busy: 'Re-escaneando la fiesta…' },
+  refresh: { icon: '↻', title: 'Re-escanear la fiesta + DMs', busy: 'Re-escaneando la fiesta…' },
   rescan: { icon: '↻', title: 'Re-escanear solo los posts', busy: 'Re-escaneando los posts…' },
   enrich: { icon: '👥', title: 'Quién te sigue + seguidores', busy: 'Buscando quién te sigue…' },
 };

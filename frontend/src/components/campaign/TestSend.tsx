@@ -1,3 +1,5 @@
+import { JOB_META } from '../../lib/jobs';
+
 /** Feedback line + the "1 DM real de prueba" box + the launch button (right column).
  *
  * The test is a real DM to a real person. The backend does not mark it locally:
@@ -49,8 +51,8 @@ export function TestSend({
         <div role="status" className="text-xs">
           <p className="text-green">✓ DM de prueba enviado a @{testedTo}.</p>
           <p className="mt-1 text-muted">
-            Sigue en 🔴 hasta que hagas <b>Actualizar ▾ → Sincronizar DMs</b>. Si lanzás la campaña
-            antes, también le llega el mensaje de la campaña.
+            Sigue en 🔴 hasta que hagas <b>Actualizar ▾ → {JOB_META.sync.title}</b>. Si lanzás la
+            campaña antes, también le llega el mensaje de la campaña.
           </p>
         </div>
       )}
