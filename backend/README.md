@@ -44,14 +44,52 @@ Docs interactivas: http://localhost:8000/docs · OpenAPI: `/openapi.json`.
 
 ## Endpoints
 
-| Método | Ruta          | Qué hace                                                        |
-| ------ | ------------- | --------------------------------------------------------------- |
-| POST   | `/scan/post`  | Escanea comentarios + likers de un post. `{ url }`.             |
-| POST   | `/scan/posts` | Varios: `{ urls: [...] }` **o** rango `{ from, to }` (ISO).     |
-| POST   | `/sync/dms`   | Sincroniza hilos de DM (separado del scan de posts).            |
-| GET    | `/users`      | Usuarios + semáforo. Query: `post`, `status`, `search`, `order`.|
-| GET    | `/posts`      | Posts escaneados.                                               |
-| GET    | `/health`     | Estado + si está en modo fake.                                  |
+| Método | Ruta                       | Qué hace                                                        |
+| ------ | -------------------------- | --------------------------------------------------------------- |
+| POST   | `/scan/post`               | Escanea comentarios + likers de un post. `{ url }` (sincrónico).|
+| POST   | `/scan/posts`              | **Tarea**: varios `{ urls: [...] }` **o** rango `{ from, to }`. |
+| POST   | `/events/{id}/rescan`      | **Tarea**: re-escanea los posts de la fiesta (`?force=`).       |
+| POST   | `/events/{id}/refresh`     | **Tarea**: rescan + sync de DMs en una (`?force=`).             |
+| POST   | `/events/{id}/enrich`      | **Tarea**: relación + perfiles (`?force=`).                     |
+| POST   | `/sync/dms`                | **Tarea**: sincroniza hilos de DM (`?force=`, `?event=`).       |
+| GET    | `/tasks`                   | Las tareas actuales (respaldo por polling del stream).          |
+| GET    | `/tasks/stream`            | SSE: la lista de tareas al conectar y en cada cambio.           |
+| GET    | `/tasks/{id}`              | Una tarea: progreso, `result` o `error` (404 si ya se purgó).   |
+| GET    | `/users`                   | Usuarios + semáforo. Query: `post`, `status`, `search`, `order`.|
+| GET    | `/posts`                   | Posts escaneados.                                               |
+| GET    | `/health`                  | Estado + si está en modo fake.                                  |
+
+### Tareas en segundo plano (escaneo, sync, actualizar, enriquecer)
+
+Las operaciones largas contra Instagram ya no dejan un request HTTP abierto
+varios minutos: el POST valida (404 si la fiesta no existe, 422 si falta
+`urls`/rango), arranca una **tarea** en un hilo de fondo (daemon, con su propia
+sesión de DB) y responde enseguida **202** con la tarea (`Location:
+/tasks/{id}`). La tarea es `{ id, kind, label, status: running|done|error,
+current, total, message, result, error, error_code, started_at, finished_at }`:
+`result` es el resumen ("2 posts · 4 nuevos", con `aviso` si la sync de DMs
+llegó al tope `DM_THREADS_LIMIT`) y `error` el motivo en castellano
+(`error_code`, p. ej. `challenge_required`, para el aviso de reconectar).
+
+- **Una sola tarea con Instagram a la vez** (todas tocan Instagram): si ya hay
+  una corriendo, pedir **la misma** (mismo tipo y mismos parámetros: doble clic,
+  otra pestaña) devuelve esa misma tarea (202, mismo `id`); pedir **otra**
+  responde **409** `{ code: "conflict", message: "Ya hay una tarea con Instagram
+  en curso («…»). Esperá a que termine y probá de nuevo." }`. Nunca se encola ni
+  corre en paralelo, y dentro de la tarea cada pedido sigue pasando por el
+  guardián (candado, presupuesto, ritmo humano, sin reintentos). La campaña
+  sigue en su propio hilo y comparte el candado del guardián como antes.
+- **Progreso empujado (SSE)**: `GET /tasks/stream` (`text/event-stream`) manda
+  un `event: tasks` con la lista completa (igual que `GET /tasks`) al conectar y
+  cada vez que una tarea cambia (progreso, fin, error), y un comentario `: ping`
+  cada 15 s si no pasa nada. La UI lo usa con `EventSource` y deja de consultar
+  cada 1,2 s; si el stream se cae, vuelve al polling hasta reconectar. Lee solo
+  memoria: ni el stream ni el polling hacen pedidos a Instagram ni a la DB.
+- **Apagado/recarga**: los hilos de las tareas son daemon (no traban la salida)
+  y la señal de apagado (Ctrl+C, `SIGTERM`, la de `--reload`) cierra los
+  streams antes de que uvicorn espere las conexiones abiertas. Las tareas viven
+  en memoria: se purgan 25 s después de terminar y un reinicio las pierde (lo ya
+  guardado en la DB queda).
 
 ## Login a Instagram real
 
@@ -169,5 +207,5 @@ SQLite de un caso de uso. Si el archivo está corrupto o mal formado, se ignora
   páginas, las mismas que antes; cada chat trae sus últimos 10 mensajes. Si una
   sync incremental llega a ese tope antes de alcanzar la sync anterior, la marca
   igual avanza a su hora de inicio y se avisa (log, progreso de la tarea y el
-  resumen de "Actualizar fiesta") que los chats más viejos con mensajes nuevos no
-  se sincronizaron; subí `DM_THREADS_LIMIT` si pasa seguido.
+  `aviso` del resumen de "Sincronizar DMs" y de "Actualizar fiesta") que los
+  chats más viejos con mensajes nuevos no se sincronizaron; subí `DM_THREADS_LIMIT` si pasa seguido.

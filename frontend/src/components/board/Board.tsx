@@ -68,7 +68,10 @@ function Column({
         ) : (
           rows.map((u) => <UserCard key={u.pk} user={u} />)
         )}
-        {rows.length < total && (
+        {/* Only when there IS a next page: `total` comes from another query, so
+            rows < total with no next page (data changed meanwhile) would be a
+            dead button. */}
+        {users.hasNextPage && rows.length < total && (
           <button
             type="button"
             onClick={() => {

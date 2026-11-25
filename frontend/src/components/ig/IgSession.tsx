@@ -13,6 +13,28 @@ function ago(iso: string | null | undefined): string {
   return h < 24 ? `hace ${h}h` : `hace ${Math.floor(h / 24)}d`;
 }
 
+// cooldown_until is shown in Argentina time, like every other hour in the app.
+const AR_TZ = 'America/Argentina/Buenos_Aires';
+const AR_TIME = new Intl.DateTimeFormat('es-AR', {
+  timeZone: AR_TZ,
+  hour: '2-digit',
+  minute: '2-digit',
+  hourCycle: 'h23',
+});
+const AR_DAY = new Intl.DateTimeFormat('es-AR', {
+  timeZone: AR_TZ,
+  day: '2-digit',
+  month: '2-digit',
+});
+
+/** "hasta las 14:05" (Argentina); on another day "hasta el 25/11 a las 14:05". */
+function untilLabel(iso: string): string {
+  const when = new Date(iso);
+  const time = AR_TIME.format(when);
+  const day = AR_DAY.format(when);
+  return day === AR_DAY.format(new Date()) ? `hasta las ${time}` : `hasta el ${day} a las ${time}`;
+}
+
 const DOT: Record<string, string> = {
   connected: 'bg-green',
   disconnected: 'bg-red',
@@ -136,17 +158,32 @@ export function IgSession() {
   };
 
   const connected = s.state === 'connected';
+  // No Instagram request before this (login breaker or Instagram's "slow down").
+  const until =
+    s.cooldown_until && new Date(s.cooldown_until).getTime() > Date.now()
+      ? untilLabel(s.cooldown_until)
+      : null;
+  const dot = until ? 'bg-yellow' : (DOT[s.state] ?? DOT.disconnected);
+  const chipTitle = [
+    `Instagram · última conexión ${ago(s.last_ok_at)}`,
+    until && `en pausa ${until}`,
+    s.last_error && `último error: ${s.last_error}`,
+  ]
+    .filter(Boolean)
+    .join(' · ');
 
   return (
     <>
       <button
         type="button"
         onClick={() => setOpen(true)}
-        title={`Instagram · última conexión ${ago(s.last_ok_at)}`}
+        title={chipTitle}
         className="flex items-center gap-1.5 rounded-full border border-border px-2.5 py-1 text-[11px] font-medium hover:bg-panel"
       >
-        <span className={`h-2 w-2 rounded-full ${DOT[s.state] ?? DOT.disconnected}`} />
-        <span className="hidden sm:inline">{LABEL[s.state] ?? 'IG'}</span>
+        <span className={`h-2 w-2 rounded-full ${dot}`} />
+        <span className="hidden sm:inline">
+          {until ? `IG en pausa ${until}` : (LABEL[s.state] ?? 'IG')}
+        </span>
       </button>
 
       {open && (
@@ -158,6 +195,20 @@ export function IgSession() {
                 Conexión con Instagram
               </h2>
             </div>
+
+            {until && (
+              <div className="rounded-lg border border-yellow/50 bg-yellow/10 p-3 text-xs text-yellow">
+                <p className="font-semibold">⏸ Instagram en pausa {until}</p>
+                <p className="mt-1 opacity-90">
+                  Para cuidar la cuenta no se hace ningún pedido a Instagram hasta entonces.
+                </p>
+              </div>
+            )}
+            {s.last_error && (
+              <p className="text-xs text-muted">
+                Último error: <span className="text-red">{s.last_error}</span>
+              </p>
+            )}
 
             {success && (
               <div className="rounded-xl border border-green/40 bg-green/10 p-3 text-green">

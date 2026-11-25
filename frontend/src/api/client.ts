@@ -15,13 +15,7 @@ export type EventOut =
   paths['/events']['get']['responses']['200']['content']['application/json'][number];
 export type StatusCounts =
   paths['/users/counts']['get']['responses']['200']['content']['application/json'];
-export type ScanBatchResult =
-  paths['/scan/posts']['post']['responses']['200']['content']['application/json'];
-export type SyncResult =
-  paths['/sync/dms']['post']['responses']['200']['content']['application/json'];
 export type EventCreate = paths['/events']['post']['requestBody']['content']['application/json'];
-export type EventRefresh =
-  paths['/events/{event_id}/refresh']['post']['responses']['200']['content']['application/json'];
 export type Preset =
   paths['/campaigns/presets']['get']['responses']['200']['content']['application/json'][number];
 export type CampaignPreview =
@@ -32,6 +26,8 @@ export type CampaignCreate =
   paths['/events/{event_id}/campaign']['post']['requestBody']['content']['application/json'];
 export type MessageSample =
   paths['/events/{event_id}/campaign/test']['post']['responses']['200']['content']['application/json'];
+/** A background job (scan/rescan/sync/refresh/enrich): what its POST answers
+ * (202) and what /tasks and /tasks/stream report while it runs and after. */
 export type Task =
   paths['/tasks']['get']['responses']['200']['content']['application/json'][number];
 export type Activity =
@@ -156,23 +152,24 @@ export const api = {
   createEvent: (body: EventCreate) =>
     request<EventOut>('/events', { method: 'POST', body: JSON.stringify(body) }),
 
-  rescanEvent: (eventId: number) =>
-    request<ScanBatchResult>(`/events/${eventId}/rescan`, { method: 'POST' }),
+  // The long Instagram operations start a background job and answer at once
+  // (202 + the job); its progress and result arrive on /tasks/stream.
+  rescanEvent: (eventId: number) => request<Task>(`/events/${eventId}/rescan`, { method: 'POST' }),
 
   enrichEvent: (eventId: number, force = false) =>
-    request<{ enriched: number }>(`/events/${eventId}/enrich${qs({ force })}`, { method: 'POST' }),
+    request<Task>(`/events/${eventId}/enrich${qs({ force })}`, { method: 'POST' }),
 
   refreshEvent: (eventId: number, force = false) =>
-    request<EventRefresh>(`/events/${eventId}/refresh${qs({ force })}`, { method: 'POST' }),
+    request<Task>(`/events/${eventId}/refresh${qs({ force })}`, { method: 'POST' }),
 
   scanPosts: (urls: string[], eventId?: number) =>
-    request<ScanBatchResult>('/scan/posts', {
+    request<Task>('/scan/posts', {
       method: 'POST',
       body: JSON.stringify({ urls, event_id: eventId ?? null }),
     }),
 
   syncDms: (force = false, event?: number) =>
-    request<SyncResult>(`/sync/dms${qs({ force, event })}`, { method: 'POST' }),
+    request<Task>(`/sync/dms${qs({ force, event })}`, { method: 'POST' }),
 
   getStatus: () => request<Status>('/status'),
 
@@ -209,6 +206,11 @@ export const api = {
   resumeCampaign: (id: number) => request<Campaign>(`/campaigns/${id}/resume`, { method: 'POST' }),
 
   listTasks: () => request<Task[]>('/tasks'),
+
+  getTask: (id: string) => request<Task>(`/tasks/${id}`),
+
+  /** Server-Sent Events: `tasks` events carrying the same list as listTasks(). */
+  tasksStreamUrl: `${BASE}/tasks/stream`,
 
   activeCampaign: () => request<Campaign | null>('/campaigns/active'),
 

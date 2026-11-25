@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useScanPosts } from '../api/hooks';
+import { useRunningJob, useScanPosts } from '../api/hooks';
 import { ApiError, toApiError } from '../api/client';
 
 function parseUrls(raw: string): string[] {
@@ -20,6 +20,7 @@ export function ScanBar({
 }) {
   const [raw, setRaw] = useState('');
   const scan = useScanPosts();
+  const igBusy = useRunningJob() !== undefined; // one Instagram job at a time
 
   const handleScan = () => {
     const urls = parseUrls(raw);
@@ -46,7 +47,8 @@ export function ScanBar({
         <button
           type="button"
           onClick={handleScan}
-          disabled={scan.isPending || parseUrls(raw).length === 0}
+          disabled={scan.isPending || igBusy || parseUrls(raw).length === 0}
+          title={igBusy && !scan.isPending ? 'Esperá a que termine la tarea en curso' : undefined}
           className="rounded-lg bg-green px-4 py-2 text-sm font-semibold text-bg shadow-[0_0_24px_-6px_var(--color-green)] transition-opacity hover:opacity-90 disabled:opacity-40"
         >
           {scan.isPending ? 'Escaneando…' : 'Escanear'}

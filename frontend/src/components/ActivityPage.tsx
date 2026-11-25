@@ -4,6 +4,7 @@ import { ResetModal } from './ResetModal';
 
 const KIND_LABEL: Record<string, string> = {
   scan: 'Escaneo',
+  rescan: 'Re-escaneo',
   sync: 'Sync DMs',
   refresh: 'Actualización',
   enrich: 'Enriquecer',

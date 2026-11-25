@@ -43,6 +43,17 @@ export function CampaignProgress({
           </p>
         </div>
       )}
+      {c.status === 'paused' && c.error && (
+        // Paused by the sender itself (session down, IP block, Instagram asked to
+        // slow down): the reason, so it is fixed before resuming.
+        <div className="rounded-lg border border-yellow/50 bg-yellow/10 px-3 py-2 text-xs text-yellow">
+          <p className="font-semibold">⏸ Campaña pausada</p>
+          <p className="mt-1 opacity-90">{c.error}</p>
+          <p className="mt-1 font-medium">
+            Revisá la conexión con Instagram (chip IG) y reanudá cuando esté resuelto.
+          </p>
+        </div>
+      )}
       <div className="flex gap-2">
         {c.status === 'running' ? (
           <button

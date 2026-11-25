@@ -1,4 +1,4 @@
-import { usePosts, useRescanEvent } from '../api/hooks';
+import { usePosts, useRescanEvent, useRunningJob } from '../api/hooks';
 import { ApiError, toApiError } from '../api/client';
 
 function timeAgo(iso: string | null): string {
@@ -20,6 +20,7 @@ export function PostsDrawer({
 }) {
   const posts = usePosts(event);
   const rescan = useRescanEvent();
+  const igBusy = useRunningJob() !== undefined; // one Instagram job at a time
   const rows = posts.data ?? [];
 
   const handleRescan = () => {
@@ -40,7 +41,10 @@ export function PostsDrawer({
           <button
             type="button"
             onClick={handleRescan}
-            disabled={rescan.isPending || rows.length === 0}
+            disabled={rescan.isPending || igBusy || rows.length === 0}
+            title={
+              igBusy && !rescan.isPending ? 'Esperá a que termine la tarea en curso' : undefined
+            }
             className="rounded-lg bg-panel-2 px-3 py-1 text-xs font-medium hover:bg-border disabled:opacity-40"
           >
             {rescan.isPending ? 'Re-escaneando…' : '↻ Re-escanear fiesta'}
@@ -74,8 +78,8 @@ export function PostsDrawer({
       )}
       {rescan.isSuccess && (
         <p className="mt-2 text-xs text-muted">
-          Re-escaneado: {rescan.data.total_users_found} usuarios ({rescan.data.total_new_users}{' '}
-          nuevos).
+          Re-escaneado: {String(rescan.data.result.usuarios ?? 0)} usuarios (
+          {String(rescan.data.result.nuevos ?? 0)} nuevos).
         </p>
       )}
     </div>

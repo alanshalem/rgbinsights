@@ -68,24 +68,6 @@ class ScanResultOut(BaseModel):
     new_users: int
 
 
-class ScanBatchResultOut(BaseModel):
-    results: list[ScanResultOut]
-    total_users_found: int
-    total_new_users: int
-    skipped: int = 0
-
-
-class SyncResultOut(BaseModel):
-    threads_synced: int
-    users_touched: int
-    incremental: bool = False
-
-
-class EventRefreshOut(BaseModel):
-    scan: ScanBatchResultOut
-    sync: SyncResultOut
-
-
 class UserEngagementOut(BaseModel):
     post_media_pk: str
     type: EngagementType
@@ -144,8 +126,11 @@ class ErrorOut(BaseModel):
 
 
 class TaskOut(BaseModel):
+    """A background job (scan / rescan / sync / refresh / enrich): its progress
+    while it runs, then `result` (the summary) or `error` (Spanish, as shown)."""
+
     id: str
-    kind: str
+    kind: str  # scan | rescan | sync | refresh | enrich
     label: str
     status: str  # running | done | error
     current: int
@@ -153,6 +138,7 @@ class TaskOut(BaseModel):
     message: str
     result: dict[str, Any]
     error: str | None
+    error_code: str | None = None  # e.g. challenge_required -> the reconnect banner
     started_at: datetime
     finished_at: datetime | None
 
@@ -180,12 +166,6 @@ class CampaignCreate(SendParamsIn):
     templates: list[str]
     only_followers: bool = False  # DM only users who follow us (safest)
     followers_first: bool = False  # order followers/mutuals first
-
-
-class EnrichResultOut(BaseModel):
-    enriched: int
-    relations: int
-    relations_cached: bool = False
 
 
 class StatusOut(BaseModel):

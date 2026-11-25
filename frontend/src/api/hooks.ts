@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import {
   useInfiniteQuery,
   useMutation,
@@ -5,7 +6,7 @@ import {
   useQueryClient,
   type QueryClient,
 } from '@tanstack/react-query';
-import { api, type EventCreate, type UsersQuery } from './client';
+import { api, ApiError, type EventCreate, type Task, type UsersQuery } from './client';
 
 export function useEvents() {
   return useQuery({ queryKey: ['events'], queryFn: () => api.listEvents() });
@@ -44,11 +45,15 @@ export function usePosts(event?: number) {
 
 type ViewKey = 'users' | 'counts' | 'posts' | 'events' | 'status';
 
-const ALL_VIEWS: readonly ViewKey[] = ['users', 'counts', 'posts', 'events', 'status'];
+export const ALL_VIEWS: readonly ViewKey[] = ['users', 'counts', 'posts', 'events', 'status'];
 
-/** What each write changes on the backend → the only views worth refetching.
- * Keys match the backend task kinds (`/tasks`) plus the untracked writes. */
-const CHANGES: Record<string, readonly ViewKey[]> = {
+/** The background job kinds (`Task.kind` from /tasks). */
+export type JobKind = 'scan' | 'rescan' | 'enrich' | 'sync' | 'refresh';
+/** Every write that changes views: the jobs plus the untracked writes. */
+export type ChangeKind = JobKind | 'event';
+
+/** What each write changes on the backend → the only views worth refetching. */
+const CHANGES: Record<ChangeKind, readonly ViewKey[]> = {
   // POST /events: a new, empty fiesta row (no posts/users yet).
   event: ['events'],
   // Posts + engagements + users; the fiesta's posts_count / last_scanned_at.
@@ -62,12 +67,21 @@ const CHANGES: Record<string, readonly ViewKey[]> = {
   refresh: ALL_VIEWS,
 };
 
-/** Refetch only the views a write of `kind` changed (unknown kind → all of them). */
-export function invalidateAfter(qc: QueryClient, kind: string) {
-  for (const key of CHANGES[kind] ?? ALL_VIEWS) void qc.invalidateQueries({ queryKey: [key] });
+/** Narrow a backend task kind (a plain string) to a kind this build knows. */
+export function isJobKind(kind: string): kind is JobKind {
+  return kind !== 'event' && Object.hasOwn(CHANGES, kind);
 }
 
-function useInvalidateAfter(kind: string) {
+export function invalidateViews(qc: QueryClient, views: readonly ViewKey[]) {
+  for (const key of views) void qc.invalidateQueries({ queryKey: [key] });
+}
+
+/** Refetch only the views a write of `kind` changed. */
+export function invalidateAfter(qc: QueryClient, kind: ChangeKind) {
+  invalidateViews(qc, CHANGES[kind]);
+}
+
+function useInvalidateAfter(kind: ChangeKind) {
   const qc = useQueryClient();
   return () => invalidateAfter(qc, kind);
 }
@@ -95,49 +109,104 @@ export function useCreateEvent() {
   });
 }
 
-export function useScanPosts() {
-  const refresh = useInvalidateAfter('scan');
-  return useMutation({
-    mutationFn: ({ urls, eventId }: { urls: string[]; eventId?: number }) =>
-      api.scanPosts(urls, eventId),
-    onSuccess: refresh,
+// -- background jobs (S16) ---------------------------------------------------
+
+const LOST_JOB = 'Se perdió el seguimiento de la tarea (¿se reinició el backend?).';
+
+/** Settle when the job ends, watching the live ['tasks'] list (SSE, or polling
+ * as the fallback): resolve with the finished task, reject with its error as an
+ * ApiError (so onError and the challenge banner work as with a plain request).
+ * A list without the job (stale, or the backend restarted) is checked against
+ * GET /tasks/{id} before giving up. */
+function waitForJob(qc: QueryClient, job: Task): Promise<Task> {
+  // Show it right away (the toast), before the stream's next snapshot.
+  qc.setQueryData<Task[]>(['tasks'], (old = []) =>
+    old.some((t) => t.id === job.id) ? old : [...old, job]
+  );
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let checking = false;
+    const finish = (t: Task) => {
+      settled = true;
+      unsubscribe();
+      if (t.status === 'done') resolve(t);
+      else reject(new ApiError(0, t.error_code ?? 'unknown', t.error ?? 'La tarea falló.'));
+    };
+    const check = () => {
+      if (settled) return;
+      const t = qc.getQueryData<Task[]>(['tasks'])?.find((x) => x.id === job.id);
+      if (t) {
+        if (t.status !== 'running') finish(t);
+        return;
+      }
+      if (checking) return;
+      checking = true;
+      api.getTask(job.id).then(
+        (fresh) => {
+          checking = false;
+          if (!settled && fresh.status !== 'running') finish(fresh);
+        },
+        () => {
+          if (settled) return;
+          settled = true;
+          unsubscribe();
+          reject(new ApiError(0, 'unknown', LOST_JOB));
+        }
+      );
+    };
+    const unsubscribe = qc.getQueryCache().subscribe((e) => {
+      if (e.query.queryKey[0] === 'tasks') check();
+    });
+    check();
   });
 }
 
+/** A background job: the POST answers 202 + the job at once, and the mutation
+ * stays pending until the job ends, so `isPending`, `onError` and `data` keep
+ * their meaning. The Toasts refresh the views it changed when its "done"
+ * arrives (CHANGES), for every tab, so no onSuccess invalidation here. */
+function useJob<A>(start: (arg: A) => Promise<Task>) {
+  const qc = useQueryClient();
+  return useMutation({ mutationFn: async (arg: A) => waitForJob(qc, await start(arg)) });
+}
+
+export function useScanPosts() {
+  return useJob(({ urls, eventId }: { urls: string[]; eventId?: number }) =>
+    api.scanPosts(urls, eventId)
+  );
+}
+
 export function useRescanEvent() {
-  const refresh = useInvalidateAfter('rescan');
-  return useMutation({
-    mutationFn: (eventId: number) => api.rescanEvent(eventId),
-    onSuccess: refresh,
-  });
+  return useJob((eventId: number) => api.rescanEvent(eventId));
 }
 
 type Forceable = { id: number; force?: boolean };
 
 export function useEnrichEvent() {
-  const refresh = useInvalidateAfter('enrich');
-  return useMutation({
-    mutationFn: ({ id, force }: Forceable) => api.enrichEvent(id, force),
-    onSuccess: refresh,
-  });
+  return useJob(({ id, force }: Forceable) => api.enrichEvent(id, force));
 }
 
-/** Re-scan the fiesta's posts + sync DMs in one call. */
+/** Re-scan the fiesta's posts + sync DMs in one job. */
 export function useRefreshEvent() {
-  const refresh = useInvalidateAfter('refresh');
-  return useMutation({
-    mutationFn: ({ id, force }: Forceable) => api.refreshEvent(id, force),
-    onSuccess: refresh,
-  });
+  return useJob(({ id, force }: Forceable) => api.refreshEvent(id, force));
 }
 
 export function useSyncDms() {
-  const refresh = useInvalidateAfter('sync');
-  return useMutation({
-    mutationFn: (arg: { force?: boolean; event?: number } = {}) =>
-      api.syncDms(arg.force, arg.event),
-    onSuccess: refresh,
-  });
+  return useJob((arg: { force?: boolean; event?: number } = {}) =>
+    api.syncDms(arg.force, arg.event)
+  );
+}
+
+/** The Instagram job running now, if any: every job talks to Instagram, so the
+ * backend runs one at a time (409 for another) and the UI disables the rest.
+ * Reads the ['tasks'] cache kept live by the Toasts (no fetch of its own). */
+export function useRunningJob(): Task | undefined {
+  return useQuery({
+    queryKey: ['tasks'],
+    queryFn: () => api.listTasks(),
+    staleTime: Infinity,
+    select: (tasks) => tasks.find((t) => t.status === 'running'),
+  }).data;
 }
 
 // -- campaigns -------------------------------------------------------------
@@ -174,14 +243,54 @@ export function useResumeCampaign() {
 
 // -- toasts (live task/campaign progress) ----------------------------------
 
-/** Poll only while something is happening: a mutation in flight (`active`) or a
- * task already running. Idle → no polling (one fetch on mount). */
-export function useTasks(active: boolean) {
+/** Live task list pushed by the server (SSE, GET /tasks/stream) into the
+ * ['tasks'] cache. Returns whether the stream is connected: while it is not
+ * (connecting, the browser retrying, no EventSource), useTasks polls instead.
+ * Reads memory on the backend only: never triggers an Instagram request. */
+export function useTaskStream(): boolean {
+  const qc = useQueryClient();
+  const [connected, setConnected] = useState(false);
+  useEffect(() => {
+    if (typeof EventSource === 'undefined') return;
+    let source: EventSource | null = null;
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    const open = () => {
+      const es = new EventSource(api.tasksStreamUrl);
+      source = es;
+      es.onopen = () => setConnected(true);
+      es.addEventListener('tasks', (e) => {
+        qc.setQueryData<Task[]>(['tasks'], JSON.parse((e as MessageEvent<string>).data));
+        setConnected(true);
+      });
+      es.onerror = () => {
+        setConnected(false); // poll meanwhile; the browser retries on its own…
+        if (es.readyState === EventSource.CLOSED) {
+          // …unless it gave up (e.g. an HTTP error): try again later ourselves.
+          es.close();
+          retry = setTimeout(open, 30000);
+        }
+      };
+    };
+    open();
+    return () => {
+      clearTimeout(retry);
+      source?.close();
+    };
+  }, [qc]);
+  return connected;
+}
+
+/** Polling fallback of the stream: only while it is down AND something is
+ * happening (a mutation in flight = `active`, or a task already running).
+ * Streaming or idle → no polling (one fetch on mount). */
+export function useTasks(active: boolean, streaming: boolean) {
   return useQuery({
     queryKey: ['tasks'],
     queryFn: () => api.listTasks(),
     refetchInterval: (q) =>
-      active || (q.state.data?.some((t) => t.status === 'running') ?? false) ? 1200 : false,
+      !streaming && (active || (q.state.data?.some((t) => t.status === 'running') ?? false))
+        ? 1200
+        : false,
   });
 }
 

@@ -1,6 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { ApiError, toApiError } from '../api/client';
-import { useEnrichEvent, useRefreshEvent, useStatus, useSyncDms } from '../api/hooks';
+import {
+  useEnrichEvent,
+  useRefreshEvent,
+  useRunningJob,
+  useStatus,
+  useSyncDms,
+} from '../api/hooks';
 
 /** "hace 2h" / "hace 5min" / "recién" / "nunca" from an ISO timestamp. */
 function fmtAgo(iso: string | null | undefined): string {
@@ -63,7 +69,10 @@ export function ActionsMenu({
   const sync = useSyncDms();
   const refresh = useRefreshEvent();
   const enrich = useEnrichEvent();
-  const busy = sync.isPending || refresh.isPending || enrich.isPending;
+  // One Instagram job at a time (the backend refuses a second): also busy while
+  // a job started elsewhere (scan bar, posts drawer, another tab) runs.
+  const running = useRunningJob();
+  const busy = sync.isPending || refresh.isPending || enrich.isPending || running !== undefined;
 
   useEffect(() => {
     const close = (e: MouseEvent) => {

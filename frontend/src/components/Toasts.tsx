@@ -1,15 +1,35 @@
 import { useEffect, useRef, useState } from 'react';
-import { useIsMutating, useQueryClient } from '@tanstack/react-query';
+import { useIsMutating, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import type { Campaign, Task } from '../api/client';
-import { invalidateAfter, useActiveCampaign, useTasks } from '../api/hooks';
+import {
+  ALL_VIEWS,
+  invalidateAfter,
+  invalidateViews,
+  isJobKind,
+  useActiveCampaign,
+  useTasks,
+  useTaskStream,
+  type JobKind,
+} from '../api/hooks';
 import { estimateFor } from '../lib/campaign';
 
-const KIND: Record<string, { icon: string; title: string }> = {
+const KIND: Record<JobKind, { icon: string; title: string }> = {
   sync: { icon: '🔄', title: 'Sincronizar DMs' },
   refresh: { icon: '↻', title: 'Actualizar fiesta' },
   enrich: { icon: '👥', title: 'Relación + perfiles' },
   scan: { icon: '🔍', title: 'Escanear posts' },
+  rescan: { icon: '↻', title: 'Re-escanear fiesta' },
 };
+
+/** The backend's task kind is a plain string: a kind this build knows refreshes
+ * only what it changed; an unknown one (explicit fallback) refreshes every view. */
+function refreshAfter(qc: QueryClient, kind: string) {
+  if (isJobKind(kind)) invalidateAfter(qc, kind);
+  else invalidateViews(qc, ALL_VIEWS);
+}
+
+// A warning in the result (e.g. the DM sync hit DM_THREADS_LIMIT): its own line.
+const WARNING_KEY = 'aviso';
 
 // Colour the outcome chips by what they mean (green = replied, red = to contact…).
 const CHIP_COLOR: Record<string, string> = {
@@ -38,14 +58,19 @@ function Spinner() {
 /** The final numbers, as little pills: bold value + Spanish label. */
 function StatChips({ kind, result }: { kind: string; result: Record<string, unknown> }) {
   const entries = Object.entries(result).filter(
-    ([, v]) => v !== null && v !== undefined && v !== ''
+    ([k, v]) => k !== WARNING_KEY && v !== null && v !== undefined && v !== ''
   );
+  const warning = result[WARNING_KEY];
   // For scan-like ops with nothing new to show, say so plainly.
   const quiet =
-    ['sync', 'refresh', 'scan'].includes(kind) && !CHANGE_KEYS.some((k) => Number(result[k]) > 0);
+    ['sync', 'refresh', 'scan', 'rescan'].includes(kind) &&
+    !CHANGE_KEYS.some((k) => Number(result[k]) > 0);
 
   return (
     <>
+      {typeof warning === 'string' && warning && (
+        <p className="mt-1.5 text-xs text-yellow">⚠ {warning}</p>
+      )}
       {quiet && <p className="mono mt-1.5 text-xs text-muted">sin novedades ·</p>}
       {entries.length === 0 ? (
         !quiet && <p className="mono mt-1 text-xs text-green">listo</p>
@@ -64,7 +89,8 @@ function StatChips({ kind, result }: { kind: string; result: Record<string, unkn
 }
 
 function TaskToast({ task }: { task: Task }) {
-  const meta = KIND[task.kind] ?? { icon: '•', title: task.label };
+  const kind: string = task.kind;
+  const meta = isJobKind(kind) ? KIND[kind] : { icon: '•', title: task.label };
   const pct = task.total > 0 ? Math.round((task.current / task.total) * 100) : null;
   const accent =
     task.status === 'error'
@@ -162,6 +188,9 @@ function CampaignToast({ c }: { c: Campaign }) {
         </span>
       </div>
       {c.status === 'blocked' && <p className="mono mt-1.5 text-xs text-red">frenada: {c.error}</p>}
+      {c.status === 'paused' && c.error && (
+        <p className="mono mt-1.5 text-xs text-yellow">pausada: {c.error}</p>
+      )}
     </div>
   );
 }
@@ -169,7 +198,8 @@ function CampaignToast({ c }: { c: Campaign }) {
 export function Toasts() {
   const qc = useQueryClient();
   const active = useIsMutating() > 0;
-  const tasks = useTasks(active);
+  const streaming = useTaskStream(); // pushed by the server; polling only as fallback
+  const tasks = useTasks(active, streaming);
   const campaign = useActiveCampaign(active);
   const [dismissed, setDismissed] = useState<Set<string>>(new Set());
   const processed = useRef<Set<string>>(new Set());
@@ -179,7 +209,7 @@ export function Toasts() {
       if ((t.status === 'done' || t.status === 'error') && !processed.current.has(t.id)) {
         processed.current.add(t.id);
         // Refresh only what this kind of task changed.
-        if (t.status === 'done') invalidateAfter(qc, t.kind);
+        if (t.status === 'done') refreshAfter(qc, t.kind);
         const id = t.id;
         setTimeout(() => setDismissed((s) => new Set(s).add(id)), 7000);
       }
