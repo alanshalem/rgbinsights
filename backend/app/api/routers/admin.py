@@ -11,6 +11,7 @@ from sqlmodel import Session, SQLModel, col, delete, func, select
 
 from app.api.deps import session_dep
 from app.api.schemas import ResetIn, ResetOut
+from app.application.campaign import ACTIVE_STATUSES
 from app.infrastructure.persistence import models
 
 router = APIRouter(tags=["admin"])
@@ -39,7 +40,7 @@ def reset_all(body: ResetIn, session: Session = Depends(session_dep)) -> ResetOu
         )
 
     active = session.exec(
-        select(models.Campaign).where(col(models.Campaign.status).in_(["running", "paused"]))
+        select(models.Campaign).where(col(models.Campaign.status).in_(ACTIVE_STATUSES))
     ).first()
     if active is not None:
         raise HTTPException(

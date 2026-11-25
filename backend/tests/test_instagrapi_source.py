@@ -12,12 +12,12 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from app.infrastructure.config.settings import Settings
-from app.infrastructure.instagram.errors import (
+from app.domain.errors import (
     IpBlockedError,
     LoginRequiredError,
     PostNotFoundError,
 )
+from app.infrastructure.config.settings import Settings
 from app.infrastructure.instagram.instagrapi_source import InstagrapiInstagramSource
 from app.infrastructure.instagram.session import _make_handle_exception
 from instagrapi.exceptions import (
@@ -187,3 +187,42 @@ def test_handle_exception_successful_relogin_returns_quietly() -> None:
 
     assert client.handle_exception(client, LoginRequired()) is None
     assert client.relogin_calls == 1
+
+
+# -- L15: every adapter message is Spanish (a failed job shows it as is) -------
+
+
+def test_challenge_code_and_bad_totp_seed_messages_are_spanish() -> None:
+    from app.domain.errors import ChallengeRequiredError
+    from app.infrastructure.instagram.guard import IgGuard
+    from app.infrastructure.instagram.login import IgLogin
+
+    settings = Settings(_env_file=None, ig_2fa_secret="not-base32")
+    login = IgLogin(settings, IgGuard(settings, sleep=lambda _: None))
+
+    with pytest.raises(ChallengeRequiredError) as challenge:
+        login._challenge_code_handler("rgb.collective", None)
+    assert str(challenge.value) == (
+        "Instagram pidió un código de verificación para rgb.collective: "
+        "confirmá que sos vos desde el celu y volvé a conectar."
+    )
+
+    class BadSeed:
+        def totp_generate_code(self, secret: str) -> str:
+            raise ValueError("Incorrect padding")
+
+    with pytest.raises(LoginRequiredError) as totp:
+        login._totp_code(BadSeed())
+    assert str(totp.value) == (
+        "IG_2FA_SECRET no es una semilla TOTP válida (base32); "
+        "dejalo vacío si la cuenta no tiene 2FA."
+    )
+
+
+def test_a_missing_post_maps_to_a_spanish_result() -> None:
+    from app.application.use_cases import map_instagram_error
+    from app.domain.result import Err, ErrorCode
+
+    assert map_instagram_error(PostNotFoundError("https://instagram.com/p/x/")) == Err(
+        ErrorCode.POST_NOT_FOUND, "No se encontró el post (borrado, privado o link inválido)."
+    )

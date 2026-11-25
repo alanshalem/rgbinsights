@@ -1,24 +1,26 @@
-"""FastAPI dependencies + Result->HTTP mapping + starting background jobs."""
+"""FastAPI dependencies (from the composition root) + Result->HTTP mapping +
+starting background jobs."""
 
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from typing import Any, NoReturn
 
 from fastapi import Depends, HTTPException, Response
 from sqlmodel import Session
 
+from app import bootstrap
 from app.api.schemas import TaskOut
-from app.application.tasks import JobConflictError, JobWork, SessionFactory, Task, registry
+from app.application.campaign_sender import CampaignSender
+from app.application.ports import InstagramSource, UnitOfWork, UnitOfWorkFactory
+from app.application.tasks import JobConflictError, JobWork, TaskView
 from app.application.use_cases import map_instagram_error
+from app.bootstrap import InstagramAccess
+from app.domain.errors import InstagramError
 from app.domain.result import Err, ErrorCode
 from app.infrastructure.config.settings import Settings, get_settings
-from app.infrastructure.instagram.base import InstagramSource
-from app.infrastructure.instagram.errors import InstagramError
-from app.infrastructure.instagram.fake_source import FakeInstagramSource
-from app.infrastructure.instagram.shared import get_shared_source
-from app.infrastructure.persistence.db import engine, get_session
+from app.infrastructure.persistence.repositories import EventRepository
 
 _STATUS_BY_CODE = {
     ErrorCode.POST_NOT_FOUND: 404,
@@ -30,40 +32,54 @@ _STATUS_BY_CODE = {
     ErrorCode.UNKNOWN: 502,
 }
 
+# The current UI (Toasts.tsx) still reads a job's warning from result["aviso"];
+# kept until it reads TaskOut.warning.
+LEGACY_WARNING_KEY = "aviso"
 
-# A failed job's message is shown as is: Spanish, even where the adapter's is not.
-_JOB_MESSAGE_BY_CODE = {
-    ErrorCode.POST_NOT_FOUND: "No se encontró el post (borrado, privado o link inválido).",
-    ErrorCode.CHALLENGE_REQUIRED: "Instagram pide verificación: reconectá desde el chip IG.",
-    ErrorCode.LOGIN_REQUIRED: "La sesión de Instagram se cerró: reconectá desde el chip IG.",
-    ErrorCode.IP_BLOCKED: "Instagram bloqueó la conexión (IP), no la sesión.",
-    ErrorCode.RATE_LIMITED: "Instagram pidió frenar: probá de nuevo más tarde.",
-    ErrorCode.SEND_BLOCKED: "Instagram bloqueó el envío de mensajes.",
-    ErrorCode.UNKNOWN: "Falló la operación con Instagram.",
-}
-# Codes whose adapter message is not Spanish: always the message above.
-_FIXED_JOB_MESSAGE = {ErrorCode.POST_NOT_FOUND}
+SessionFactory = Callable[[], Session]
 
 
 def session_dep() -> Iterator[Session]:
-    yield from get_session()
-
-
-def _new_session() -> Session:
-    return Session(engine)
+    with bootstrap.new_session() as session:
+        yield session
 
 
 def session_factory_dep() -> SessionFactory:
     """Opens new sessions for work that outlives the request (a job's worker
     thread): the request's own session is closed once the 202 is sent."""
-    return _new_session
+    return bootstrap.new_session
 
 
-def source_dep(settings: Settings = Depends(get_settings)) -> InstagramSource:
-    source = settings.resolved_source()
-    if source == "fake":
-        return FakeInstagramSource()
-    return get_shared_source(source)
+def uow_dep(session: Session = Depends(session_dep)) -> UnitOfWork:
+    return bootstrap.unit_of_work(session)
+
+
+def uow_factory_dep(
+    new_session: SessionFactory = Depends(session_factory_dep),
+) -> UnitOfWorkFactory:
+    """New units of work for a job's worker thread (see session_factory_dep)."""
+    return lambda: bootstrap.unit_of_work(new_session())
+
+
+def instagram_dep() -> InstagramAccess:
+    return bootstrap.instagram
+
+
+def source_dep(
+    settings: Settings = Depends(get_settings),
+    instagram: InstagramAccess = Depends(instagram_dep),
+) -> InstagramSource:
+    return instagram.source(settings)
+
+
+def campaign_sender_dep() -> CampaignSender:
+    return bootstrap.campaign_sender
+
+
+def require_event(session: Session, event_id: int) -> None:
+    """404 (`fiesta`) unless the event exists."""
+    if EventRepository(session).get(event_id) is None:
+        raise HTTPException(status_code=404, detail={"code": "not_found", "message": "fiesta"})
 
 
 def raise_for_err(err: Err) -> NoReturn:
@@ -72,37 +88,38 @@ def raise_for_err(err: Err) -> NoReturn:
     raise HTTPException(status_code=status, detail={"code": err.code.value, "message": err.message})
 
 
+def raise_for_instagram_error(exc: InstagramError) -> NoReturn:
+    """Map an adapter exception to its HTTP error — the single place routers use,
+    so a challenge/login/rate-limit always gets the same status everywhere."""
+    raise_for_err(map_instagram_error(exc))
+
+
+def task_out(view: TaskView) -> TaskOut:
+    out = TaskOut.model_validate(view, from_attributes=True)
+    if view.warning:
+        out.result = {**out.result, LEGACY_WARNING_KEY: view.warning}
+    return out
+
+
 def start_job(
     *,
     kind: str,
     label: str,
     params: dict[str, Any],
     work: JobWork,
-    session_factory: SessionFactory,
+    new_uow: UnitOfWorkFactory,
     response: Response,
 ) -> TaskOut:
     """Start a background job; the route answers 202 with it (Location: /tasks/{id}).
 
     While another Instagram job runs: the same kind + params get that running
     job back; anything else is a 409 (never queued, never run in parallel).
+    Inside `work`, `task.unwrap(result)` ends the job as failed on an Err.
     """
     key = f"{kind}:{json.dumps(params, sort_keys=True, default=str)}"
     try:
-        task = registry.start(kind, label, key, work, session_factory)
+        view = bootstrap.registry.start(kind, label, key, work, new_uow)
     except JobConflictError as exc:
         raise HTTPException(409, detail={"code": "conflict", "message": str(exc)}) from exc
-    response.headers["Location"] = f"/tasks/{task.id}"
-    return TaskOut.model_validate(task, from_attributes=True)
-
-
-def fail_job(task: Task, err: Err) -> None:
-    """Record an expected failure (Result.Err) on the job, in Spanish."""
-    fallback = _JOB_MESSAGE_BY_CODE.get(err.code, _JOB_MESSAGE_BY_CODE[ErrorCode.UNKNOWN])
-    message = fallback if err.code in _FIXED_JOB_MESSAGE else (err.message or fallback)
-    task.fail(message, err.code.value)
-
-
-def raise_for_instagram_error(exc: InstagramError) -> NoReturn:
-    """Map an adapter exception to its HTTP error — the single place routers use,
-    so a challenge/login/rate-limit always gets the same status everywhere."""
-    raise_for_err(map_instagram_error(exc))
+    response.headers["Location"] = f"/tasks/{view.id}"
+    return task_out(view)

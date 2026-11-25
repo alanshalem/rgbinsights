@@ -1,54 +1,35 @@
-"""InstagrapiInstagramSource — the real adapter.
+"""InstagrapiInstagramSource — the real adapter, a thin facade over its parts.
 
-instagrapi is imported lazily so the app (and FakeInstagramSource) boots even
-when the package isn't installed. This is the only module that knows about
-instagrapi's models and exceptions; everything else sees domain entities.
+- login.py          session/login (one logged-in client, reused)
+- reads.py          posts, comments, likers, profiles, follow graph
+- direct.py         DM inbox and sending
+- error_mapping.py  instagrapi/network exceptions -> domain errors
 
-Good-behaviour rules: session reuse (login once) lives here; every port method
-runs as one IgGuard operation (guard.py), which serializes Instagram access and
-enforces the login breaker, cooldown, request budget and human pacing.
+Every port method runs as one IgGuard operation (guard.py), which serializes
+Instagram access and enforces the login breaker, cooldown, request budget and
+human pacing. instagrapi is imported lazily so the app (and the fake source)
+boots even when the package isn't installed; only these modules know about
+instagrapi's models and exceptions, everything else sees domain entities.
 """
 
 from __future__ import annotations
 
 import functools
-import logging
-import re
 from collections.abc import Callable
-from datetime import UTC, datetime
-from pathlib import Path
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
-from app.domain.entities import (
-    Comment,
-    DmMessage,
-    DmThread,
-    IgUser,
-    Post,
-    ProfileInfo,
-)
+from app.domain.entities import Comment, DmInbox, FollowGraph, IgUser, Post, ProfileInfo
 from app.infrastructure.config.settings import Settings
-from app.infrastructure.instagram.base import DmInbox, FollowGraph
-from app.infrastructure.instagram.errors import (
-    ChallengeRequiredError,
-    InstagramError,
-    IpBlockedError,
-    LoginRequiredError,
-    PostNotFoundError,
-    RecipientUnavailableError,
-    SendBlockedError,
-    SendRetryableError,
-)
+from app.infrastructure.instagram import direct
+from app.infrastructure.instagram.error_mapping import is_dead_session, to_instagram_error
 from app.infrastructure.instagram.guard import IgGuard, get_guard
-from app.infrastructure.instagram.session import build_client, take_relogin_failure
+from app.infrastructure.instagram.login import IgLogin
+from app.infrastructure.instagram.reads import IgReader
+from app.infrastructure.instagram.session import take_relogin_failure
 
 if TYPE_CHECKING:
     from instagrapi import Client
-
-logger = logging.getLogger(__name__)
-
-# Users per followers page: instagrapi's MAX_USER_COUNT.
-_FOLLOW_PAGE_SIZE = 200
 
 
 def _adapts[F: Callable[..., Any]](fn: F) -> F:
@@ -74,13 +55,13 @@ def _call_adapted(
     try:
         return fn(source, *args, **kwargs)
     except Exception as exc:  # noqa: BLE001 — normalised at the adapter boundary
-        err = _to_instagram_error(exc)
+        err = to_instagram_error(exc)
         # instagrapi may swallow a failed relogin and report a misleading
         # fallback error (e.g. "not found"); the real cause wins.
         client = source._client
         if client is not None and (failure := take_relogin_failure(client)) is not None:
-            err = _to_instagram_error(failure)
-        if isinstance(err, (LoginRequiredError, ChallengeRequiredError)):
+            err = to_instagram_error(failure)
+        if is_dead_session(err):
             # The client's cookies are gone; log in from scratch next time.
             source._client = None
         if err is exc:
@@ -94,677 +75,68 @@ class InstagrapiInstagramSource:
     def __init__(self, settings: Settings, guard: IgGuard | None = None) -> None:
         self._settings = settings
         self._guard = guard or get_guard(settings)
-        self._client: Client | None = None
-        # media pk -> full media id ("<pk>_<owner pk>"), learned from posts we
-        # already fetched. instagrapi needs the full id for comments/likers and
-        # spends one extra media lookup per call to find it when it only has the pk.
-        self._media_ids: dict[str, str] = {}
+        self._login = IgLogin(settings, self._guard)
+        self._reads = IgReader(settings)
 
-    # -- login / session -------------------------------------------------
+    @property
+    def _client(self) -> Client | None:
+        """The logged-in client in memory (None until a login)."""
+        return self._login.client
 
-    def _login(self) -> Client:
-        """Authenticate, trying the cheapest/lowest-risk path first.
+    @_client.setter
+    def _client(self, client: Client | None) -> None:
+        self._login.client = client
 
-        1. A saved session.json (reuses the device; no network login) — validated.
-        2. IG_SESSIONID from a real browser (low ban risk; recommended bootstrap).
-        3. username/password (+ TOTP) — auto-renews when the session finally dies.
-
-        Every success is persisted to session.json so the next start reuses it and
-        the account keeps a stable device. This is what makes the login survive
-        restarts and self-heal on expiry.
-
-        Always runs inside a guard operation: a failure that reached Instagram
-        opens the login breaker, a success closes it.
-        """
-        if self._client is not None:
-            return self._client
-
-        # Lazy import: keeps instagrapi optional at import time.
-        from instagrapi.exceptions import (
-            ChallengeRequired,
-            LoginRequired,
-            TwoFactorRequired,
-        )
-
-        client = build_client(self._settings, self._challenge_code_handler)
-        session_path = Path(self._settings.ig_session_file)
-        errors: list[str] = []
-
-        # 1. Reuse a saved session (build_client already loaded it).
-        if session_path.exists() and self._session_valid(client):
-            logger.info("reusing saved IG session")
-            return self._logged_in(client)
-
-        # 2. Bootstrap from a browser sessionid.
-        sessionid = self._settings.ig_sessionid.strip()
-        if sessionid:
-            self._guard.note_sessionid(sessionid)
-            try:
-                client.login_by_sessionid(sessionid)
-                self._persist(client, session_path)
-                return self._logged_in(client)
-            except (ChallengeRequired, LoginRequired) as exc:
-                errors.append(f"sessionid vencido/rechazado: {exc}")
-            except Exception as exc:  # noqa: BLE001 — surfaced below as handled
-                if isinstance(domain := classify_login_error(exc), IpBlockedError):
-                    raise domain from exc  # a flagged IP breaks every path — stop now
-                errors.append(f"sessionid: {exc}")
-
-        # 3. username/password (auto-renews when the session dies).
-        if self._settings.ig_username and self._settings.ig_password:
-            try:
-                verification_code = self._totp_code(client)
-                client.login(
-                    self._settings.ig_username,
-                    self._settings.ig_password,
-                    verification_code=verification_code,
-                )
-                self._persist(client, session_path)
-                return self._logged_in(client)
-            except TwoFactorRequired as exc:
-                raise ChallengeRequiredError(
-                    "IG pide 2FA. Cargá IG_2FA_SECRET en .env para resolverlo solo."
-                ) from exc
-            except ChallengeRequired as exc:
-                raise ChallengeRequiredError(
-                    "Instagram pidió verificación (challenge). Reconectá con el sessionid."
-                ) from exc
-            except InstagramError:
-                raise  # already a handled type (e.g. from the TOTP guard)
-            except Exception as exc:  # noqa: BLE001
-                if isinstance(domain := classify_login_error(exc), IpBlockedError):
-                    raise domain from exc  # a flagged IP breaks every path — stop now
-                errors.append(f"user/pass: {exc}")
-
-        detail = "; ".join(errors) if errors else "no hay sessionid ni user/pass en .env"
-        raise LoginRequiredError(f"no se pudo iniciar sesión de Instagram ({detail})")
-
-    def _logged_in(self, client: Client) -> Client:
-        self._client = client
-        self._guard.login_ok()
-        return client
-
-    def _session_valid(self, client: Client) -> bool:
-        """Cheap authed probe: True if the loaded session still works.
-
-        Uses account_info() (/accounts/current_user/) on purpose: it is gentler
-        than the timeline feed, which IG heavily monitors and 403s on the
-        slightest throttle/flag even when the session is fine for scraping. We'd
-        rather keep a usable-but-throttled session connected than mark it dead.
-        """
-        try:
-            client.account_info()
-            return True
-        except Exception:  # noqa: BLE001 — any failure means fall through to re-login
-            return False
-
-    def _persist(self, client: Client, session_path: Path) -> None:
-        try:
-            client.dump_settings(session_path)
-            logger.info("saved IG session to %s", session_path)
-        except Exception:  # noqa: BLE001 — persistence is best-effort
-            logger.warning("could not save IG session", exc_info=True)
-
-    def _totp_code(self, client: Client) -> str:
-        """Generate a 2FA code from the seed, or "" if none is configured.
-
-        The seed is stripped first (a stray inline comment or whitespace in
-        .env must not be treated as a real seed), and a malformed seed becomes
-        a clear handled error rather than an unhandled base32 crash.
-        """
-        secret = self._settings.ig_2fa_secret.strip()
-        if not secret:
-            return ""
-        try:
-            return str(client.totp_generate_code(secret))
-        except Exception as exc:
-            raise LoginRequiredError(
-                "IG_2FA_SECRET is not a valid base32 TOTP seed; "
-                "leave it empty if the account has no 2FA."
-            ) from exc
-
-    def _challenge_code_handler(self, username: str, choice: Any) -> str:
-        # We can't prompt interactively from the API. Surface it as a handled
-        # error so the app informs the user instead of crashing.
-        raise ChallengeRequiredError(
-            f"challenge code required for {username}; resolve it and retry"
-        )
-
-    # -- port methods ----------------------------------------------------
-
-    def reset_budget(self) -> None:
-        """No-op: the real budget is per hour/day across all operations (guard)."""
+    # -- session -----------------------------------------------------------
 
     def cached_user_pk(self) -> str | None:
-        """Our pk if a logged-in client is in memory — never touches the network."""
-        return str(self._client.user_id) if self._client is not None else None
+        return self._login.cached_user_pk()
 
     def connect_sessionid(self, sessionid: str) -> str:
-        """Explicit user action: adopt a sessionid pasted from a real browser.
-
-        Validated with one cheap probe and persisted to session.json. A sessionid
-        other than the one whose login failed may skip an open login breaker once
-        (never an IP block or a cooldown). On failure the current client, if
-        any, is kept.
-        """
-        with self._guard.operation(fresh_sessionid=sessionid):
-            client = build_client(self._settings, self._challenge_code_handler)
-            try:
-                client.login_by_sessionid(sessionid)
-                # login_by_sessionid only sets the cookie; probe once so a blocked
-                # account (403) or a dead cookie surfaces here as a clear message.
-                client.account_info()
-            except InstagramError:
-                raise  # already classified (challenge handler / guard rails)
-            except Exception as exc:  # noqa: BLE001 — classify 403/IP-block/expired session
-                raise classify_login_error(exc) from exc
-            self._persist(client, Path(self._settings.ig_session_file))
-            return str(self._logged_in(client).user_id)
-
-    def send_dm(self, user_pk: str, text: str) -> None:
-        with self._guard.operation():
-            self._send_dm(user_pk, text)
-
-    def _send_dm(self, user_pk: str, text: str) -> None:
-        from instagrapi.exceptions import (
-            ClientForbiddenError,
-            ClientThrottledError,
-            DirectMessageRequestsDisabled,
-            FeedbackRequired,
-            PleaseWaitFewMinutes,
-            RateLimitError,
-            SentryBlock,
-        )
-
-        # Besides the campaign's own rails (per-send delay + daily cap), the send's
-        # HTTP requests count in the guard's hourly/daily budget like any other.
-        # Hitting it raises RateLimitedError (a pause), never a fake action-block.
-        try:
-            recipient = int(user_pk)
-        except (TypeError, ValueError) as exc:
-            raise SendRetryableError(f"user_pk inválido: {user_pk!r}") from exc
-
-        client = self._login()
-        # instagrapi routes any text containing "http" through the link-preview
-        # endpoint (broadcast/link/), which Instagram blocks far harder (403) than
-        # plain text. Drop the URL scheme so it goes via broadcast/text/ — IG still
-        # auto-links the bare domain, so the recipient gets a clickable link.
-        safe_text = re.sub(r"https?://", "", text)
-        try:
-            client.direct_send(safe_text, user_ids=[recipient])
-        except DirectMessageRequestsDisabled as exc:
-            # The recipient closed message requests — their setting, not a block
-            # on us. Skip this one and keep the campaign going.
-            raise RecipientUnavailableError(
-                f"@{user_pk} no acepta mensajes nuevos — se saltea"
-            ) from exc
-        except InstagramError as exc:
-            # Already classified: a failed relogin (hook) or a guard rail.
-            self._drop_dead_session(exc)
-            raise
-        except Exception as exc:  # noqa: BLE001 — every raw failure is classified below
-            if _is_session_error(exc):
-                # The session/account/IP is the problem (expired, challenge or
-                # checkpoint, IP block) — never a per-target failure. Classify it so
-                # the campaign pauses/blocks and the UI guides the right fix.
-                err = classify_login_error(exc)
-                self._drop_dead_session(err)
-                raise err from exc
-            if isinstance(
-                exc,
-                (
-                    FeedbackRequired,
-                    SentryBlock,
-                    PleaseWaitFewMinutes,
-                    ClientThrottledError,
-                    RateLimitError,
-                    ClientForbiddenError,  # a 403 on the send endpoint = action-block
-                ),
-            ):
-                # A genuine Instagram push-back on sending — stop and wait.
-                raise SendBlockedError(_send_block_message(exc)) from exc
-            # Network/timeout: transient, not a block.
-            raise SendRetryableError(f"envío falló (reintentable): {exc}") from exc
-
-    def _drop_dead_session(self, err: InstagramError) -> None:
-        """A dead or challenged session leaves the client unusable: log in from
-        scratch next time (an IP block keeps the client — the session is fine)."""
-        if isinstance(err, (LoginRequiredError, ChallengeRequiredError)):
-            self._client = None
-
-    @_adapts
-    def get_follow_graph(self, known: FollowGraph | None = None) -> FollowGraph:
-        # friendships/show_many only reports who WE follow (no `followed_by`), so
-        # to know "te sigue" we read our own followers/following lists. Followers
-        # are paged newest-first; with `known` the read stops at the first page
-        # made only of people we already know and returns just the new ones.
-        # Following has no guaranteed order, so it is always read whole, with
-        # exactly the call the app made before (instagrapi's user_following).
-        client = self._login()
-        our_id = str(client.user_id)
-        cap = self._settings.relationship_fetch_max
-        followers, saw_followers = self._read_followers(
-            client, our_id, known.followers if known else None
-        )
-        following = {str(pk) for pk in client.user_following(our_id, amount=cap)}
-        saw_following = bool(following)
-        logger.info(
-            "read graph (%s): %d followers, %d following",
-            "incremental" if known else "full",
-            len(followers),
-            len(following),
-        )
-        # A logged-in account always has some followers/following. Nobody at all
-        # means the read was blocked — refuse rather than overwrite good "te
-        # sigue" data with all-False.
-        if not saw_followers and not saw_following:
-            raise InstagramError("no se pudo leer seguidores/seguidos (bloqueado?)")
-        return FollowGraph(followers=followers, following=following)
-
-    def _read_followers(
-        self, client: Client, user_id: str, known: set[str] | None
-    ) -> tuple[set[str], bool]:
-        """Our followers, newest first, one request per page.
-
-        Each request is exactly the one instagrapi's
-        user_followers_v1_chunk(user_id, relationship_fetch_max,
-        order="date_followed_latest") sends (same params, order, page size and
-        shrinking last-page count); only the decision to stop is ours. Full read
-        (`known` is None): every page up to the cap. Incremental: the pks not in
-        `known`, stopping after the first page that brings nobody new. Also
-        returns whether IG listed anyone.
-        """
-        cap = self._settings.relationship_fetch_max
-        listed: set[str] = set()  # instagrapi's `unique_set`: drives count and cap
-        found: set[str] = set()
-        max_id = ""
-        while True:
-            count = min(cap - len(listed), _FOLLOW_PAGE_SIZE) if cap else _FOLLOW_PAGE_SIZE
-            params: dict[str, Any] = {
-                "count": count,
-                "rank_token": client.rank_token,
-                "search_surface": "follow_list_page",
-                "query": "",
-                "enable_groups": "true",
-                "order": "date_followed_latest",
-            }
-            if max_id:
-                params["max_id"] = max_id
-            result = client.private_request(f"friendships/{user_id}/followers/", params=params)
-            if result.get("should_limit_list_of_followers"):
-                # IG truncates this list: read it whole the way instagrapi falls back.
-                everyone = {str(u.pk) for u in client.user_followers_private_gql(user_id, cap)}
-                return (everyone if known is None else everyone - known), bool(everyone)
-            page = {pk for u in result.get("users") or [] if (pk := _user_pk(u))}
-            new = (page if known is None else page - known) - listed
-            listed |= page
-            found |= new
-            max_id = result.get("next_max_id") or ""
-            if not max_id or (cap and len(listed) >= cap) or (known is not None and not new):
-                return found, bool(listed)
-
-    @_adapts
-    def get_profile(self, username: str) -> ProfileInfo:
-        client = self._login()
-        u = client.user_info_by_username(username)
-        return ProfileInfo(
-            pk=str(u.pk),
-            username=u.username,
-            full_name=u.full_name or "",
-            follower_count=u.follower_count,
-            is_verified=bool(u.is_verified),
-            is_business=bool(getattr(u, "is_business", False)),
-            biography=u.biography or "",
-            is_private=bool(u.is_private),
-            profile_pic_url=str(u.profile_pic_url) if u.profile_pic_url else None,
-        )
+        return self._login.connect_sessionid(sessionid)
 
     @_adapts
     def current_user_pk(self) -> str:
-        client = self._login()
-        return str(client.user_id)
+        return str(self._login.client_or_login().user_id)
+
+    # -- reads -------------------------------------------------------------
+
+    @_adapts
+    def get_follow_graph(self, known: FollowGraph | None = None) -> FollowGraph:
+        return self._reads.follow_graph(self._login.client_or_login(), known)
+
+    @_adapts
+    def get_profile(self, username: str) -> ProfileInfo:
+        return self._reads.profile(self._login.client_or_login(), username)
 
     @_adapts
     def get_post(self, url: str) -> Post:
-        from instagrapi.exceptions import ClientError, MediaNotFound
-
-        client = self._login()
-        try:
-            media_pk = client.media_pk_from_url(url)
-            media = client.media_info(media_pk)
-        except MediaNotFound as exc:
-            raise PostNotFoundError(url) from exc
-        except _session_error_types():
-            raise  # a dead session is not a missing post; _adapts classifies it
-        except ClientError as exc:
-            raise PostNotFoundError(url) from exc
-        return self._post(media)
+        return self._reads.post(self._login.client_or_login(), url)
 
     @_adapts
     def get_recent_posts(self, limit: int) -> list[Post]:
-        client = self._login()
-        medias = client.user_medias(client.user_id, amount=limit)
-        return [self._post(m) for m in medias]
-
-    def _post(self, media: Any) -> Post:
-        """Map a fetched media, remembering its full id for comments/likers."""
-        full_id = str(getattr(media, "id", "") or "")
-        if "_" in full_id:
-            self._media_ids[str(media.pk)] = full_id
-        return _to_post(media)
-
-    def _media_id(self, client: Client, media_pk: str) -> str:
-        """Full media id for a pk: known from a fetched post, else resolved once
-        (one media lookup) and remembered for the rest of the scan."""
-        media_pk = str(media_pk)
-        if "_" in media_pk:
-            return media_pk
-        if (full_id := self._media_ids.get(media_pk)) is None:
-            full_id = self._media_ids[media_pk] = str(client.media_id(media_pk))
-        return full_id
+        return self._reads.recent_posts(self._login.client_or_login(), limit)
 
     @_adapts
     def get_likers(self, media_pk: str) -> list[IgUser]:
-        client = self._login()
-        return [_to_user(u) for u in client.media_likers(self._media_id(client, media_pk))]
+        return self._reads.likers(self._login.client_or_login(), media_pk)
 
     @_adapts
     def get_comments(self, media_pk: str, since: datetime | None = None) -> list[Comment]:
-        """Comments, newest page first (media/<id>/comments/, as media_comments).
+        return self._reads.comments(self._login.client_or_login(), media_pk, since)
 
-        Every request is exactly what instagrapi's media_comments sends: the
-        first page with no arguments, then the cursor passed positionally (so
-        instagrapi signs it as a POST body). Only the decision to stop is ours:
-        at scan_comments_limit (without a cap a viral post means hundreds of
-        requests) or, with `since` (the newest comment already stored), after the
-        first older page in which EVERY comment is at or before `since` — the
-        order is not strictly by date (pinned/ranked comments), so one old comment
-        on a page proves nothing. Comments at or after `since` are returned.
-        """
-        client = self._login()
-        endpoint = f"media/{self._media_id(client, media_pk)}/comments/"
-        cap = self._settings.scan_comments_limit
-        comments: list[Comment] = []
-        result = client.private_request(endpoint, None)
-        all_known = _take_comments(result, since, comments)
-        while (result.get("has_more_comments") and result.get("next_max_id")) or (
-            result.get("has_more_headload_comments") and result.get("next_min_id")
-        ):
-            if cap and len(comments) >= cap:
-                break
-            if result.get("has_more_comments"):
-                if all_known:
-                    break  # older pages only hold what we already stored
-                params = {"max_id": result.get("next_max_id")}
-            else:
-                params = {"min_id": result.get("next_min_id")}
-            if not (
-                result.get("next_max_id") or result.get("next_min_id") or result.get("comments")
-            ):
-                break
-            result = client.private_request(endpoint, params)
-            all_known = _take_comments(result, since, comments)
-        return comments[:cap] if cap else comments
+    # -- direct messages -----------------------------------------------------
 
     @_adapts
-    def get_dm_threads(
-        self, progress: object | None = None, since: datetime | None = None
-    ) -> DmInbox:
-        """Inbox pages, newest activity first, each one instagrapi's own
-        direct_threads_chunk request (its defaults: 20 threads, 10 messages).
+    def get_dm_threads(self, since: datetime | None = None) -> DmInbox:
+        client = self._login.client_or_login()
+        return direct.read_inbox(client, self._settings.dm_threads_limit, since)
 
-        Every sync reads at most dm_threads_limit threads. With `since`, paging
-        stops at the first thread last active before `since` (pinned threads sit
-        on top out of order and never stop it); only threads active since then
-        are returned. instagrapi floors activity to whole seconds, so `since` is
-        floored too and a thread in that same second is re-read (harmless) rather
-        than missed. If the cap is hit first, the inbox is marked incomplete.
-        """
-        client = self._login()
-        our_pk = str(client.user_id)
-        limit = self._settings.dm_threads_limit
-        floor = since.astimezone(UTC).replace(microsecond=0) if since is not None else None
-        threads: list[DmThread] = []
-        seen = 0
-        cursor: str | None = None
-        while True:
-            chunk, cursor = client.direct_threads_chunk(cursor=cursor)
-            for t in chunk:
-                seen += 1
-                if seen > limit:
-                    return DmInbox(threads=threads, complete=floor is None)
-                activity = _as_dt(getattr(t, "last_activity_at", None))
-                if floor is not None and activity is not None and _utc(activity) < floor:
-                    if getattr(t, "is_pin", False):
-                        continue  # pinned: on top regardless of activity
-                    return DmInbox(threads=threads)  # back to the previous sync
-                if (thread := _to_thread(t, our_pk)) is not None:
-                    threads.append(thread)  # 1:1 only; group/self threads skipped
-            if not cursor or not chunk:
-                return DmInbox(threads=threads)
-            if seen >= limit:
-                return DmInbox(threads=threads, complete=floor is None)
-
-
-# -- mapping helpers -----------------------------------------------------
-
-
-def classify_login_error(exc: Exception) -> InstagramError:
-    """Turn an instagrapi login/auth failure into a specific domain error so the
-    UI can tell an IP block apart from an expired session.
-
-    - IP/proxy on Instagram's blacklist  -> IpBlockedError (a new sessionid won't
-      help; change network).
-    - challenge / 2FA                    -> ChallengeRequiredError (verify on the
-      phone, then repaste).
-    - anything else (dead sessionid, bad password) -> LoginRequiredError (paste a
-      fresh sessionid).
-    """
-    from instagrapi.exceptions import (
-        ChallengeRequired,
-        ProxyAddressIsBlocked,
-        TwoFactorRequired,
-    )
-
-    s = str(exc).lower()
-    ip_markers = ("blacklist", "ip address", "change your ip", "proxy")
-    if isinstance(exc, ProxyAddressIsBlocked) or any(k in s for k in ip_markers):
-        return IpBlockedError(
-            "Instagram marcó tu conexión (IP), no la sesión. Un sessionid nuevo NO "
-            "lo arregla. Probá desde otra red (datos del celu / otra wifi) o esperá "
-            "unas horas antes de reintentar."
-        )
-    # A checkpoint (often a 400 "checkpoint_required" with no typed exception) is a
-    # challenge too: the account must be verified before anything else works.
-    if isinstance(exc, (ChallengeRequired, TwoFactorRequired)) or any(
-        k in s for k in ("challenge", "checkpoint")
-    ):
-        return ChallengeRequiredError(
-            "Instagram pidió verificación (challenge). Entrá a la cuenta desde el celu, "
-            "confirmá que sos vos, y volvé a pegar el sessionid."
-        )
-    if "redirect" in s and ("exceeded" in s or "too many" in s):
-        # A redirect loop: IG bounces the request instead of authenticating.
-        # Usually a mis-copied/expired sessionid; sometimes an account/IP in review.
-        return LoginRequiredError(
-            "Instagram rebotó la conexión (bucle de redirects). Casi siempre el "
-            "sessionid quedó mal copiado o vencido: volvé a copiar el valor COMPLETO "
-            "de la cookie 'sessionid', recién sacado del navegador. Si con uno fresco "
-            "sigue igual, la cuenta o la IP está en revisión: esperá o probá otra red."
-        )
-    if "403" in s or "forbidden" in s or "feedback_required" in s:
-        # Authenticated but IG refuses every call — the account/IP is blocked or
-        # under review. The sessionid is likely fine; retrying makes it worse.
-        return LoginRequiredError(
-            "El sessionid está bien, pero Instagram rechaza las llamadas de la cuenta "
-            "(403). No es el código: la cuenta o la IP está bloqueada / en revisión. "
-            "Esperá 12-48h sin automatizar, usá la cuenta a mano desde el celu, y "
-            "probá desde otra red. No reintentes seguido — lo alarga."
-        )
-    return LoginRequiredError(
-        "La sesión venció o el sessionid es inválido. Pegá un sessionid nuevo del "
-        "navegador donde estés logueado a la cuenta."
-    )
-
-
-def _to_instagram_error(exc: Exception) -> InstagramError:
-    """Convert a raw instagrapi/requests failure into our InstagramError family.
-
-    The adapter is the boundary: every method must surface an InstagramError so
-    use cases map it to a clean Result/HTTP error instead of leaking a 500.
-    Our own errors pass through unchanged; login/redirect/challenge/IP get the
-    specific, actionable messages from classify_login_error.
-    """
-    if isinstance(exc, InstagramError):
-        return exc
-    if _is_session_error(exc):
-        return classify_login_error(exc)
-    return InstagramError(f"Instagram falló la operación: {exc}")
-
-
-_LOGIN_MARKERS = (
-    "login_required",
-    "login required",
-    "not logged in",
-    "challenge",
-    "checkpoint",
-    "redirect",
-    "blacklist",
-    "ip address",
-    "change your ip",
-    "two_factor",
-    "csrf",
-)
-
-
-def _is_session_error(exc: Exception) -> bool:
-    """True if the failure is about the session/login/IP, not the request itself:
-    a typed instagrapi session error, or a generic one whose message says so."""
-    from instagrapi.exceptions import ProxyAddressIsBlocked
-
-    if isinstance(exc, (*_session_error_types(), ProxyAddressIsBlocked)):
-        return True
-    s = str(exc).lower()
-    return any(k in s for k in _LOGIN_MARKERS)
-
-
-def _session_error_types() -> tuple[type[Exception], ...]:
-    """instagrapi exceptions that mean the session/login is unusable."""
-    from instagrapi.exceptions import (
-        BadPassword,
-        ChallengeRequired,
-        ClientLoginRequired,
-        LoginRequired,
-        ReloginAttemptExceeded,
-        TwoFactorRequired,
-    )
-
-    return (
-        BadPassword,
-        ChallengeRequired,
-        ClientLoginRequired,
-        LoginRequired,
-        ReloginAttemptExceeded,
-        TwoFactorRequired,
-    )
-
-
-def _send_block_message(exc: object) -> str:
-    """Turn a direct_send failure into a clear, actionable message.
-
-    A 403 / login_required / feedback_required on the broadcast endpoint means
-    Instagram action-blocked the account from sending DMs — the only right move
-    is to stop and wait, so we say so plainly instead of leaking the raw error.
-    """
-    s = str(exc).lower()
-    if any(
-        k in s
-        for k in ("login_required", "403", "feedback_required", "spam", "action", "few minutes")
-    ):
-        return (
-            "Instagram frenó el envío de DMs de tu cuenta (action-block). "
-            "PARÁ y no reintentes — insistir alarga el bloqueo. Esperá 12-48h sin enviar, "
-            "usá la cuenta a mano desde el celu, y reintentá con Máxima cautela "
-            "(empezá por los que te siguen)."
-        )
-    return f"envío rechazado: {exc}"
-
-
-def _as_dt(value: Any) -> datetime | None:
-    return value if isinstance(value, datetime) else None
-
-
-def _take_comments(result: Any, since: datetime | None, into: list[Comment]) -> bool:
-    """Add a comments page's entries at/after `since` to `into`; True if every
-    comment on the page is at or before `since` (all already stored)."""
-    from instagrapi.extractors import extract_comment
-
-    all_known = True
-    for raw in result.get("comments") or []:
-        c = extract_comment(raw)
-        created = _as_dt(getattr(c, "created_at_utc", None))
-        known = since is not None and created is not None and _utc(created) <= since
-        all_known = all_known and known
-        if since is None or created is None or _utc(created) >= since:
-            into.append(Comment(user=_to_user(c.user), text=c.text, created_at=created))
-    return since is not None and all_known
-
-
-def _utc(when: datetime) -> datetime:
-    """Aware UTC. instagrapi builds DM times with datetime.fromtimestamp, i.e.
-    naive local time — astimezone() reads a naive value exactly that way."""
-    return when.astimezone(UTC)
-
-
-def _user_pk(raw: Any) -> str | None:
-    """A user's pk in a raw API list (instagrapi reads `id`, then `pk`)."""
-    pk = raw.get("id", raw.get("pk")) if isinstance(raw, dict) else None
-    return str(pk) if pk else None
-
-
-def _to_user(u: Any) -> IgUser:
-    return IgUser(
-        pk=str(u.pk),
-        username=u.username,
-        full_name=getattr(u, "full_name", "") or "",
-        profile_pic_url=str(u.profile_pic_url) if getattr(u, "profile_pic_url", None) else None,
-        is_private=bool(getattr(u, "is_private", False)),
-    )
-
-
-def _to_post(m: Any) -> Post:
-    return Post(
-        media_pk=str(m.pk),
-        shortcode=m.code,
-        url=f"https://instagram.com/p/{m.code}/",
-        caption=getattr(m, "caption_text", "") or "",
-        taken_at=_as_dt(getattr(m, "taken_at", None)),
-    )
-
-
-def _to_thread(thread: Any, our_pk: str) -> DmThread | None:
-    """A 1:1 thread with its counterpart, or None for a group/self thread."""
-    other = _pick_other_user(thread, our_pk)
-    if other is None:
-        return None
-    messages = [
-        DmMessage(user_pk=str(m.user_id), created_at=_as_dt(m.timestamp)) for m in thread.messages
-    ]
-    return DmThread(
-        thread_id=str(thread.id),
-        user=other,
-        messages=messages,
-        last_message_at=messages[0].created_at if messages else None,
-    )
-
-
-def _pick_other_user(thread: Any, our_pk: str) -> IgUser | None:
-    """A thread lists all participants; pick the single one that isn't us.
-
-    We key everything by pk (usernames change), and only 1:1 threads map to a
-    user in this tool — group threads are skipped.
-    """
-    others = [u for u in thread.users if str(u.pk) != our_pk]
-    if len(others) != 1:
-        return None
-    return _to_user(others[0])
+    def send_dm(self, user_pk: str, text: str) -> None:
+        # Besides the campaign's own rails (per-send delay + daily cap), the send's
+        # HTTP requests count in the guard's hourly/daily budget like any other.
+        # Hitting it raises RateLimitedError (a pause), never a fake action-block.
+        with self._guard.operation():
+            recipient = direct.parse_recipient(user_pk)
+            client = self._login.client_or_login()
+            direct.send_text(client, user_pk, recipient, text, self._login.forget_if_dead)

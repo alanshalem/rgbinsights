@@ -9,6 +9,12 @@ import hashlib
 import math
 from dataclasses import dataclass
 
+# A campaign in these states still owns its targets: no second campaign (and
+# no data reset) until it is done or blocked.
+ACTIVE_STATUSES = ("running", "paused")
+# The states the UI keeps showing as "the current campaign".
+SHOWN_STATUSES = (*ACTIVE_STATUSES, "blocked")
+
 
 @dataclass(frozen=True, slots=True)
 class SendParams:

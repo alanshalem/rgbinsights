@@ -17,11 +17,11 @@ from typing import Any
 
 import pytest
 import requests
+from app import bootstrap
 from app.api.routers import avatars, ig
 from app.api.schemas import IgSessionIdIn
-from app.infrastructure.config.settings import Settings
-from app.infrastructure.instagram import instagrapi_source
-from app.infrastructure.instagram.errors import (
+from app.bootstrap import InstagramAccess
+from app.domain.errors import (
     BudgetExhaustedError,
     ChallengeRequiredError,
     IgBusyError,
@@ -31,11 +31,14 @@ from app.infrastructure.instagram.errors import (
     SendBlockedError,
     SendRetryableError,
 )
+from app.infrastructure.config.settings import Settings
+from app.infrastructure.instagram import login
 from app.infrastructure.instagram.guard import IgGuard
 from app.infrastructure.instagram.instagrapi_source import InstagrapiInstagramSource
 from app.infrastructure.instagram.session import build_client
 from app.infrastructure.instagram.throttle import HumanPacer
 from app.infrastructure.persistence import models
+from fastapi import HTTPException
 from instagrapi.exceptions import (
     ChallengeRequired,
     ClientBadRequestError,
@@ -431,7 +434,7 @@ def _login_setup(
     settings = _settings(tmp_path, ig_sessionid="abc")
     guard = IgGuard(settings, clock=clock, sleep=lambda _: None, rng=random.Random(3))
     factory = LoginFactory(guard, FakeHttp())
-    monkeypatch.setattr(instagrapi_source, "build_client", factory)
+    monkeypatch.setattr(login, "build_client", factory)
     return InstagrapiInstagramSource(settings, guard=guard), guard, factory
 
 
@@ -555,9 +558,8 @@ def _status_setup(
         logins.append(1)
         raise AssertionError("status must not log in")
 
-    monkeypatch.setattr(instagrapi_source, "build_client", no_login)
-    monkeypatch.setattr(ig, "get_shared_source", lambda _: source)
-    monkeypatch.setattr(ig, "get_guard", lambda _: guard)
+    monkeypatch.setattr(login, "build_client", no_login)
+    monkeypatch.setattr(bootstrap, "instagram", InstagramAccess(lambda _: source, lambda _: guard))
     return settings, source, guard, logins
 
 
@@ -567,7 +569,7 @@ def test_status_never_logs_in(
     settings, _, _, logins = _status_setup(tmp_path, monkeypatch)
 
     for _ in range(3):  # the UI polls every 20 s
-        out = ig.ig_status(session=session, settings=settings)
+        out = ig.ig_status(session=session, settings=settings, instagram=bootstrap.instagram)
 
     assert logins == []
     assert out.state == "disconnected"
@@ -585,7 +587,7 @@ def test_status_reports_open_breaker(
         client.private.get(URL)
         raise LoginRequiredError("La sesión venció.")
 
-    out = ig.ig_status(session=session, settings=settings)
+    out = ig.ig_status(session=session, settings=settings, instagram=bootstrap.instagram)
 
     assert out.state == "disconnected"
     assert out.cooldown_until == START + timedelta(minutes=15)
@@ -598,7 +600,7 @@ def test_status_connected_from_the_in_memory_client(
     settings, source, _, logins = _status_setup(tmp_path, monkeypatch)
     source._client = SimpleNamespace(user_id=42)
 
-    out = ig.ig_status(session=session, settings=settings)
+    out = ig.ig_status(session=session, settings=settings, instagram=bootstrap.instagram)
 
     assert out.state == "connected"
     assert out.pk == "42"
@@ -614,11 +616,15 @@ def test_sessionid_endpoint_connects_with_a_single_probe(
     factory = LoginFactory(guard, http)
     factory.fail = None
     source = InstagrapiInstagramSource(settings, guard=guard)
-    monkeypatch.setattr(instagrapi_source, "build_client", factory)
-    monkeypatch.setattr(ig, "get_shared_source", lambda _: source)
-    monkeypatch.setattr(ig, "get_guard", lambda _: guard)
+    monkeypatch.setattr(login, "build_client", factory)
+    monkeypatch.setattr(bootstrap, "instagram", InstagramAccess(lambda _: source, lambda _: guard))
 
-    out = ig.ig_set_sessionid(IgSessionIdIn(sessionid="fresh"), session=session, settings=settings)
+    out = ig.ig_set_sessionid(
+        IgSessionIdIn(sessionid="fresh"),
+        session=session,
+        settings=settings,
+        instagram=bootstrap.instagram,
+    )
 
     assert out.state == "connected"
     assert out.pk == "42"
@@ -822,13 +828,13 @@ def test_avatar_failure_is_remembered_and_uses_a_short_timeout(
     now = [1000.0]
     monkeypatch.setattr(avatars, "_CACHE_DIR", tmp_path)
     monkeypatch.setattr(avatars, "_failed", {})
-    monkeypatch.setattr(avatars.time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(time, "monotonic", lambda: now[0])
     monkeypatch.setattr(requests, "get", dead_proxy)
     _avatar_user(session)
     settings = _settings(tmp_path)
 
     for _ in range(3):
-        with pytest.raises(avatars.HTTPException) as info:
+        with pytest.raises(HTTPException) as info:
             avatars.avatar("78", session=session, settings=settings)
         assert info.value.status_code == 404
 
@@ -836,7 +842,7 @@ def test_avatar_failure_is_remembered_and_uses_a_short_timeout(
     assert calls[0]["timeout"] == avatars._TIMEOUT_SECONDS == 4
 
     now[0] += avatars._FAILURE_TTL_SECONDS + 1
-    with pytest.raises(avatars.HTTPException):
+    with pytest.raises(HTTPException):
         avatars.avatar("78", session=session, settings=settings)
     assert len(calls) == 2  # retried once the negative cache expired
 

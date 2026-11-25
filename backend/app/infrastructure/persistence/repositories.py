@@ -1,5 +1,7 @@
 """Repositories — the only place that reads/writes SQLModel rows.
 
+They implement the application's repository ports (app.application.ports).
+
 Upserts are keyed by stable ids (user.pk, post.media_pk, thread_id) so
 re-running a scan updates in place instead of duplicating. Batch upserts load
 the existing rows with one chunked `SELECT ... IN` and let the session flush
@@ -10,7 +12,6 @@ commits once per batch.
 from __future__ import annotations
 
 from collections.abc import Iterable, Iterator
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
@@ -18,6 +19,7 @@ from sqlalchemy import delete, func, insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlmodel import Session, col, select
 
+from app.application.ports import EngagementIn, ThreadIn
 from app.domain.entities import EngagementType, Friendship, IgUser, Post, ProfileInfo
 from app.infrastructure.persistence import models
 
@@ -35,25 +37,6 @@ def _utc(when: datetime | None) -> datetime | None:
     if when is None:
         return None
     return when.replace(tzinfo=UTC) if when.tzinfo is None else when.astimezone(UTC)
-
-
-@dataclass(frozen=True, slots=True)
-class EngagementIn:
-    user_pk: str
-    type: EngagementType
-    comment_text: str | None = None
-    created_at: datetime | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class ThreadIn:
-    thread_id: str
-    user_pk: str
-    has_outgoing: bool
-    has_incoming: bool
-    last_outgoing_at: datetime | None
-    last_incoming_at: datetime | None
-    last_message_at: datetime | None
 
 
 class UserRepository:
@@ -98,9 +81,6 @@ class UserRepository:
             found.last_seen_at = now
             self.session.add(found)
         return inserted
-
-    def all_pks(self) -> list[str]:
-        return list(self.session.exec(select(models.User.pk)))
 
     def set_friendships(self, rels: dict[str, Friendship]) -> None:
         if not rels:
@@ -161,7 +141,7 @@ class PostRepository:
         scanned_at: datetime,
         event_id: int | None = None,
         last_comment_at: datetime | None = None,
-    ) -> models.Post:
+    ) -> None:
         row = self.session.get(models.Post, post.media_pk)
         if row is None:
             row = models.Post(media_pk=post.media_pk, shortcode=post.shortcode, url=post.url)
@@ -178,7 +158,6 @@ class PostRepository:
         if newest is not None and (stored is None or newest > stored):
             row.last_comment_at = newest
         self.session.add(row)
-        return row
 
     def find_by_shortcode(self, shortcode: str) -> Post | None:
         """A post we already stored, as the source would return it (no IG call)."""
@@ -396,3 +375,19 @@ class AppStateRepository:
         else:
             row.value = when.isoformat()
         self.session.add(row)
+
+
+class ActivityRepository:
+    """The activity feed (one row per finished job / campaign milestone)."""
+
+    def __init__(self, session: Session) -> None:
+        self.session = session
+
+    def add(self, kind: str, status: str, message: str) -> None:
+        self.session.add(
+            models.ActivityLog(kind=kind, status=status, message=message, created_at=_now())
+        )
+
+
+def _now() -> datetime:
+    return datetime.now(UTC)

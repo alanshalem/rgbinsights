@@ -6,19 +6,33 @@ FastAPI + SQLModel (SQLite) + instagrapi. Clean architecture pragmática.
 
 ```
 app/
-  domain/          # entidades, TrafficLight, classify() — reglas puras, sin deps
-  application/     # casos de uso (ScanPost, ScanPosts, SyncDms, ListUsers) + DTOs
+  domain/          # entidades, errores de Instagram, TrafficLight, classify() — sin deps
+  application/     # casos de uso, tareas en segundo plano, envío de campañas + DTOs
+    ports.py       # las interfaces que usan: InstagramSource, repos, UnitOfWork, CampaignStore
   infrastructure/
-    instagram/     # InstagramSource (port) + adapter instagrapi + FakeInstagramSource
-    persistence/   # rows SQLModel, sesión de DB, repos (upserts idempotentes)
+    instagram/     # adapter instagrapi (fachada) + FakeInstagramSource + guardián anti-ban
+      instagrapi_source.py  # fachada fina que implementa InstagramSource
+      login.py              # sesión / login (un cliente logueado, reusado)
+      reads.py              # posts, comentarios, likers, perfiles, seguidores/seguidos
+      direct.py             # inbox de DMs y envío
+      error_mapping.py      # excepciones de instagrapi -> errores del dominio
+    persistence/   # rows SQLModel, engine, repos (upserts idempotentes), SqlUnitOfWork
+    export/        # Excel / PDF del semáforo
     config/        # settings desde .env
   api/             # routers FastAPI, schemas, deps, mapeo Result->HTTP
+  bootstrap.py     # raíz de composición: el único lugar que arma y conecta todo
   main.py
-tests/             # classify + casos de uso con FakeInstagramSource (no toca IG real)
+tests/             # todo con FakeInstagramSource o stubs (nunca toca Instagram real)
 ```
 
 Puntos de diseño:
 
+- **Regla de dependencias**: `domain` no depende de nada; `application` (casos de
+  uso, tareas, campañas) solo del dominio y de sus **ports** — nunca de la
+  infraestructura, FastAPI ni la DB (`tests/test_architecture.py` lo verifica).
+  La infraestructura implementa los ports y `app/bootstrap.py` los conecta
+  (settings, engine, unidades de trabajo, source de Instagram, guardián,
+  registro de tareas, envío de campañas); la API los recibe por `api/deps.py`.
 - **`InstagramSource`** (Strategy) aísla la parte frágil/ToS. `instagrapi` se
   importa **lazy**, así la app y el `FakeInstagramSource` corren aunque no esté
   instalado.
@@ -31,8 +45,7 @@ Puntos de diseño:
 ## Comandos
 
 ```bash
-uvicorn app.main:app --port 8000   # correr (sin --reload: el source Playwright
-                                   # maneja un Chrome; --reload lo dejaría huérfano)
+uvicorn app.main:app --port 8000   # correr (--reload también sirve para desarrollar)
 
 pytest            # tests
 ruff check .      # lint
@@ -46,7 +59,6 @@ Docs interactivas: http://localhost:8000/docs · OpenAPI: `/openapi.json`.
 
 | Método | Ruta                       | Qué hace                                                        |
 | ------ | -------------------------- | --------------------------------------------------------------- |
-| POST   | `/scan/post`               | Escanea comentarios + likers de un post. `{ url }` (sincrónico).|
 | POST   | `/scan/posts`              | **Tarea**: varios `{ urls: [...] }` **o** rango `{ from, to }`. |
 | POST   | `/events/{id}/rescan`      | **Tarea**: re-escanea los posts de la fiesta (`?force=`).       |
 | POST   | `/events/{id}/refresh`     | **Tarea**: rescan + sync de DMs en una (`?force=`).             |
@@ -66,10 +78,13 @@ varios minutos: el POST valida (404 si la fiesta no existe, 422 si falta
 `urls`/rango), arranca una **tarea** en un hilo de fondo (daemon, con su propia
 sesión de DB) y responde enseguida **202** con la tarea (`Location:
 /tasks/{id}`). La tarea es `{ id, kind, label, status: running|done|error,
-current, total, message, result, error, error_code, started_at, finished_at }`:
-`result` es el resumen ("2 posts · 4 nuevos", con `aviso` si la sync de DMs
-llegó al tope `DM_THREADS_LIMIT`) y `error` el motivo en castellano
-(`error_code`, p. ej. `challenge_required`, para el aviso de reconectar).
+current, total, message, result, warning, error, error_code, started_at,
+finished_at }`: `result` es el resumen ("2 posts · 4 nuevos"), `warning` un aviso
+aparte (p. ej. si la sync de DMs llegó al tope `DM_THREADS_LIMIT`; por ahora
+también va en `result.aviso` para la UI actual) y `error` el motivo, siempre en
+castellano (`error_code`, p. ej. `challenge_required`, para el aviso de
+reconectar). Para escanear un solo post se usa la misma `/scan/posts` con una
+URL (el viejo `POST /scan/post` sincrónico se eliminó: la UI no lo usaba).
 
 - **Una sola tarea con Instagram a la vez** (todas tocan Instagram): si ya hay
   una corriendo, pedir **la misma** (mismo tipo y mismos parámetros: doble clic,
@@ -93,20 +108,26 @@ llegó al tope `DM_THREADS_LIMIT`) y `error` el motivo en castellano
 
 ## Login a Instagram real
 
-```bash
-python -m app.login
-```
+Todo desde la app, sin terminal: en el chip **IG** de arriba,
 
-Login interactivo de una sola vez: resuelve challenge/2FA (te pide el código por
-terminal) y guarda `session.json`. Después la API reusa esa sesión y no vuelve a
-loguear de cero — la mejor forma de evitar bloqueos. Usa el mismo `build_client`
-(`infrastructure/instagram/session.py`) que el adapter, así proxy/país/locale son
-consistentes.
+- **"Pegá tu sesión"**: pegá la cookie `sessionid` de un navegador donde ya
+  estés logueado a la cuenta (lo más seguro: no hay login nuevo). Se valida con
+  un solo pedido y se guarda en `session.json` (`POST /ig/sessionid`).
+- o completá `IG_USERNAME` + `IG_PASSWORD` (y `IG_2FA_SECRET` si la cuenta tiene
+  2FA) en `.env` y apretá **Reconectar** (`POST /ig/reauth`).
+
+Después la API reusa `session.json` y no vuelve a loguear de cero — la mejor
+forma de evitar bloqueos. Si Instagram pide verificación (challenge), confirmá
+desde el celu y volvé a pegar el sessionid. **Desconectar** (`POST
+/ig/disconnect`) borra `session.json`.
 
 ## Config (`.env`)
 
-Ver `.env.example`. Clave: `USE_FAKE_INSTAGRAM` (default `true`) corre con datos
-de ejemplo; ponelo en `false` y completá credenciales para ir a Instagram real.
+Ver `.env.example`. Clave: `IG_SOURCE` — `fake` (default: datos de ejemplo,
+nunca toca Instagram) o `instagrapi` (tu cuenta real). Los `.env` viejos siguen
+andando: si `IG_SOURCE` está vacío, `USE_FAKE_INSTAGRAM=false` elige la cuenta
+real (y cualquier otro valor viejo de `IG_SOURCE` que no sea `fake`, también); si
+`IG_SOURCE` está puesto, manda sobre `USE_FAKE_INSTAGRAM`.
 Anti-bloqueo (opcional): `IG_PROXY` (uno estable), `IG_COUNTRY`, `IG_LOCALE`,
 `IG_TIMEZONE_OFFSET` (default `-10800`, Argentina).
 
@@ -207,5 +228,5 @@ SQLite de un caso de uso. Si el archivo está corrupto o mal formado, se ignora
   páginas, las mismas que antes; cada chat trae sus últimos 10 mensajes. Si una
   sync incremental llega a ese tope antes de alcanzar la sync anterior, la marca
   igual avanza a su hora de inicio y se avisa (log, progreso de la tarea y el
-  `aviso` del resumen de "Sincronizar DMs" y de "Actualizar fiesta") que los
+  `warning` de la tarea "Sincronizar DMs" y de "Actualizar fiesta") que los
   chats más viejos con mensajes nuevos no se sincronizaron; subí `DM_THREADS_LIMIT` si pasa seguido.

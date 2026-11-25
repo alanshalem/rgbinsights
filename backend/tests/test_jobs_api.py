@@ -20,11 +20,12 @@ from urllib.parse import urlencode
 import pytest
 from app.api.deps import session_dep, session_factory_dep, source_dep
 from app.api.routers import tasks as tasks_router
-from app.application.tasks import registry
+from app.application.ports import InstagramSource
 from app.application.use_cases import KEY_DMS_SYNCED
 from app.application.use_cases.sync import CAPPED_NOTE
+from app.bootstrap import registry
+from app.domain.entities import DmInbox
 from app.infrastructure.config.settings import Settings, get_settings
-from app.infrastructure.instagram.base import DmInbox, InstagramSource
 from app.infrastructure.instagram.fake_source import FakeInstagramSource
 from app.infrastructure.persistence import db, models
 from app.infrastructure.persistence.repositories import AppStateRepository
@@ -50,28 +51,22 @@ class GatedSource(FakeInstagramSource):
         self.release = threading.Event()
         self.dm_calls = 0
 
-    def get_dm_threads(
-        self, progress: object | None = None, since: datetime | None = None
-    ) -> DmInbox:
+    def get_dm_threads(self, since: datetime | None = None) -> DmInbox:
         self.dm_calls += 1
         self.entered.set()
         assert self.release.wait(_TIMEOUT)
-        return super().get_dm_threads(progress, since)
+        return super().get_dm_threads(since)
 
 
 class CrashingSource(FakeInstagramSource):
-    def get_dm_threads(
-        self, progress: object | None = None, since: datetime | None = None
-    ) -> DmInbox:
+    def get_dm_threads(self, since: datetime | None = None) -> DmInbox:
         raise RuntimeError("boom")
 
 
 class CappedSource(FakeInstagramSource):
     """An incremental read the DM_THREADS_LIMIT cut short."""
 
-    def get_dm_threads(
-        self, progress: object | None = None, since: datetime | None = None
-    ) -> DmInbox:
+    def get_dm_threads(self, since: datetime | None = None) -> DmInbox:
         return DmInbox(threads=[], complete=False)
 
 
@@ -316,7 +311,9 @@ def test_sync_surfaces_the_capped_warning(
     use_source(CappedSource())
     done = _job_result("POST", "/sync/dms", "sync")
     assert done["status"] == "done"
-    assert done["result"] == {"hilos": 0, "aviso": CAPPED_NOTE}
+    assert done["warning"] == CAPPED_NOTE  # its own field (L15)
+    assert done["result"] == {"hilos": 0, "aviso": CAPPED_NOTE}  # kept for the current UI
+    assert _activity(engine) == [("sync", "done", f"0 hilos — aviso: {CAPPED_NOTE}")]
 
 
 def test_unknown_task_is_404() -> None:
@@ -429,6 +426,7 @@ def test_tasks_list_still_lists_jobs(use_source: Callable[[InstagramSource], Non
         "total",
         "message",
         "result",
+        "warning",
         "error",
         "error_code",
         "started_at",

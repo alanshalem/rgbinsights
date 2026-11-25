@@ -1,15 +1,12 @@
-"""DB engine, table creation, and session factory."""
+"""DB engine and table creation (the composition root builds the one engine)."""
 
 from __future__ import annotations
 
-from collections.abc import Iterator
 from typing import Any
 
 from sqlalchemy import Engine, event, make_url
 from sqlalchemy.schema import CreateIndex
-from sqlmodel import Session, SQLModel, create_engine
-
-from app.infrastructure.config.settings import get_settings
+from sqlmodel import SQLModel, create_engine
 
 # Import models so SQLModel.metadata is populated before create_all.
 from app.infrastructure.persistence import models  # noqa: F401
@@ -49,13 +46,9 @@ def build_engine(url: str) -> Engine:
     return engine
 
 
-engine = build_engine(get_settings().database_url)
-
-
-def create_db_and_tables(bind: Engine | None = None) -> None:
-    target = bind if bind is not None else engine
-    SQLModel.metadata.create_all(target)
-    _migrate(target)
+def create_db_and_tables(bind: Engine) -> None:
+    SQLModel.metadata.create_all(bind)
+    _migrate(bind)
 
 
 # New nullable columns added to already-existing tables. create_all() creates
@@ -94,8 +87,3 @@ def _migrate(bind: Engine) -> None:
             for index in declared.indexes:
                 if not index.unique:
                     conn.execute(CreateIndex(index, if_not_exists=True))
-
-
-def get_session() -> Iterator[Session]:
-    with Session(engine) as session:
-        yield session

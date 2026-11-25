@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from datetime import UTC, datetime
 
 from app.application.dto import ScannedPost, StatusCounts
 from app.domain.entities import Post
-from app.domain.result import Err, ErrorCode
-from app.infrastructure.instagram.errors import (
+from app.domain.errors import (
     ChallengeRequiredError,
     InstagramError,
     IpBlockedError,
@@ -17,14 +15,15 @@ from app.infrastructure.instagram.errors import (
     RateLimitedError,
     SendBlockedError,
 )
-
-ProgressFn = Callable[..., None]
+from app.domain.result import Err, ErrorCode
 
 # app_state keys for cache/TTL timestamps.
 KEY_DMS_SYNCED = "dms_synced_at"
 KEY_RELATIONS_SYNCED = "relationships_synced_at"
 # Last FULL followers/following read (incremental reads don't move it).
 KEY_FOLLOW_GRAPH_FULL = "follow_graph_full_at"
+
+POST_NOT_FOUND_MESSAGE = "No se encontró el post (borrado, privado o link inválido)."
 
 
 def _now() -> datetime:
@@ -37,8 +36,11 @@ def _naive(dt: datetime | None) -> datetime | None:
 
 
 def map_instagram_error(exc: InstagramError) -> Err:
+    """The Result for a domain Instagram error. Every message is Spanish: the
+    adapter's own (specific and actionable), or a fixed one for a missing post
+    (whose exception only carries the URL)."""
     if isinstance(exc, PostNotFoundError):
-        return Err(ErrorCode.POST_NOT_FOUND, "post not found")
+        return Err(ErrorCode.POST_NOT_FOUND, POST_NOT_FOUND_MESSAGE)
     if isinstance(exc, ChallengeRequiredError):
         return Err(ErrorCode.CHALLENGE_REQUIRED, str(exc))
     if isinstance(exc, SendBlockedError):

@@ -19,10 +19,10 @@ from app.application.use_cases.export_users import UserExport
 from app.infrastructure.export.columns import COLUMNS, LINK_COLOR, STATUS_FILL, Value
 
 MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-_STATUS_COL = next(i for i, c in enumerate(COLUMNS, 1) if c.header == "Estado")
+_STATUS_COL = next(i for i, c in enumerate(COLUMNS, 1) if c.is_status)
 # XML 1.0 also forbids U+FFFE/U+FFFF and lone surrogates; openpyxl's regex
 # misses them and the workbook would not open.
-_NON_XML_RE = re.compile("[￾￿\ud800-\udfff]")
+_NON_XML_RE = re.compile("[\ufffe\uffff\ud800-\udfff]")
 
 
 def _set(cell: Cell, value: Value) -> None:

@@ -1,7 +1,8 @@
-"""The campaign send loop (S3 pause rules, S6 Argentina time).
+"""The campaign send loop (S3 pause rules, S6 Argentina time, S22).
 
-Runs `_run` synchronously against an in-memory DB with a stub source; sleeps
-and activity logging are stubbed so nothing waits or touches the real DB/IG.
+Runs `CampaignSender._run` synchronously against an in-memory DB with a stub
+source; sleeps and activity logging are stubbed so nothing waits or touches the
+real DB/IG.
 """
 
 from __future__ import annotations
@@ -13,9 +14,9 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from app.application import campaign_sender, tasks
-from app.infrastructure.config.settings import Settings
-from app.infrastructure.instagram.errors import (
+from app.application import campaign_sender
+from app.application.campaign_sender import CampaignSender
+from app.domain.errors import (
     BudgetExhaustedError,
     ChallengeRequiredError,
     IgBusyError,
@@ -27,9 +28,11 @@ from app.infrastructure.instagram.errors import (
     SendBlockedError,
     SendRetryableError,
 )
+from app.infrastructure.config.settings import Settings
 from app.infrastructure.instagram.guard import IgGuard
 from app.infrastructure.instagram.instagrapi_source import InstagrapiInstagramSource
 from app.infrastructure.persistence import models
+from app.infrastructure.persistence.campaigns import SqlCampaignStore
 from instagrapi.exceptions import ChallengeRequired
 from sqlalchemy.engine import Engine
 from sqlalchemy.pool import StaticPool
@@ -61,9 +64,23 @@ class Harness:
         self.logs: list[tuple[str, str, str]] = []
         self.now = NOON_AR
 
+    def sender(self, source: StubSource | InstagrapiInstagramSource) -> CampaignSender:
+        sender = CampaignSender(
+            SqlCampaignStore(lambda: Session(self.engine)),
+            lambda: source,  # type: ignore[arg-type,return-value]
+            Settings(_env_file=None).local_tz(),
+            lambda *args: self.logs.append(args),
+            clock=lambda: self.now,
+        )
+        self.monkeypatch.setattr(sender, "_sleep_or_stopped", self.fake_sleep)
+        return sender
+
     def run(self, source: StubSource | InstagrapiInstagramSource) -> None:
-        self.monkeypatch.setattr(campaign_sender, "get_shared_source", lambda _: source)
-        campaign_sender._run(1)
+        self.sender(source)._run(1)
+
+    def fake_sleep(self, campaign_id: int, seconds: float) -> bool:
+        self.sleeps.append(seconds)
+        return seconds == campaign_sender._IDLE_SECONDS  # stop when it would idle-wait
 
     def campaign(self) -> models.Campaign:
         with Session(self.engine) as s:
@@ -83,17 +100,7 @@ def harness(monkeypatch: pytest.MonkeyPatch) -> Iterator[Harness]:
     )
     SQLModel.metadata.create_all(engine)
     h = Harness(engine, monkeypatch)
-
-    def fake_sleep(campaign_id: int, seconds: float) -> bool:
-        h.sleeps.append(seconds)
-        return seconds == campaign_sender._IDLE_SECONDS  # stop when it would idle-wait
-
-    monkeypatch.setattr(campaign_sender, "engine", engine)
-    monkeypatch.setattr(campaign_sender, "get_settings", lambda: Settings(_env_file=None))
     monkeypatch.setattr(campaign_sender, "_IDLE_SECONDS", 60, raising=False)
-    monkeypatch.setattr(campaign_sender, "_sleep_or_stopped", fake_sleep)
-    monkeypatch.setattr(campaign_sender, "_utcnow", lambda: h.now, raising=False)
-    monkeypatch.setattr(tasks, "log_activity", lambda *args: h.logs.append(args))
     yield h
     engine.dispose()
 
@@ -109,7 +116,7 @@ def _seed(
             models.Campaign(
                 id=1,
                 event_id=1,
-                status="running",
+                status=campaign.pop("status", "running"),
                 templates="[]",
                 delay_min=10,
                 delay_max=10,
@@ -325,3 +332,88 @@ def test_instagram_cooldown_still_pauses_not_waits(harness: Harness) -> None:
     assert source.attempts == ["1"]
     assert harness.campaign().status == "paused"
     assert harness.sleeps == []
+
+
+# -- S22: the daily cap, warm-up and the loop's own bookkeeping -----------------
+
+
+def test_a_new_local_day_resets_the_counter_and_still_enforces_the_cap(harness: Harness) -> None:
+    """Yesterday's count resets once and is saved, so today's sends count
+    against the cap (they used to be counted on the stale value and the cap
+    never stopped the day)."""
+    _seed(harness, targets=30, sent_today=25, sent_today_date="2026-11-23")
+    source = StubSource()
+
+    harness.run(source)
+
+    assert len(source.sent) == 25  # the daily cap (campaign created weeks ago: no warm-up)
+    campaign = harness.campaign()
+    assert (campaign.sent_today, campaign.sent_today_date) == (25, "2026-11-24")
+    assert campaign.status == "running"  # waits for tomorrow, never "done" early
+    assert harness.sleeps[-1] == campaign_sender._IDLE_SECONDS
+
+
+def test_warm_up_caps_a_brand_new_campaign(harness: Harness) -> None:
+    _seed(harness, targets=20, created_at=NOON_AR)
+    source = StubSource()
+
+    harness.run(source)
+
+    assert len(source.sent) == 8  # day 0 of the warm-up ramp
+    assert harness.sleeps[-1] == campaign_sender._IDLE_SECONDS
+
+
+def test_finishing_logs_the_day_count(harness: Harness) -> None:
+    _seed(harness, targets=1, sent_today=3)
+    harness.run(StubSource())
+    assert harness.logs[-1] == ("campaign", "done", "campaña terminada (4 hoy)")
+
+
+def test_a_stopped_campaign_never_sends(harness: Harness) -> None:
+    _seed(harness, targets=1, status="paused", sent_today=5, sent_today_date="2026-11-23")
+    source = StubSource()
+
+    harness.run(source)
+
+    assert source.attempts == []
+    campaign = harness.campaign()
+    assert (campaign.status, campaign.sent_today) == ("paused", 5)  # left untouched
+
+
+def test_resume_all_restarts_only_running_campaigns(harness: Harness) -> None:
+    _seed(harness, targets=1)
+    with Session(harness.engine) as s:
+        for cid, status in ((2, "paused"), (3, "running"), (4, "done")):
+            s.add(
+                models.Campaign(
+                    id=cid,
+                    event_id=1,
+                    status=status,
+                    templates="[]",
+                    delay_min=10,
+                    delay_max=10,
+                    daily_cap=25,
+                    hour_start=0,
+                    hour_end=24,
+                    created_at=NOON_AR,
+                )
+            )
+        s.commit()
+    sender = harness.sender(StubSource())
+    started: list[int] = []
+    harness.monkeypatch.setattr(sender, "start", started.append)
+
+    sender.resume_all()
+
+    assert started == [1, 3]
+
+
+def test_waiting_ends_as_soon_as_the_campaign_is_stopped(harness: Harness) -> None:
+    _seed(harness, targets=1, status="paused")
+    sender = CampaignSender(
+        SqlCampaignStore(lambda: Session(harness.engine)),
+        StubSource,  # type: ignore[arg-type]
+        Settings(_env_file=None).local_tz(),
+        lambda *args: None,
+    )
+    assert sender._sleep_or_stopped(1, 3600) is True  # no sleep at all

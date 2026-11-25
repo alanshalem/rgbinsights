@@ -16,6 +16,7 @@ import pytest
 from app.application.use_cases import ListUsersUseCase, event_counts
 from app.domain.traffic_light import TrafficLight
 from app.infrastructure.persistence import db, models
+from app.infrastructure.persistence.unit_of_work import SqlUnitOfWork
 from sqlmodel import Session
 
 FIESTA = 1  # promo_start 2026-06-20 12:00 -> cutoff
@@ -169,20 +170,23 @@ def seeded(session: Session) -> Session:
 
 
 def _names(session: Session, **kwargs: Any) -> list[str]:
-    return [v.username for v in ListUsersUseCase(session).execute(**kwargs)]
+    return [v.username for v in ListUsersUseCase(SqlUnitOfWork(session)).execute(**kwargs)]
 
 
 def _lights(session: Session, **kwargs: Any) -> dict[str, str]:
-    return {v.pk: v.traffic_light.value for v in ListUsersUseCase(session).execute(**kwargs)}
+    return {
+        v.pk: v.traffic_light.value
+        for v in ListUsersUseCase(SqlUnitOfWork(session)).execute(**kwargs)
+    }
 
 
 def _counts(session: Session, **kwargs: Any) -> tuple[int, int, int, int]:
-    c = ListUsersUseCase(session).counts(**kwargs)
+    c = ListUsersUseCase(SqlUnitOfWork(session)).counts(**kwargs)
     return (c.red, c.yellow, c.green, c.total)
 
 
 def test_global_full_view(seeded: Session) -> None:
-    views = {v.pk: v for v in ListUsersUseCase(seeded).execute()}
+    views = {v.pk: v for v in ListUsersUseCase(SqlUnitOfWork(seeded)).execute()}
     assert set(views) == {"11", "12", "13", "14", "15", "16"}  # carl/orphan excluded
 
     zoe = views["11"]
@@ -243,7 +247,7 @@ def test_global_sort_orders(seeded: Session) -> None:
 
 
 def test_fiesta_view_uses_cutoff_and_post_order(seeded: Session) -> None:
-    views = {v.pk: v for v in ListUsersUseCase(seeded).execute(event=FIESTA)}
+    views = {v.pk: v for v in ListUsersUseCase(SqlUnitOfWork(seeded)).execute(event=FIESTA)}
     assert set(views) == {"11", "12", "13", "14", "15", "16"}
     assert _lights(seeded, event=FIESTA) == {
         "11": "yellow",  # replied before the cutoff, wrote after
@@ -286,28 +290,28 @@ def test_other_and_dangling_events(seeded: Session) -> None:
     assert _names(seeded, event=OTHER) == ["bob"]
     assert _lights(seeded, event=OTHER) == {"16": "red"}
     # Event row missing: posts still filter, but lights are global (no cutoff).
-    views = ListUsersUseCase(seeded).execute(event=DANGLING)
+    views = ListUsersUseCase(SqlUnitOfWork(seeded)).execute(event=DANGLING)
     assert [(v.username, v.traffic_light.value, v.event_posts_total) for v in views] == [
         ("mia", "green", 1)
     ]
-    assert ListUsersUseCase(seeded).execute(event=12345) == []
+    assert ListUsersUseCase(SqlUnitOfWork(seeded)).execute(event=12345) == []
     assert _counts(seeded, event=12345) == (0, 0, 0, 0)
 
 
 def test_post_filter(seeded: Session) -> None:
     assert _names(seeded, post="1000") == ["bob", "dup", "DUP", "ana", "zoe"]
-    views = ListUsersUseCase(seeded).execute(post="1000")
+    views = ListUsersUseCase(SqlUnitOfWork(seeded)).execute(post="1000")
     assert {v.event_posts_total for v in views} == {0}
     assert {v.event_engaged for v in views} == {1}
     # post + event: cutoff from the event, total counts just the one post.
-    both = ListUsersUseCase(seeded).execute(post="300", event=FIESTA)
+    both = ListUsersUseCase(SqlUnitOfWork(seeded)).execute(post="300", event=FIESTA)
     assert [(v.username, v.traffic_light.value, v.event_posts_total) for v in both] == [
         ("ana", "red", 1),
         ("DUP", "red", 1),
         ("zoe", "yellow", 1),
         ("mia", "green", 1),
     ]
-    assert ListUsersUseCase(seeded).execute(post="nope") == []
+    assert ListUsersUseCase(SqlUnitOfWork(seeded)).execute(post="nope") == []
 
 
 def test_status_search_follows_filters(seeded: Session) -> None:
@@ -338,7 +342,7 @@ def test_pagination_edges(seeded: Session) -> None:
     assert _names(seeded, order="username", offset=100, limit=5) == []
     assert _names(seeded, order="username", limit=100) == full
     assert _names(seeded, order="fans", limit=3, offset=1) == _names(seeded, order="fans")[1:4]
-    page = ListUsersUseCase(seeded).execute(event=FIESTA, limit=2, offset=2)
+    page = ListUsersUseCase(SqlUnitOfWork(seeded)).execute(event=FIESTA, limit=2, offset=2)
     assert [v.username for v in page] == ["dup", "DUP"]
     assert [e.post_media_pk for e in page[1].engagements] == ["1000", "300"]
 
@@ -356,7 +360,7 @@ def test_users_endpoint_pages_with_limit_and_offset(seeded: Session) -> None:
             follows=None,
             limit=limit,
             offset=offset,
-            session=seeded,
+            uow=SqlUnitOfWork(seeded),
         )
         return [u.username for u in out]
 
@@ -372,12 +376,12 @@ def test_counts(seeded: Session) -> None:
     assert _counts(seeded, event=FIESTA, follows=True) == (1, 1, 0, 2)
     assert _counts(seeded, search="dup") == (2, 0, 0, 2)
     assert _counts(seeded, post="1000") == (3, 1, 1, 5)
-    c = event_counts(seeded, FIESTA)
+    c = event_counts(SqlUnitOfWork(seeded), FIESTA)
     assert (c.red, c.yellow, c.green, c.total) == (4, 1, 1, 6)
 
 
 def test_empty_db(session: Session) -> None:
-    assert ListUsersUseCase(session).execute() == []
+    assert ListUsersUseCase(SqlUnitOfWork(session)).execute() == []
     assert _counts(session) == (0, 0, 0, 0)
 
 
@@ -401,7 +405,9 @@ def test_py_lower_registered_on_every_pooled_connection(tmp_path: Any) -> None:
         try:
             for _ in range(10):
                 with Session(eng) as s:
-                    assert [v.pk for v in ListUsersUseCase(s).execute(search="ÁN")] == ["1"]
+                    assert [
+                        v.pk for v in ListUsersUseCase(SqlUnitOfWork(s)).execute(search="ÁN")
+                    ] == ["1"]
         except Exception as exc:  # noqa: BLE001 — surfaced through `errors`
             errors.append(repr(exc))
 
@@ -413,6 +419,6 @@ def test_py_lower_registered_on_every_pooled_connection(tmp_path: Any) -> None:
     with Session(eng) as s:
         s.connection().invalidate()
     with Session(eng) as s:
-        assert ListUsersUseCase(s).counts(search="án").total == 1
+        assert ListUsersUseCase(SqlUnitOfWork(s)).counts(search="án").total == 1
     eng.dispose()
     assert errors == []

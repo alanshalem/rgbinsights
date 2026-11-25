@@ -7,26 +7,12 @@ import re
 from dataclasses import replace
 from datetime import datetime, timedelta
 
-from sqlmodel import Session
-
 from app.application.dto import ScanBatchResult, ScanResult
-from app.application.use_cases._shared import (
-    ProgressFn,
-    _naive,
-    _now,
-    _to_scanned,
-    map_instagram_error,
-)
+from app.application.ports import EngagementIn, InstagramSource, ProgressFn, UnitOfWork
+from app.application.use_cases._shared import _naive, _now, _to_scanned, map_instagram_error
 from app.domain.entities import EngagementType, Post
+from app.domain.errors import InstagramError
 from app.domain.result import Err, ErrorCode, Ok, Result
-from app.infrastructure.instagram.base import InstagramSource
-from app.infrastructure.instagram.errors import InstagramError
-from app.infrastructure.persistence.repositories import (
-    EngagementIn,
-    EngagementRepository,
-    PostRepository,
-    UserRepository,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -40,18 +26,15 @@ def _shortcode(url: str) -> str | None:
 
 
 class ScanPostUseCase:
-    def __init__(self, source: InstagramSource, session: Session) -> None:
+    def __init__(self, source: InstagramSource, uow: UnitOfWork) -> None:
         self._source = source
-        self._session = session
-        self._users = UserRepository(session)
-        self._posts = PostRepository(session)
-        self._engagements = EngagementRepository(session)
+        self._uow = uow
 
     def execute(self, url: str, event_id: int | None = None) -> Result[ScanResult]:
         """Scan a post by URL. A post already stored is not fetched again: its
         media_pk is all the likers/comments reads need."""
         code = _shortcode(url)
-        post = self._posts.find_by_shortcode(code) if code else None
+        post = self._uow.posts.find_by_shortcode(code) if code else None
         if post is None:
             try:
                 post = self._source.get_post(url)
@@ -63,8 +46,7 @@ class ScanPostUseCase:
     def scan(self, post: Post, event_id: int | None = None) -> Result[ScanResult]:
         """Likers + comments of a post we already have (no post lookup). Only
         comments newer than the newest one stored are paged."""
-        self._source.reset_budget()
-        since = self._posts.last_comment_at(post.media_pk)
+        since = self._uow.posts.last_comment_at(post.media_pk)
         try:
             comments = self._source.get_comments(post.media_pk, since)
             likers = self._source.get_likers(post.media_pk)
@@ -74,11 +56,11 @@ class ScanPostUseCase:
 
         now = _now()
         newest = max((c.created_at for c in comments if c.created_at is not None), default=None)
-        self._posts.upsert(post, scanned_at=now, event_id=event_id, last_comment_at=newest)
+        self._uow.posts.upsert(post, scanned_at=now, event_id=event_id, last_comment_at=newest)
         # Comments first, then likers: a user in both keeps the liker's data.
         people = [c.user for c in comments] + likers
-        new_pks = self._users.upsert_many(people, now)
-        self._engagements.upsert_many(
+        new_pks = self._uow.users.upsert_many(people, now)
+        self._uow.engagements.upsert_many(
             post.media_pk,
             [
                 EngagementIn(c.user.pk, EngagementType.COMMENT, c.text, c.created_at)
@@ -86,7 +68,7 @@ class ScanPostUseCase:
             ]
             + [EngagementIn(liker.pk, EngagementType.LIKE) for liker in likers],
         )
-        self._session.commit()
+        self._uow.commit()
 
         found = len({u.pk for u in people})
         logger.info("scanned %s: %d users, %d new", post.url, found, len(new_pks))
@@ -96,11 +78,9 @@ class ScanPostUseCase:
 class ScanPostsUseCase:
     """Scan several posts by URL list, or by date range over recent posts."""
 
-    def __init__(self, source: InstagramSource, session: Session, recent_limit: int) -> None:
+    def __init__(self, source: InstagramSource, uow: UnitOfWork) -> None:
         self._source = source
-        self._session = session
-        self._recent_limit = recent_limit
-        self._single = ScanPostUseCase(source, session)
+        self._single = ScanPostUseCase(source, uow)
 
     def by_urls(
         self, urls: list[str], event_id: int | None = None, progress: ProgressFn | None = None
@@ -113,10 +93,16 @@ class ScanPostsUseCase:
         return self._run(results)
 
     def by_date_range(
-        self, date_from: datetime, date_to: datetime, event_id: int | None = None
+        self,
+        date_from: datetime,
+        date_to: datetime,
+        event_id: int | None = None,
+        *,
+        recent_limit: int,
     ) -> Result[ScanBatchResult]:
+        """Scan our `recent_limit` most recent posts taken within the range."""
         try:
-            recent = self._source.get_recent_posts(self._recent_limit)
+            recent = self._source.get_recent_posts(recent_limit)
         except InstagramError as exc:
             return map_instagram_error(exc)
         in_range = [
@@ -153,9 +139,9 @@ class ScanPostsUseCase:
 class RescanEventUseCase:
     """Re-scan every post already assigned to a fiesta (no URLs to paste)."""
 
-    def __init__(self, source: InstagramSource, session: Session, recent_limit: int) -> None:
-        self._session = session
-        self._batch = ScanPostsUseCase(source, session, recent_limit)
+    def __init__(self, source: InstagramSource, uow: UnitOfWork) -> None:
+        self._uow = uow
+        self._batch = ScanPostsUseCase(source, uow)
 
     def execute(
         self,
@@ -164,7 +150,7 @@ class RescanEventUseCase:
         force: bool = False,
         skip_hours: float = 6.0,
     ) -> Result[ScanBatchResult]:
-        posts = PostRepository(self._session).list_all(event_id=event_id)
+        posts = self._uow.posts.list_all(event_id=event_id)
         if force:
             stale = posts
         else:

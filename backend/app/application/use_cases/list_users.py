@@ -2,21 +2,25 @@
 
 from __future__ import annotations
 
-from sqlmodel import Session
-
 from app.application.dto import StatusCounts, UserEngagement, UserView
+from app.application.ports import EngagementRow, UnitOfWork, UserFilter, UserRow
 from app.domain.traffic_light import TrafficLight
-from app.infrastructure.persistence.user_list import (
-    EngagementRow,
-    UserFilter,
-    UserListQuery,
-    UserRow,
-)
+
+# Every order the board offers (key -> how the export names it). The single
+# source of truth for the API's `order` parameter and the export's filters.
+ORDER_LABELS: dict[str, str] = {
+    "username": "usuario",
+    "status": "estado",
+    "fans": "fans",
+    "followers": "seguidores",
+}
+DEFAULT_ORDER = "status"
+ORDER_PATTERN = "^(" + "|".join(ORDER_LABELS) + ")$"
 
 
-def event_counts(session: Session, event: int | None) -> StatusCounts:
+def event_counts(uow: UnitOfWork, event: int | None) -> StatusCounts:
     """Traffic-light snapshot for an event (or global if None) — for toast deltas."""
-    return ListUsersUseCase(session).counts(event=event)
+    return ListUsersUseCase(uow).counts(event=event)
 
 
 class ListUsersUseCase:
@@ -29,8 +33,8 @@ class ListUsersUseCase:
     page is materialized.
     """
 
-    def __init__(self, session: Session) -> None:
-        self._query = UserListQuery(session)
+    def __init__(self, uow: UnitOfWork) -> None:
+        self._query = uow.user_list
 
     def execute(
         self,
@@ -38,7 +42,7 @@ class ListUsersUseCase:
         post: str | None = None,
         status: TrafficLight | None = None,
         search: str | None = None,
-        order: str = "status",
+        order: str = DEFAULT_ORDER,
         follows: bool | None = None,
         limit: int | None = None,
         offset: int = 0,

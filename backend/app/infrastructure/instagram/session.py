@@ -1,9 +1,8 @@
-"""Builds a configured instagrapi Client, shared by the API adapter and the
-one-time interactive login script.
+"""Builds a configured instagrapi Client for the adapter's login (login.py).
 
 Centralizes the anti-block hygiene (stable proxy, consistent country/locale,
 saved-session reuse, and the IgGuard rails: one operation at a time, budget,
-cooldown, human pacing) so both entry points behave identically.
+cooldown, human pacing) so every client behaves identically.
 instagrapi is imported lazily to keep it optional at import time.
 """
 
@@ -16,6 +15,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from app.infrastructure.config.settings import Settings
+from app.infrastructure.instagram.error_mapping import classify_login_error
 from app.infrastructure.instagram.guard import get_guard
 
 if TYPE_CHECKING:
@@ -72,7 +72,7 @@ def build_client(settings: Settings, challenge_handler: ChallengeHandler) -> Cli
     # (UUIDs) that keep us looking like the same phone across restarts — the
     # single biggest factor in avoiding challenges. A stale cookie here is safe:
     # the adapter validates the loaded session and falls back to sessionid or
-    # user/pass if it's dead (see InstagrapiInstagramSource._login).
+    # user/pass if it's dead (see IgLogin.client_or_login).
     session_path = Path(settings.ig_session_file)
     if session_path.exists():
         with contextlib.suppress(Exception):  # a corrupt file must not block login
@@ -102,7 +102,7 @@ def _make_handle_exception(settings: Settings) -> Callable[[Client, Exception], 
     def handle_exception(client: Client, exc: Exception) -> None:
         from instagrapi.exceptions import LoginRequired
 
-        if isinstance(exc, LoginRequired) and settings.ig_username and settings.ig_password:
+        if isinstance(exc, LoginRequired) and settings.has_password_login:
             logger.info("session expired mid-request — relogin (device preserved)")
             try:
                 client.relogin()
@@ -111,10 +111,6 @@ def _make_handle_exception(settings: Settings) -> Callable[[Client, Exception], 
                 # omits the password key) becomes a clear session error. It is also
                 # recorded on the client: instagrapi's media_info swallows it and
                 # falls back to the public endpoint, so the adapter reads it back.
-                from app.infrastructure.instagram.instagrapi_source import (
-                    classify_login_error,
-                )
-
                 logger.warning("relogin failed: %r", relogin_exc)
                 domain = classify_login_error(relogin_exc)
                 remember_relogin_failure(client, domain)

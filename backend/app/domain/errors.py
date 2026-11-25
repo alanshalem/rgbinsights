@@ -1,7 +1,9 @@
-"""Exceptions raised by Instagram adapters.
+"""Instagram failures, as the domain knows them.
 
-These signal conditions the use case turns into a Result.Err. They are the
-boundary between the fragile IG/ToS layer and the rest of the app.
+Every InstagramSource adapter raises only these (it converts the library's own
+exceptions at its boundary); use cases turn them into a Result.Err and the
+campaign sender decides from their type whether to stop, pause, wait or skip.
+Messages are Spanish: the UI shows them as is.
 """
 
 from __future__ import annotations
@@ -10,7 +12,7 @@ from datetime import datetime
 
 
 class InstagramError(Exception):
-    """Base for adapter-level failures."""
+    """Base for every Instagram failure."""
 
 
 class PostNotFoundError(InstagramError):
@@ -79,7 +81,3 @@ class SendRetryableError(InstagramError):
     The campaign marks the target failed and continues — it must never be
     mistaken for an action-block that stops everything.
     """
-
-
-class SendNotSupportedError(InstagramError):
-    """This data source can't send DMs (only the instagrapi source can)."""

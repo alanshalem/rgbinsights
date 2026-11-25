@@ -5,25 +5,12 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
-from sqlmodel import Session
-
 from app.application.dto import SyncResult
-from app.application.use_cases._shared import (
-    KEY_DMS_SYNCED,
-    ProgressFn,
-    _now,
-    map_instagram_error,
-)
+from app.application.ports import InstagramSource, ProgressFn, ThreadIn, UnitOfWork
+from app.application.use_cases._shared import KEY_DMS_SYNCED, _now, map_instagram_error
 from app.domain.entities import DmThread
+from app.domain.errors import InstagramError
 from app.domain.result import Ok, Result
-from app.infrastructure.instagram.base import InstagramSource
-from app.infrastructure.instagram.errors import InstagramError
-from app.infrastructure.persistence.repositories import (
-    AppStateRepository,
-    DmThreadRepository,
-    ThreadIn,
-    UserRepository,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -43,11 +30,9 @@ class DmSyncResult(SyncResult):
 
 
 class SyncDmsUseCase:
-    def __init__(self, source: InstagramSource, session: Session) -> None:
+    def __init__(self, source: InstagramSource, uow: UnitOfWork) -> None:
         self._source = source
-        self._session = session
-        self._users = UserRepository(session)
-        self._threads = DmThreadRepository(session)
+        self._uow = uow
 
     def execute(
         self,
@@ -55,25 +40,26 @@ class SyncDmsUseCase:
         force: bool = False,
         incremental: bool = True,
     ) -> Result[DmSyncResult]:
-        self._source.reset_budget()
-        state = AppStateRepository(self._session)
+        state = self._uow.app_state
         since = None if (force or not incremental) else state.get_dt(KEY_DMS_SYNCED)
         # The next sync pages back to when THIS one started: a thread that gets a
         # message while we page is re-read next time instead of being missed.
         started = _now()
         try:
             our_pk = self._source.current_user_pk()
-            inbox = self._source.get_dm_threads(progress, since)
+            inbox = self._source.get_dm_threads(since)
         except InstagramError as exc:
             logger.warning("dm sync failed: %s", exc)
             return map_instagram_error(exc)
 
         threads = inbox.threads
-        self._users.upsert_many((t.user for t in threads), started)
-        self._threads.upsert_many((_thread_in(t, our_pk) for t in threads), synced_at=started)
+        self._uow.users.upsert_many((t.user for t in threads), started)
+        self._uow.dm_threads.upsert_many(
+            (_thread_in(t, our_pk) for t in threads), synced_at=started
+        )
 
         state.set_dt(KEY_DMS_SYNCED, started)
-        self._session.commit()
+        self._uow.commit()
         logger.info("synced %d DM threads (incremental=%s)", len(threads), since is not None)
         capped = since is not None and not inbox.complete
         if capped:

@@ -87,3 +87,21 @@ class DmThread:
     user: IgUser
     messages: list[DmMessage] = field(default_factory=list)
     last_message_at: datetime | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class FollowGraph:
+    """Our account's follow lists, as user pks."""
+
+    followers: set[str] = field(default_factory=set)  # they follow us
+    following: set[str] = field(default_factory=set)  # we follow them
+
+
+@dataclass(frozen=True, slots=True)
+class DmInbox:
+    """DM threads from one inbox read."""
+
+    threads: list[DmThread] = field(default_factory=list)
+    # False when the thread cap stopped an incremental read before it got back
+    # to the previous sync: older threads with new messages were left out.
+    complete: bool = True

@@ -5,9 +5,10 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlmodel import Session
 
-from app.api.deps import fail_job, session_dep, session_factory_dep, source_dep, start_job
+from app.api.deps import require_event, session_dep, source_dep, start_job, uow_factory_dep
 from app.api.schemas import EventCreate, EventOut, EventUpdate, TaskOut
-from app.application.tasks import SessionFactory, Task, scan_summary
+from app.application.ports import InstagramSource, UnitOfWork, UnitOfWorkFactory
+from app.application.tasks import Task, scan_summary
 from app.application.use_cases import (
     EnrichProfilesUseCase,
     ListUsersUseCase,
@@ -17,12 +18,10 @@ from app.application.use_cases import (
     state_delta,
 )
 from app.application.use_cases.sync import CAPPED_NOTE
-from app.domain.result import Err
 from app.domain.traffic_light import TrafficLight
 from app.infrastructure.config.settings import Settings, get_settings
-from app.infrastructure.instagram.base import InstagramSource
 from app.infrastructure.persistence import models
-from app.infrastructure.persistence.repositories import EventRepository, UserRepository
+from app.infrastructure.persistence.repositories import EventRepository
 
 router = APIRouter(prefix="/events", tags=["events"])
 
@@ -80,11 +79,6 @@ def update_event(
     return _to_out(event, repo.post_counts().get(event_id, 0))
 
 
-def _require_event(session: Session, event_id: int) -> None:
-    if EventRepository(session).get(event_id) is None:
-        raise HTTPException(status_code=404, detail={"code": "not_found", "message": "fiesta"})
-
-
 # The three below are background jobs (202 + the job): progress and the result
 # arrive via GET /tasks/stream (SSE) or /tasks/{id}; see app/application/tasks.py.
 
@@ -97,24 +91,23 @@ def rescan_event(
     session: Session = Depends(session_dep),
     source: InstagramSource = Depends(source_dep),
     settings: Settings = Depends(get_settings),
-    new_session: SessionFactory = Depends(session_factory_dep),
+    new_uow: UnitOfWorkFactory = Depends(uow_factory_dep),
 ) -> TaskOut:
     """Re-scan the fiesta's posts (likes + comments); recently scanned ones are skipped."""
-    _require_event(session, event_id)
-    recent_limit, skip_hours = settings.recent_posts_limit, settings.rescan_skip_hours
+    require_event(session, event_id)
+    skip_hours = settings.rescan_skip_hours
 
-    def work(task: Task, db: Session) -> None:
-        before = event_counts(db, event_id)
-        result = RescanEventUseCase(source, db, recent_limit).execute(
-            event_id, task.progress, force=force, skip_hours=skip_hours
+    def work(task: Task, uow: UnitOfWork) -> None:
+        before = event_counts(uow, event_id)
+        batch = task.unwrap(
+            RescanEventUseCase(source, uow).execute(
+                event_id, task.progress, force=force, skip_hours=skip_hours
+            )
         )
-        if isinstance(result, Err):
-            fail_job(task, result)
-            return
         task.set_result(
             {
-                **scan_summary(result.value, before, event_counts(db, event_id)),
-                **({"salteados": result.value.skipped} if result.value.skipped else {}),
+                **scan_summary(batch, before, event_counts(uow, event_id)),
+                **({"salteados": batch.skipped} if batch.skipped else {}),
             }
         )
 
@@ -123,7 +116,7 @@ def rescan_event(
         label="Re-escaneando fiesta",
         params={"event_id": event_id, "force": force},
         work=work,
-        session_factory=new_session,
+        new_uow=new_uow,
         response=response,
     )
 
@@ -136,35 +129,30 @@ def refresh_event(
     session: Session = Depends(session_dep),
     source: InstagramSource = Depends(source_dep),
     settings: Settings = Depends(get_settings),
-    new_session: SessionFactory = Depends(session_factory_dep),
+    new_uow: UnitOfWorkFactory = Depends(uow_factory_dep),
 ) -> TaskOut:
     """Re-scan the fiesta's posts (likes + comments) AND sync DMs in one job."""
-    _require_event(session, event_id)
-    recent_limit, skip_hours = settings.recent_posts_limit, settings.rescan_skip_hours
-    incremental = settings.dm_incremental
+    require_event(session, event_id)
+    skip_hours, incremental = settings.rescan_skip_hours, settings.dm_incremental
 
-    def work(task: Task, db: Session) -> None:
-        before = event_counts(db, event_id)
-        scan = RescanEventUseCase(source, db, recent_limit).execute(
-            event_id, task.progress, force=force, skip_hours=skip_hours
+    def work(task: Task, uow: UnitOfWork) -> None:
+        before = event_counts(uow, event_id)
+        scan = task.unwrap(
+            RescanEventUseCase(source, uow).execute(
+                event_id, task.progress, force=force, skip_hours=skip_hours
+            )
         )
-        if isinstance(scan, Err):
-            fail_job(task, scan)
-            return
-        sync = SyncDmsUseCase(source, db).execute(
-            task.progress, force=force, incremental=incremental
+        sync = task.unwrap(
+            SyncDmsUseCase(source, uow).execute(task.progress, force=force, incremental=incremental)
         )
-        if isinstance(sync, Err):
-            fail_job(task, sync)
-            return
         task.set_result(
             {
-                "posts": len(scan.value.results),
-                "nuevos": scan.value.total_new_users,
-                **state_delta(before, event_counts(db, event_id)),
-                "hilos": sync.value.threads_synced,
-                **({"aviso": CAPPED_NOTE} if sync.value.capped else {}),
-            }
+                "posts": len(scan.results),
+                "nuevos": scan.total_new_users,
+                **state_delta(before, event_counts(uow, event_id)),
+                "hilos": sync.threads_synced,
+            },
+            warning=CAPPED_NOTE if sync.capped else None,
         )
 
     return start_job(
@@ -172,7 +160,7 @@ def refresh_event(
         label="Actualizando fiesta",
         params={"event_id": event_id, "force": force},
         work=work,
-        session_factory=new_session,
+        new_uow=new_uow,
         response=response,
     )
 
@@ -185,38 +173,37 @@ def enrich_event(
     session: Session = Depends(session_dep),
     source: InstagramSource = Depends(source_dep),
     settings: Settings = Depends(get_settings),
-    new_session: SessionFactory = Depends(session_factory_dep),
+    new_uow: UnitOfWorkFactory = Depends(uow_factory_dep),
 ) -> TaskOut:
     """Fetch follower count / verified / bio for the fiesta's users (slow, opt-in).
 
     Capped per run and per Argentina-local day; progress is saved in batches,
     so a later run continues with the users still missing ("faltan")."""
-    _require_event(session, event_id)
+    require_event(session, event_id)
 
-    def work(task: Task, db: Session) -> None:
-        pks = [u.pk for u in ListUsersUseCase(db).execute(event=event_id)]
-        result = EnrichProfilesUseCase(source, db).execute(
-            pks,
-            limit=settings.enrich_profiles_per_run,
-            progress=task.progress,
-            force=force,
-            cache_hours=settings.relationship_cache_hours,
-            daily_cap=settings.enrich_profiles_per_day,
-            tz=settings.local_tz(),
-            full_refresh_days=settings.relationship_full_refresh_days,
+    def work(task: Task, uow: UnitOfWork) -> None:
+        pks = [u.pk for u in ListUsersUseCase(uow).execute(event=event_id)]
+        enriched = task.unwrap(
+            EnrichProfilesUseCase(source, uow).execute(
+                pks,
+                limit=settings.enrich_profiles_per_run,
+                progress=task.progress,
+                force=force,
+                cache_hours=settings.relationship_cache_hours,
+                daily_cap=settings.enrich_profiles_per_day,
+                tz=settings.local_tz(),
+                full_refresh_days=settings.relationship_full_refresh_days,
+            )
         )
-        if isinstance(result, Err):
-            fail_job(task, result)
-            return
-        rel = "cache" if result.value.relations_cached else result.value.relations
+        rel = "cache" if enriched.relations_cached else enriched.relations
         # Follower coverage of the reds: safest audience for the campaign.
-        reds = ListUsersUseCase(db).execute(event=event_id, status=TrafficLight.RED)
+        reds = ListUsersUseCase(uow).execute(event=event_id, status=TrafficLight.RED)
         red_followers = sum(1 for u in reds if u.follows_us)
         task.set_result(
             {
                 "relaciones": rel,
-                "perfiles": result.value.enriched,
-                "faltan": len(UserRepository(db).unenriched(pks)),
+                "perfiles": enriched.enriched,
+                "faltan": len(uow.users.unenriched(pks)),
                 "te siguen": f"{red_followers}/{len(reds)} rojos",
             }
         )
@@ -226,6 +213,6 @@ def enrich_event(
         label="Enriqueciendo (relación + perfiles)",
         params={"event_id": event_id, "force": force},
         work=work,
-        session_factory=new_session,
+        new_uow=new_uow,
         response=response,
     )

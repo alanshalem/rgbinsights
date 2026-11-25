@@ -11,28 +11,50 @@ from typing import Any
 
 import pytest
 from app.api.routers.tasks import task_events
-from app.application.tasks import JobConflictError, Task, TaskRegistry
-from sqlmodel import Session
+from app.application.ports import UnitOfWork
+from app.application.tasks import (
+    JOB_MESSAGE_BY_CODE,
+    JobConflictError,
+    Task,
+    TaskRegistry,
+    TaskView,
+    job_error_message,
+)
+from app.domain.result import Err, ErrorCode
 
 _TIMEOUT = 5.0
 
 
 class _NoSession:
-    """Session factory stand-in: these jobs never touch the DB."""
+    """Unit-of-work factory stand-in: these jobs never touch the DB; activity
+    rows are kept in memory (with the job's status when each was written)."""
 
-    def __call__(self) -> Session:
-        return _DummySession()  # type: ignore[return-value]
+    def __init__(self, registry: TaskRegistry | None = None) -> None:
+        self.registry = registry
+        self.activity: list[tuple[str, str, str]] = []
+        self.status_when_logged: list[str | None] = []
+
+    def __call__(self) -> Any:
+        return _DummyUow(self)
 
 
-class _DummySession:
-    def __enter__(self) -> _DummySession:
+class _DummyUow:
+    def __init__(self, owner: _NoSession) -> None:
+        self.owner = owner
+        self.activity = self
+
+    def __enter__(self) -> _DummyUow:
         return self
 
     def __exit__(self, *_: object) -> None:
         return None
 
-    def add(self, _row: object) -> None:
-        return None
+    def add(self, kind: str, status: str, message: str) -> None:
+        self.owner.activity.append((kind, status, message))
+        reg = self.owner.registry
+        if reg is not None:
+            listed = reg.list()
+            self.owner.status_when_logged.append(listed[-1].status if listed else None)
 
     def commit(self) -> None:
         return None
@@ -52,7 +74,7 @@ def _wait_idle(registry: TaskRegistry) -> None:
         time.sleep(0.01)
 
 
-def _wait_finished(registry: TaskRegistry, task_id: str) -> Task:
+def _wait_finished(registry: TaskRegistry, task_id: str) -> TaskView:
     deadline = time.monotonic() + _TIMEOUT
     while True:
         task = registry.get(task_id)
@@ -63,9 +85,10 @@ def _wait_finished(registry: TaskRegistry, task_id: str) -> Task:
         time.sleep(0.01)
 
 
-def _gated(gate: threading.Event, seen: dict[str, Any]) -> Callable[[Task, Session], None]:
-    def work(task: Task, _session: Session) -> None:
+def _gated(gate: threading.Event, seen: dict[str, Any]) -> Callable[[Task, UnitOfWork], None]:
+    def work(task: Task, _uow: UnitOfWork) -> None:
         seen["thread"] = threading.current_thread()
+        seen["task"] = task
         assert gate.wait(_TIMEOUT)
         task.set_result({"hilos": 2})
 
@@ -126,7 +149,7 @@ def test_another_job_while_one_runs_is_refused(reg: TaskRegistry) -> None:
 
 
 def test_failure_is_stored_with_its_message_and_code(reg: TaskRegistry) -> None:
-    def work(task: Task, _session: Session) -> None:
+    def work(task: Task, _uow: UnitOfWork) -> None:
         task.fail("Instagram pidió frenar.", "rate_limited")
 
     task = reg.start("sync", "Sincronizando DMs", "k", work, _NoSession())
@@ -137,7 +160,7 @@ def test_failure_is_stored_with_its_message_and_code(reg: TaskRegistry) -> None:
 
 
 def test_unexpected_exception_is_stored_in_spanish_and_frees_the_slot(reg: TaskRegistry) -> None:
-    def work(_task: Task, _session: Session) -> None:
+    def work(_task: Task, _uow: UnitOfWork) -> None:
         raise RuntimeError("boom")
 
     task = reg.start("sync", "Sincronizando DMs", "k", work, _NoSession())
@@ -149,16 +172,27 @@ def test_unexpected_exception_is_stored_in_spanish_and_frees_the_slot(reg: TaskR
     assert _wait_finished(reg, nxt.id).status == "done"
 
 
-def test_list_returns_snapshots_not_live_objects(reg: TaskRegistry) -> None:
+def test_reads_are_read_only_views_and_only_the_job_changes_the_task(reg: TaskRegistry) -> None:
     gate, seen = threading.Event(), dict[str, Any]()
     task = reg.start("sync", "Sincronizando DMs", "k", _gated(gate, seen), _NoSession())
     snap = reg.list()[0]
-    live = reg.get(task.id)
-    assert live is not None
-    live.progress(3, 10, "hilo 3")
-    assert snap.current == 0  # an earlier snapshot never changes under a reader
+    view = reg.get(task.id)
+    assert isinstance(snap, TaskView) and isinstance(view, TaskView)
+    assert not hasattr(view, "progress")  # a view cannot write the job back
+    with pytest.raises(AttributeError):
+        view.current = 5  # type: ignore[misc]
+    _wait_for(lambda: "task" in seen)
+    seen["task"].progress(3, 10, "hilo 3")  # the job itself reports progress
+    assert snap.current == 0  # an earlier view never changes under a reader
     assert reg.get(task.id).current == 3  # type: ignore[union-attr]
     gate.set()
+
+
+def _wait_for(condition: Callable[[], bool]) -> None:
+    deadline = time.monotonic() + _TIMEOUT
+    while not condition():
+        assert time.monotonic() < deadline, "condition never met"
+        time.sleep(0.01)
 
 
 # -- change notification + SSE ------------------------------------------------
@@ -166,12 +200,12 @@ def test_list_returns_snapshots_not_live_objects(reg: TaskRegistry) -> None:
 
 def test_progress_wakes_a_waiter_at_once(reg: TaskRegistry) -> None:
     gate, seen = threading.Event(), dict[str, Any]()
-    task = reg.start("sync", "Sincronizando DMs", "k", _gated(gate, seen), _NoSession())
+    reg.start("sync", "Sincronizando DMs", "k", _gated(gate, seen), _NoSession())
+    _wait_for(lambda: "task" in seen)
 
     async def scenario() -> float:
         version = reg.version
-        live = reg.get(task.id)
-        assert live is not None
+        live = seen["task"]
         loop = asyncio.get_running_loop()
         loop.call_later(0.05, lambda: threading.Thread(target=live.progress, args=(1, 4)).start())
         started = time.monotonic()
@@ -201,7 +235,7 @@ def test_stream_pushes_snapshot_progress_and_completion(reg: TaskRegistry) -> No
     gate = threading.Event()
     progressed = threading.Event()
 
-    def work(task: Task, _session: Session) -> None:
+    def work(task: Task, _uow: UnitOfWork) -> None:
         assert progressed.wait(_TIMEOUT)
         task.progress(1, 3, "hilo 1")
         assert gate.wait(_TIMEOUT)
@@ -263,3 +297,173 @@ def test_stream_ends_when_the_server_stops(reg: TaskRegistry) -> None:
 
     chunks = asyncio.run(scenario())
     assert len(chunks) == 1 and _parse(chunks[0]) == []
+
+
+# -- L15: registry edge cases ---------------------------------------------------
+
+
+def test_thread_start_failure_is_an_error_and_frees_the_slot(
+    reg: TaskRegistry, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def refuse(_self: threading.Thread) -> None:
+        raise RuntimeError("can't start new thread")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(threading.Thread, "start", refuse)
+        with pytest.raises(RuntimeError):
+            reg.start("sync", "Sincronizando DMs", "k", lambda t, u: None, _NoSession())
+
+    (failed,) = reg.list()
+    assert failed.status == "error"
+    assert failed.error == "No se pudo iniciar la tarea en segundo plano."
+    assert failed.error_code == "unknown"
+    nxt = reg.start("sync", "Sincronizando DMs", "k", lambda t, u: None, _NoSession())
+    assert _wait_finished(reg, nxt.id).status == "done"
+
+
+# The SystemExit still ends the worker thread (it is not swallowed): pytest notes it.
+@pytest.mark.filterwarnings("ignore::pytest.PytestUnhandledThreadExceptionWarning")
+def test_system_exit_inside_a_job_ends_it_as_interrupted(reg: TaskRegistry) -> None:
+    uows = _NoSession()
+
+    def work(_task: Task, _uow: UnitOfWork) -> None:
+        raise SystemExit(1)
+
+    task = reg.start("sync", "Sincronizando DMs", "k", work, uows)
+    done = _wait_finished(reg, task.id)
+    for worker in threading.enumerate():  # let the SystemExit end its thread here
+        if worker.name == f"job-sync-{task.id}":
+            worker.join(_TIMEOUT)
+    assert done.status == "error"
+    assert done.error == "La tarea se interrumpió."
+    assert done.error_code == "unknown"
+    assert uows.activity == [("sync", "error", "La tarea se interrumpió.")]
+    nxt = reg.start("sync", "Sincronizando DMs", "k", lambda t, u: None, _NoSession())
+    assert _wait_finished(reg, nxt.id).status == "done"
+
+
+def test_fifty_concurrent_starts_run_exactly_one_job(reg: TaskRegistry) -> None:
+    gate, seen = threading.Event(), dict[str, Any]()
+    barrier = threading.Barrier(50)
+    started: list[tuple[str, str]] = []  # (key, task id)
+    refused: list[str] = []
+    lock = threading.Lock()
+
+    def starter(i: int) -> None:
+        key = "same" if i % 2 else f"other-{i}"
+        barrier.wait(_TIMEOUT)
+        try:
+            view = reg.start("sync", "Sincronizando DMs", key, _gated(gate, seen), _NoSession())
+        except JobConflictError:
+            with lock:
+                refused.append(key)
+            return
+        with lock:
+            started.append((key, view.id))
+
+    threads = [threading.Thread(target=starter, args=(i,)) for i in range(50)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(_TIMEOUT)
+
+    (only,) = reg.list()
+    assert only.status == "running"
+    assert len(started) + len(refused) == 50
+    assert {task_id for _, task_id in started} == {only.id}
+    winner_keys = {key for key, _ in started}
+    assert len(winner_keys) == 1  # only callers with the running job's key get it back
+    assert winner_keys.isdisjoint(refused)
+    gate.set()
+    assert _wait_finished(reg, only.id).status == "done"
+
+
+def test_fifty_stream_clients_all_see_the_final_state_and_leave_no_waiters(
+    reg: TaskRegistry,
+) -> None:
+    gate = threading.Event()
+
+    def work(task: Task, _uow: UnitOfWork) -> None:
+        assert gate.wait(_TIMEOUT)
+        task.set_result({"hilos": 1})
+
+    task = reg.start("sync", "Sincronizando DMs", "k", work, _NoSession())
+
+    async def scenario() -> list[str]:
+        connected = 0
+        all_connected = asyncio.Event()
+
+        async def client() -> str:
+            nonlocal connected
+            gen = task_events(registry=reg, heartbeat=30.0, stopped=lambda: False)
+            try:
+                first = _parse(await _next(gen))
+                assert first is not None and first[0]["status"] == "running"
+                connected += 1
+                if connected == 50:
+                    all_connected.set()
+                while True:
+                    snap = _parse(await _next(gen))
+                    if snap and snap[0]["status"] != "running":
+                        return str(snap[0]["status"])
+            finally:
+                await gen.aclose()
+
+        clients = [asyncio.create_task(client()) for _ in range(50)]
+        await asyncio.wait_for(all_connected.wait(), _TIMEOUT)
+        gate.set()
+        return await asyncio.gather(*clients)
+
+    assert asyncio.run(scenario()) == ["done"] * 50
+    assert reg.waiting() == 0
+    assert _wait_finished(reg, task.id).result == {"hilos": 1}
+
+
+def test_activity_row_is_written_before_the_job_shows_as_finished(reg: TaskRegistry) -> None:
+    uows = _NoSession(registry=reg)
+
+    def work(task: Task, _uow: UnitOfWork) -> None:
+        task.set_result({"hilos": 2})
+
+    task = reg.start("sync", "Sincronizando DMs", "k", work, uows)
+    assert _wait_finished(reg, task.id).status == "done"
+    assert uows.activity == [("sync", "done", "2 hilos")]
+    assert uows.status_when_logged == ["running"]  # finished only after the row exists
+
+
+def test_a_warning_is_its_own_field_and_reads_well_in_the_activity(reg: TaskRegistry) -> None:
+    uows = _NoSession()
+
+    def work(task: Task, _uow: UnitOfWork) -> None:
+        task.set_result({"hilos": 0}, warning="se llegó al tope de chats")
+
+    task = reg.start("sync", "Sincronizando DMs", "k", work, uows)
+    done = _wait_finished(reg, task.id)
+    assert done.result == {"hilos": 0}
+    assert done.warning == "se llegó al tope de chats"
+    assert uows.activity == [("sync", "done", "0 hilos — aviso: se llegó al tope de chats")]
+
+
+def test_unwrap_ends_the_job_with_the_spanish_message(reg: TaskRegistry) -> None:
+    ran_after: list[bool] = []
+    uows = _NoSession()
+
+    def work(task: Task, _uow: UnitOfWork) -> None:
+        task.unwrap(Err(ErrorCode.RATE_LIMITED))
+        ran_after.append(True)
+
+    task = reg.start("sync", "Sincronizando DMs", "k", work, uows)
+    done = _wait_finished(reg, task.id)
+    assert done.status == "error"
+    assert done.error == "Instagram pidió frenar: probá de nuevo más tarde."
+    assert done.error_code == "rate_limited"
+    assert ran_after == []
+    assert uows.activity == [("sync", "error", "Instagram pidió frenar: probá de nuevo más tarde.")]
+
+
+def test_every_error_code_has_a_spanish_job_message() -> None:
+    assert set(JOB_MESSAGE_BY_CODE) == set(ErrorCode)
+    for code in ErrorCode:
+        assert job_error_message(Err(code)) == JOB_MESSAGE_BY_CODE[code]
+    detailed = "La sesión venció o el sessionid es inválido. Pegá un sessionid nuevo."
+    assert job_error_message(Err(ErrorCode.LOGIN_REQUIRED, detailed)) == detailed

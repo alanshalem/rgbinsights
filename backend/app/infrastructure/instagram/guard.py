@@ -33,8 +33,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from app.infrastructure.config.settings import Settings
-from app.infrastructure.instagram.errors import (
+from app.domain.errors import (
     ChallengeRequiredError,
     IgBusyError,
     InstagramError,
@@ -42,6 +41,7 @@ from app.infrastructure.instagram.errors import (
     LoginRequiredError,
     RateLimitedError,
 )
+from app.infrastructure.config.settings import Settings
 from app.infrastructure.instagram.throttle import (
     HumanPacer,
     RequestBudget,

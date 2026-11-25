@@ -8,6 +8,7 @@ from app.api.schemas import ResetIn
 from app.application.use_cases import ScanPostUseCase, SyncDmsUseCase
 from app.infrastructure.instagram.fake_source import FakeInstagramSource
 from app.infrastructure.persistence import models
+from app.infrastructure.persistence.unit_of_work import SqlUnitOfWork
 from fastapi import HTTPException
 from sqlmodel import Session, func, select
 
@@ -16,8 +17,8 @@ POST_A_URL = "https://instagram.com/p/Cabc123/"
 
 def _seed(session: Session) -> None:
     source = FakeInstagramSource()
-    ScanPostUseCase(source, session).execute(POST_A_URL)
-    SyncDmsUseCase(source, session).execute()
+    ScanPostUseCase(source, SqlUnitOfWork(session)).execute(POST_A_URL)
+    SyncDmsUseCase(source, SqlUnitOfWork(session)).execute()
 
 
 def _count(session: Session, model: type) -> int:

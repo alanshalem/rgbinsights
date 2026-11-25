@@ -108,7 +108,7 @@ def render_pdf(export: UserExport) -> bytes:
             cells = table.row()
             for c in COLUMNS:
                 text = latin1(c.pdf_text(row))
-                if c.header == "Estado":
+                if c.is_status:
                     cells.cell(text, style=status_style[row.status])
                 elif c.link is not None:
                     cells.cell(text, style=link_style, link=c.link(row))

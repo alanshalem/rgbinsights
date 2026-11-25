@@ -10,4 +10,4 @@ router = APIRouter(tags=["health"])
 
 @router.get("/health", response_model=HealthOut)
 def health(settings: Settings = Depends(get_settings)) -> HealthOut:
-    return HealthOut(status="ok", using_fake_instagram=settings.use_fake_instagram)
+    return HealthOut(status="ok", using_fake_instagram=settings.is_fake)

@@ -10,12 +10,12 @@ from typing import Any
 
 import pytest
 from app.application.use_cases import KEY_DMS_SYNCED, ScanPostUseCase, SyncDmsUseCase
-from app.domain.entities import Comment, DmMessage, DmThread, IgUser, Post
+from app.domain.entities import Comment, DmInbox, DmMessage, DmThread, IgUser, Post
 from app.domain.result import Ok
-from app.infrastructure.instagram.base import DmInbox
 from app.infrastructure.instagram.fake_source import FakeInstagramSource
 from app.infrastructure.persistence import db, models
 from app.infrastructure.persistence.repositories import AppStateRepository, EventRepository
+from app.infrastructure.persistence.unit_of_work import SqlUnitOfWork
 from sqlalchemy import event, text
 from sqlalchemy.engine import Engine
 from sqlmodel import Session, SQLModel, col, select
@@ -44,9 +44,7 @@ class ScriptedSource(FakeInstagramSource):
     def get_likers(self, media_pk: str) -> list[IgUser]:
         return list(self.likers)
 
-    def get_dm_threads(
-        self, progress: object | None = None, since: datetime | None = None
-    ) -> DmInbox:
+    def get_dm_threads(self, since: datetime | None = None) -> DmInbox:
         return DmInbox(threads=list(self.threads))
 
 
@@ -119,7 +117,7 @@ def test_scan_user_upsert_semantics(session: Session, monkeypatch: pytest.Monkey
     src.comments = [Comment(user=A1, text="hola"), Comment(user=B, text="yo")]
     src.likers = [A2, C]  # A appears twice: the later (liker) data wins
     _at(monkeypatch, T1)
-    first = ScanPostUseCase(src, session).execute(POST.url)
+    first = ScanPostUseCase(src, SqlUnitOfWork(session)).execute(POST.url)
     assert isinstance(first, Ok)
     assert (first.value.users_found, first.value.new_users) == (3, 3)
     assert _users(session) == [
@@ -138,7 +136,7 @@ def test_scan_user_upsert_semantics(session: Session, monkeypatch: pytest.Monkey
     src.comments = []
     src.likers = [D, A3]
     _at(monkeypatch, T2)
-    second = ScanPostUseCase(src, session).execute(POST.url)
+    second = ScanPostUseCase(src, SqlUnitOfWork(session)).execute(POST.url)
     assert isinstance(second, Ok)
     assert (second.value.users_found, second.value.new_users) == (2, 1)
     assert _users(session) == [
@@ -163,7 +161,7 @@ def test_scan_engagement_upsert_semantics(
     ]
     src.likers = [A1, C, A1]
     _at(monkeypatch, T1)
-    ScanPostUseCase(src, session).execute(POST.url)
+    ScanPostUseCase(src, SqlUnitOfWork(session)).execute(POST.url)
     assert _engagements(session) == [
         ("1", "555", "comment", "two", c1),  # last text, first created_at
         ("2", "555", "comment", "x", c1),
@@ -178,7 +176,7 @@ def test_scan_engagement_upsert_semantics(
     ]
     src.likers = [C, B]
     _at(monkeypatch, T2)
-    ScanPostUseCase(src, session).execute(POST.url)
+    ScanPostUseCase(src, SqlUnitOfWork(session)).execute(POST.url)
     assert _engagements(session) == [
         ("1", "555", "comment", "edited", c1),
         ("2", "555", "comment", "", c1),
@@ -221,7 +219,7 @@ def test_sync_thread_upsert_semantics(session: Session, monkeypatch: pytest.Monk
         _thread("t1", A2, out=[5], inc=[]),  # same thread twice: the later wins
     ]
     _at(monkeypatch, T1)
-    first = SyncDmsUseCase(src, session).execute()
+    first = SyncDmsUseCase(src, SqlUnitOfWork(session)).execute()
     assert isinstance(first, Ok)
     assert (first.value.threads_synced, first.value.users_touched) == (3, 3)
     assert _threads(session) == [
@@ -235,7 +233,7 @@ def test_sync_thread_upsert_semantics(session: Session, monkeypatch: pytest.Monk
 
     src.threads = [_thread("t1", C, out=[], inc=[6]), _thread("t3", D, out=[], inc=[])]
     _at(monkeypatch, T2)
-    SyncDmsUseCase(src, session).execute()
+    SyncDmsUseCase(src, SqlUnitOfWork(session)).execute()
     assert _threads(session) == [
         ("t1", "3", False, True, None, _h(6), _h(6), T2),  # every field overwritten
         ("t2", "2", True, False, _h(4), None, _h(4), T1),  # untouched
@@ -269,9 +267,9 @@ def test_scan_1000_likers_uses_batched_statements(session: Session) -> None:
     src.likers = [IgUser(pk=str(10_000 + i), username=f"u{i}") for i in range(1000)]
     src.comments = [Comment(user=src.likers[i], text=f"c{i}") for i in range(0, 1000, 2)]
     with _count_statements(session) as first:
-        ScanPostUseCase(src, session).execute(POST.url)
+        ScanPostUseCase(src, SqlUnitOfWork(session)).execute(POST.url)
     with _count_statements(session) as second:
-        result = ScanPostUseCase(src, session).execute(POST.url)
+        result = ScanPostUseCase(src, SqlUnitOfWork(session)).execute(POST.url)
     assert isinstance(result, Ok) and result.value.users_found == 1000
     assert len(_engagements(session)) == 1500
     # O(batches), not O(rows): a handful of SELECT ... IN / bulk statements.
@@ -286,9 +284,9 @@ def test_sync_many_threads_uses_batched_statements(session: Session) -> None:
         for i in range(1, 1001)
     ]
     with _count_statements(session) as first:
-        SyncDmsUseCase(src, session).execute()
+        SyncDmsUseCase(src, SqlUnitOfWork(session)).execute()
     with _count_statements(session) as second:
-        SyncDmsUseCase(src, session).execute()
+        SyncDmsUseCase(src, SqlUnitOfWork(session)).execute()
     assert len(_threads(session)) == 1000
     assert len(first) <= 20, len(first)
     assert len(second) <= 20, len(second)

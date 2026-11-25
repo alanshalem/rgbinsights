@@ -13,11 +13,6 @@ from app.domain.traffic_light import TrafficLight
 # -- requests -----------------------------------------------------------
 
 
-class ScanPostRequest(BaseModel):
-    url: str = Field(examples=["https://instagram.com/p/Cabc123/"])
-    event_id: int | None = None
-
-
 class ScanPostsRequest(BaseModel):
     urls: list[str] | None = None
     date_from: datetime | None = Field(default=None, alias="from")
@@ -52,20 +47,6 @@ class EventOut(BaseModel):
 
 
 # -- responses ----------------------------------------------------------
-
-
-class ScannedPostOut(BaseModel):
-    media_pk: str
-    shortcode: str
-    url: str
-    caption: str
-    taken_at: datetime | None
-
-
-class ScanResultOut(BaseModel):
-    post: ScannedPostOut
-    users_found: int
-    new_users: int
 
 
 class UserEngagementOut(BaseModel):
@@ -137,6 +118,7 @@ class TaskOut(BaseModel):
     total: int
     message: str
     result: dict[str, Any]
+    warning: str | None = None  # Spanish: shown on its own line (the job is still done)
     error: str | None
     error_code: str | None = None  # e.g. challenge_required -> the reconnect banner
     started_at: datetime
@@ -178,7 +160,7 @@ class StatusOut(BaseModel):
 class IgStatusOut(BaseModel):
     """Instagram session health, for the connection chip + reconnect banner."""
 
-    state: str  # connected | disconnected | logging_in
+    state: str  # connected | disconnected
     pk: str | None
     last_ok_at: datetime | None
     demo: bool  # fake source (no real Instagram)

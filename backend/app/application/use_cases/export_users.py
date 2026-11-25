@@ -15,14 +15,11 @@ import unicodedata
 from dataclasses import dataclass
 from datetime import UTC, datetime, tzinfo
 
-from sqlmodel import Session
-
 from app.application.dto import UserView
-from app.application.use_cases.list_users import ListUsersUseCase
+from app.application.ports import UnitOfWork, UserFilter
+from app.application.use_cases.list_users import DEFAULT_ORDER, ORDER_LABELS, ListUsersUseCase
 from app.domain.entities import EngagementType
 from app.domain.traffic_light import TrafficLight
-from app.infrastructure.persistence.repositories import EventRepository, PostRepository
-from app.infrastructure.persistence.user_list import UserFilter, UserListQuery
 
 STATUS_LABEL: dict[TrafficLight, str] = {
     TrafficLight.RED: "Rojo",
@@ -30,12 +27,6 @@ STATUS_LABEL: dict[TrafficLight, str] = {
     TrafficLight.GREEN: "Verde",
 }
 _BOARD_ORDER = (TrafficLight.RED, TrafficLight.YELLOW, TrafficLight.GREEN)
-_ORDER_LABEL = {
-    "status": "estado",
-    "fans": "fans",
-    "followers": "seguidores",
-    "username": "usuario",
-}
 ALL_EVENTS_TITLE = "Todas las fiestas"
 
 
@@ -79,10 +70,10 @@ def slugify(text: str) -> str:
 
 
 class ExportUsersUseCase:
-    def __init__(self, session: Session, tz: tzinfo = UTC) -> None:
-        self._session = session
+    def __init__(self, uow: UnitOfWork, tz: tzinfo = UTC) -> None:
+        self._uow = uow
         self._tz = tz
-        self._users = ListUsersUseCase(session)
+        self._users = ListUsersUseCase(uow)
 
     def execute(
         self,
@@ -90,7 +81,7 @@ class ExportUsersUseCase:
         post: str | None = None,
         status: TrafficLight | None = None,
         search: str | None = None,
-        order: str = "status",
+        order: str = DEFAULT_ORDER,
         follows: bool | None = None,
         by_status: bool = False,
         now: datetime | None = None,
@@ -111,9 +102,7 @@ class ExportUsersUseCase:
             )
         ]
         title = self._title(event)
-        posts_total = UserListQuery(self._session).event_posts_total(
-            UserFilter(event=event, post=post)
-        )
+        posts_total = self._uow.user_list.event_posts_total(UserFilter(event=event, post=post))
         return UserExport(
             title=title,
             slug=slugify(title) or "semaforo",
@@ -126,7 +115,7 @@ class ExportUsersUseCase:
     def _title(self, event: int | None) -> str:
         if event is None:
             return ALL_EVENTS_TITLE
-        found = EventRepository(self._session).get(event)
+        found = self._uow.events.get(event)
         return found.name if found is not None else f"Fiesta #{event}"
 
     def _filters(
@@ -140,7 +129,7 @@ class ExportUsersUseCase:
     ) -> tuple[str, ...]:
         out = ["Vista: tablero (por color)" if by_status else "Vista: tabla"]
         if post is not None:
-            found = PostRepository(self._session).get(post)
+            found = self._uow.posts.get(post)
             out.append(f"Post: {found.shortcode if found is not None else post}")
         if status is not None:
             out.append(f"Estado: {STATUS_LABEL[status]}")
@@ -148,7 +137,7 @@ class ExportUsersUseCase:
             out.append(f'Búsqueda: "{search}"')
         if follows is True:
             out.append("Solo seguidores")
-        out.append(f"Orden: {_ORDER_LABEL.get(order, _ORDER_LABEL['status'])}")
+        out.append(f"Orden: {ORDER_LABELS.get(order, ORDER_LABELS[DEFAULT_ORDER])}")
         return tuple(out)
 
 
@@ -160,6 +149,7 @@ def _follows_label(follows_us: bool | None) -> str:
 
 def _to_row(view: UserView) -> ExportRow:
     likes = sum(1 for e in view.engagements if e.type is EngagementType.LIKE)
+    comments = sum(1 for e in view.engagements if e.type is EngagementType.COMMENT)
     return ExportRow(
         username=view.username,
         profile_url=f"https://instagram.com/{view.username}/",
@@ -171,6 +161,6 @@ def _to_row(view: UserView) -> ExportRow:
         follows_us=_follows_label(view.follows_us),
         follower_count=view.follower_count,
         likes=likes,
-        comments=len(view.engagements) - likes,
+        comments=comments,
         posts_engaged=view.event_engaged,
     )

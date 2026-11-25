@@ -7,7 +7,14 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, col, func, select
 
-from app.api.deps import raise_for_instagram_error, session_dep, source_dep
+from app.api.deps import (
+    campaign_sender_dep,
+    raise_for_instagram_error,
+    require_event,
+    session_dep,
+    source_dep,
+    uow_dep,
+)
 from app.api.schemas import (
     CampaignCreate,
     CampaignOut,
@@ -18,15 +25,14 @@ from app.api.schemas import (
     SendParamsIn,
 )
 from app.application import campaign as camp
-from app.application import campaign_sender
+from app.application.campaign_sender import CampaignSender
 from app.application.dto import UserView
+from app.application.ports import InstagramSource, UnitOfWork
 from app.application.use_cases import ListUsersUseCase
+from app.domain.errors import InstagramError
 from app.domain.traffic_light import TrafficLight
-from app.infrastructure.config.settings import get_settings
-from app.infrastructure.instagram.base import InstagramSource
-from app.infrastructure.instagram.errors import InstagramError
+from app.infrastructure.config.settings import Settings, get_settings
 from app.infrastructure.persistence import models
-from app.infrastructure.persistence.repositories import EventRepository
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["campaigns"])
@@ -46,8 +52,8 @@ def _params(body: SendParamsIn) -> camp.SendParams:
     )
 
 
-def _reds(session: Session, event_id: int, body: CampaignCreate) -> list[UserView]:
-    reds = ListUsersUseCase(session).execute(
+def _reds(uow: UnitOfWork, event_id: int, body: CampaignCreate) -> list[UserView]:
+    reds = ListUsersUseCase(uow).execute(
         event=event_id,
         status=TrafficLight.RED,
         follows=True if body.only_followers else None,
@@ -55,11 +61,6 @@ def _reds(session: Session, event_id: int, body: CampaignCreate) -> list[UserVie
     if body.followers_first:
         reds = sorted(reds, key=lambda u: (0 if u.follows_us else 1, -(u.follower_count or 0)))
     return reds
-
-
-def _require_event(session: Session, event_id: int) -> None:
-    if EventRepository(session).get(event_id) is None:
-        raise HTTPException(404, detail={"code": "not_found", "message": "fiesta"})
 
 
 @router.get("/campaigns/presets", response_model=list[PresetOut])
@@ -79,11 +80,14 @@ def presets() -> list[PresetOut]:
 
 @router.post("/events/{event_id}/campaign/preview", response_model=CampaignPreviewOut)
 def preview(
-    event_id: int, body: CampaignCreate, session: Session = Depends(session_dep)
+    event_id: int,
+    body: CampaignCreate,
+    session: Session = Depends(session_dep),
+    uow: UnitOfWork = Depends(uow_dep),
 ) -> CampaignPreviewOut:
-    _require_event(session, event_id)
+    require_event(session, event_id)
     params = _params(body)
-    reds = _reds(session, event_id, body)
+    reds = _reds(uow, event_id, body)
     est = camp.estimate(len(reds), params)
     samples = [
         MessageSample(
@@ -126,6 +130,7 @@ def test_send(
     body: CampaignCreate,
     username: str | None = None,
     session: Session = Depends(session_dep),
+    uow: UnitOfWork = Depends(uow_dep),
     source: InstagramSource = Depends(source_dep),
 ) -> MessageSample:
     """Send ONE real DM to verify it lands before the batch.
@@ -133,8 +138,8 @@ def test_send(
     Defaults to the first red; pass ?username= to test on a specific person
     (e.g. a friend / someone who follows you).
     """
-    _require_event(session, event_id)
-    reds = _reds(session, event_id, body)
+    require_event(session, event_id)
+    reds = _reds(uow, event_id, body)
     if not reds:
         raise HTTPException(422, detail={"code": "bad_request", "message": "no hay usuarios rojos"})
     target = reds[0]
@@ -161,13 +166,18 @@ def test_send(
 
 @router.post("/events/{event_id}/campaign", response_model=CampaignOut)
 def create_campaign(
-    event_id: int, body: CampaignCreate, session: Session = Depends(session_dep)
+    event_id: int,
+    body: CampaignCreate,
+    session: Session = Depends(session_dep),
+    uow: UnitOfWork = Depends(uow_dep),
+    settings: Settings = Depends(get_settings),
+    sender: CampaignSender = Depends(campaign_sender_dep),
 ) -> CampaignOut:
-    _require_event(session, event_id)
+    require_event(session, event_id)
     params = _params(body)
 
     active = session.exec(
-        select(models.Campaign).where(col(models.Campaign.status).in_(["running", "paused"]))
+        select(models.Campaign).where(col(models.Campaign.status).in_(camp.ACTIVE_STATUSES))
     ).first()
     if active is not None:
         raise HTTPException(
@@ -175,7 +185,7 @@ def create_campaign(
             detail={"code": "conflict", "message": "ya hay una campaña activa; pausala o esperá"},
         )
 
-    reds = _reds(session, event_id, body)
+    reds = _reds(uow, event_id, body)
     if not reds:
         raise HTTPException(422, detail={"code": "bad_request", "message": "no hay usuarios rojos"})
 
@@ -190,7 +200,7 @@ def create_campaign(
         hour_start=params.hour_start,
         hour_end=params.hour_end,
         # The daily cap counts Argentina-local days (see campaign_sender).
-        sent_today_date=now.astimezone(get_settings().local_tz()).date().isoformat(),
+        sent_today_date=now.astimezone(settings.local_tz()).date().isoformat(),
         created_at=now,
     )
     session.add(campaign)
@@ -209,7 +219,7 @@ def create_campaign(
         )
     session.commit()
 
-    campaign_sender.start(campaign.id)
+    sender.start(campaign.id)
     return _to_out(session, campaign)
 
 
@@ -217,7 +227,7 @@ def create_campaign(
 def active_campaign(session: Session = Depends(session_dep)) -> CampaignOut | None:
     campaign = session.exec(
         select(models.Campaign)
-        .where(col(models.Campaign.status).in_(["running", "paused", "blocked"]))
+        .where(col(models.Campaign.status).in_(camp.SHOWN_STATUSES))
         .order_by(col(models.Campaign.id).desc())
     ).first()
     return _to_out(session, campaign) if campaign is not None else None
@@ -244,7 +254,11 @@ def stop_campaign(campaign_id: int, session: Session = Depends(session_dep)) -> 
 
 
 @router.post("/campaigns/{campaign_id}/resume", response_model=CampaignOut)
-def resume_campaign(campaign_id: int, session: Session = Depends(session_dep)) -> CampaignOut:
+def resume_campaign(
+    campaign_id: int,
+    session: Session = Depends(session_dep),
+    sender: CampaignSender = Depends(campaign_sender_dep),
+) -> CampaignOut:
     campaign = _get(session, campaign_id)
     if campaign.status in ("paused", "blocked"):
         campaign.status = "running"
@@ -252,7 +266,7 @@ def resume_campaign(campaign_id: int, session: Session = Depends(session_dep)) -
         session.add(campaign)
         session.commit()
         assert campaign.id is not None
-        campaign_sender.start(campaign.id)
+        sender.start(campaign.id)
     return _to_out(session, campaign)
 
 

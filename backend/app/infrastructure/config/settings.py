@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import timedelta, timezone
 from functools import lru_cache
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -63,22 +64,34 @@ class Settings(BaseSettings):
     # Breaker/cooldown/budget state (a small JSON file, survives restarts).
     ig_guard_file: str = "ig_guard.json"
 
-    # When true (default), the app uses FakeInstagramSource and never touches
-    # Instagram. Set to false once credentials are filled in .env.
-    use_fake_instagram: bool = True
-
-    # Which data source to use: "fake" | "instagrapi".
-    #   instagrapi -> mobile private API, seeded by IG_SESSIONID / user+password.
-    # Empty falls back to use_fake_instagram for backward compat.
+    # The one data-source setting: "fake" (default: sample data, never touches
+    # Instagram) or "instagrapi" (your real account, via the mobile private API,
+    # seeded by IG_SESSIONID / user+password). Any other non-empty value (from an
+    # older version) also means the real account.
     ig_source: str = ""
+    # Legacy switch, read only so older .env files keep working: when IG_SOURCE
+    # is empty, USE_FAKE_INSTAGRAM=false selects the real account. Never read it
+    # in code — use `ig_source` (always "fake" or "instagrapi" after loading).
+    use_fake_instagram: bool | None = None
 
-    def resolved_source(self) -> str:
-        """Only 'fake' or 'instagrapi' remain; anything real maps to instagrapi."""
-        if self.ig_source.strip().lower() == "fake":
-            return "fake"
-        if not self.ig_source.strip() and self.use_fake_instagram:
-            return "fake"
-        return "instagrapi"
+    @model_validator(mode="after")
+    def _resolve_source(self) -> Settings:
+        raw = self.ig_source.strip().lower()
+        if raw == "fake" or (not raw and self.use_fake_instagram is not False):
+            self.ig_source = "fake"
+        else:
+            self.ig_source = "instagrapi"
+        return self
+
+    @property
+    def is_fake(self) -> bool:
+        """Demo mode: FakeInstagramSource, no Instagram at all."""
+        return self.ig_source == "fake"
+
+    @property
+    def has_password_login(self) -> bool:
+        """IG_USERNAME and IG_PASSWORD are both set (enables login/relogin)."""
+        return bool(self.ig_username.strip() and self.ig_password.strip())
 
     # How many recent posts to pull when scanning by date range.
     recent_posts_limit: int = 50

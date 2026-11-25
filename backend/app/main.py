@@ -26,7 +26,7 @@ from app.api.routers import (
     tasks,
     users,
 )
-from app.application import campaign_sender
+from app.bootstrap import campaign_sender, engine
 from app.infrastructure.persistence.db import create_db_and_tables
 
 logging.basicConfig(
@@ -57,7 +57,8 @@ def _stop_streams_on_exit_signals() -> None:
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-    create_db_and_tables()
+    create_db_and_tables(engine)
+    tasks.reset_streams()  # a stop left over from an earlier shutdown must not end new streams
     campaign_sender.resume_all()  # resume any campaign left running
     _stop_streams_on_exit_signals()
     yield

@@ -1,5 +1,7 @@
 """Board read-model: filter, sort, count and paginate users in SQL.
 
+Implements the application's UserListReader port.
+
 Replaces loading every engagement/thread/post into Python per request. The
 result must match the previous in-Python version exactly, so a few details are
 deliberate:
@@ -16,8 +18,6 @@ deliberate:
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
-from datetime import datetime
 from typing import Any
 
 from sqlalchemy import (
@@ -34,6 +34,7 @@ from sqlalchemy import (
 )
 from sqlmodel import Session
 
+from app.application.ports import EngagementRow, UserFilter, UserRow
 from app.domain.entities import EngagementType
 from app.domain.traffic_light import TrafficLight
 from app.infrastructure.persistence import models
@@ -49,43 +50,6 @@ _EVENTS: Table = models.Event.__table__  # type: ignore[attr-defined]
 # any incoming -> green, else any outgoing -> yellow, else red.
 _RANK = {TrafficLight.RED: 0, TrafficLight.YELLOW: 1, TrafficLight.GREEN: 2}
 _LIGHT = {rank: light for light, rank in _RANK.items()}
-
-
-@dataclass(frozen=True, slots=True)
-class UserFilter:
-    event: int | None = None
-    post: str | None = None
-    search: str | None = None
-    follows: bool | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class UserRow:
-    pk: str
-    username: str
-    full_name: str
-    profile_pic_url: str | None
-    is_private: bool
-    follows_us: bool | None
-    we_follow: bool | None
-    follower_count: int | None
-    is_verified: bool
-    is_business: bool
-    biography: str | None
-    thread_id: str | None
-    last_message_at: datetime | None
-    traffic_light: TrafficLight
-    fans: int  # distinct posts engaged, global
-    event_engaged: int  # distinct posts engaged within the filter
-    last_engaged_at: datetime | None
-
-
-@dataclass(frozen=True, slots=True)
-class EngagementRow:
-    post_media_pk: str
-    type: EngagementType
-    comment_text: str | None
-    post_url: str | None
 
 
 def _py_lower(value: str | None) -> str | None:

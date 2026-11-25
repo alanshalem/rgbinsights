@@ -14,7 +14,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from app.infrastructure.instagram.base import FollowGraph
+from app.domain.entities import FollowGraph
 from instagrapi import Client
 
 from tests.test_fewer_requests import _source
@@ -40,13 +40,13 @@ def _rec(pages: list[dict[str, Any]]) -> tuple[Client, list[Request]]:
         client.last_json = result
         return result
 
-    client.private_request = fake  # type: ignore[method-assign]
+    client.private_request = fake
     return client, log
 
 
 def _ours(tmp_path: Path, pages: list[dict[str, Any]], **settings: Any) -> tuple[Any, Any]:
     client, log = _rec(pages)
-    return _source(tmp_path, client, **settings), log  # type: ignore[arg-type]
+    return _source(tmp_path, client, **settings), log
 
 
 def _comment(i: int, at: datetime) -> dict[str, Any]:
@@ -136,7 +136,7 @@ def test_capped_follow_lists_shrink_the_last_page_like_instagrapi(tmp_path: Path
 
 
 def test_incremental_followers_then_full_following(tmp_path: Path) -> None:
-    pages = [
+    pages: list[dict[str, Any]] = [
         {"users": _users(1, 2), "next_max_id": "f1"},  # all known: stop here
         {"users": _users(4), "next_max_id": "g1"},
         {"users": _users(5)},
@@ -179,7 +179,7 @@ def _thread(n: int, at: datetime) -> dict[str, Any]:
     }
 
 
-INBOX_PAGES = [
+INBOX_PAGES: list[dict[str, Any]] = [
     {"inbox": {"threads": [_thread(1, T0)], "oldest_cursor": "c1"}},
     {"inbox": {"threads": [_thread(2, T0 - timedelta(hours=1))], "oldest_cursor": None}},
 ]

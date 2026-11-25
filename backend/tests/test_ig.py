@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from app.api.routers.ig import ig_status
+from app.bootstrap import InstagramAccess
 from app.infrastructure.config.settings import Settings
 from sqlmodel import Session
 
@@ -10,7 +11,7 @@ def _fake_settings() -> Settings:
 
 
 def test_ig_status_connected_in_demo(session: Session) -> None:
-    out = ig_status(session=session, settings=_fake_settings())
+    out = ig_status(session=session, settings=_fake_settings(), instagram=InstagramAccess())
     assert out.demo is True
     assert out.state == "connected"
     assert out.pk  # fake account pk
@@ -18,6 +19,6 @@ def test_ig_status_connected_in_demo(session: Session) -> None:
 
 
 def test_ig_status_demo_has_no_cooldown_or_error(session: Session) -> None:
-    out = ig_status(session=session, settings=_fake_settings())
+    out = ig_status(session=session, settings=_fake_settings(), instagram=InstagramAccess())
     assert out.cooldown_until is None
     assert out.last_error is None

@@ -23,16 +23,16 @@ from app.application.use_cases import (
 )
 from app.application.use_cases._shared import KEY_DMS_SYNCED
 from app.application.use_cases.sync import DmSyncResult
-from app.domain.entities import Comment, IgUser, Post
+from app.domain.entities import Comment, DmInbox, FollowGraph, IgUser, Post
+from app.domain.errors import InstagramError
 from app.domain.result import Ok
 from app.infrastructure.config.settings import Settings
-from app.infrastructure.instagram.base import DmInbox, FollowGraph
-from app.infrastructure.instagram.errors import InstagramError
 from app.infrastructure.instagram.fake_source import FakeInstagramSource
 from app.infrastructure.instagram.guard import IgGuard
 from app.infrastructure.instagram.instagrapi_source import InstagrapiInstagramSource
 from app.infrastructure.persistence import models
 from app.infrastructure.persistence.repositories import AppStateRepository, EventRepository
+from app.infrastructure.persistence.unit_of_work import SqlUnitOfWork
 from instagrapi import Client
 from sqlmodel import Session
 
@@ -79,7 +79,7 @@ class StubClient:
 
     def user_following(self, user_id: str, use_cache: bool = True, amount: int = 0) -> Any:
         # instagrapi's own paging, run over this stub's private_request.
-        users, _ = Client.user_following_v1_chunk(self, str(user_id), amount)  # type: ignore[arg-type]
+        users, _ = Client.user_following_v1_chunk(self, str(user_id), amount)
         return {u.pk: u for u in users}
 
     def media_pk_from_url(self, url: str) -> str:
@@ -129,7 +129,7 @@ def _source(tmp_path: Path, client: StubClient, **overrides: Any) -> InstagrapiI
     settings = _settings(tmp_path, **overrides)
     guard = IgGuard(settings, sleep=lambda _: None, rng=random.Random(1))
     source = InstagrapiInstagramSource(settings, guard=guard)
-    source._client = client  # type: ignore[assignment]
+    source._client = client
     return source
 
 
@@ -483,11 +483,9 @@ class CountingSource(FakeInstagramSource):
         self.calls.append(("get_likers", media_pk))
         return super().get_likers(media_pk)
 
-    def get_dm_threads(
-        self, progress: object | None = None, since: datetime | None = None
-    ) -> DmInbox:
+    def get_dm_threads(self, since: datetime | None = None) -> DmInbox:
         self.calls.append(("get_dm_threads", since))
-        return super().get_dm_threads(progress, since)
+        return super().get_dm_threads(since)
 
     def names(self) -> list[str]:
         return [name for name, _ in self.calls]
@@ -512,7 +510,7 @@ def _event(session: Session) -> int:
 def test_scan_of_a_new_post_fetches_it_once(session: Session) -> None:
     source = CountingSource()
 
-    result = ScanPostUseCase(source, session).execute(POST_A)
+    result = ScanPostUseCase(source, SqlUnitOfWork(session)).execute(POST_A)
 
     assert isinstance(result, Ok)
     assert source.names() == ["get_post", "get_comments", "get_likers"]
@@ -522,10 +520,10 @@ def test_scan_of_a_new_post_fetches_it_once(session: Session) -> None:
 def test_rescan_of_a_known_post_never_refetches_it(session: Session) -> None:
     source = CountingSource()
     event_id = _event(session)
-    ScanPostUseCase(source, session).execute(POST_A, event_id=event_id)
+    ScanPostUseCase(source, SqlUnitOfWork(session)).execute(POST_A, event_id=event_id)
     source.calls.clear()
 
-    result = RescanEventUseCase(source, session, recent_limit=50).execute(event_id, force=True)
+    result = RescanEventUseCase(source, SqlUnitOfWork(session)).execute(event_id, force=True)
 
     assert isinstance(result, Ok)
     assert len(result.value.results) == 1
@@ -534,20 +532,22 @@ def test_rescan_of_a_known_post_never_refetches_it(session: Session) -> None:
 
 def test_pasting_a_known_post_url_again_skips_get_post(session: Session) -> None:
     source = CountingSource()
-    ScanPostUseCase(source, session).execute(POST_A)
+    ScanPostUseCase(source, SqlUnitOfWork(session)).execute(POST_A)
     source.calls.clear()
 
-    ScanPostUseCase(source, session).execute("https://www.instagram.com/p/Cabc123/?igsh=x")
+    ScanPostUseCase(source, SqlUnitOfWork(session)).execute(
+        "https://www.instagram.com/p/Cabc123/?igsh=x"
+    )
 
     assert "get_post" not in source.names()
 
 
 def test_rescan_asks_only_for_comments_newer_than_the_stored_ones(session: Session) -> None:
     source = CountingSource()
-    ScanPostUseCase(source, session).execute(POST_A)
+    ScanPostUseCase(source, SqlUnitOfWork(session)).execute(POST_A)
     source.calls.clear()
 
-    ScanPostUseCase(source, session).execute(POST_A)
+    ScanPostUseCase(source, SqlUnitOfWork(session)).execute(POST_A)
 
     # Fake post A's newest comment is Jun 11 12:00 UTC.
     assert source.calls[0] == ("get_comments", datetime(2026, 6, 11, 12, 0, tzinfo=UTC))
@@ -556,8 +556,8 @@ def test_rescan_asks_only_for_comments_newer_than_the_stored_ones(session: Sessi
 def test_scan_by_date_range_does_not_refetch_listed_posts(session: Session) -> None:
     source = CountingSource()
 
-    result = ScanPostsUseCase(source, session, recent_limit=50).by_date_range(
-        datetime(2026, 6, 1, tzinfo=UTC), datetime(2026, 6, 30, tzinfo=UTC)
+    result = ScanPostsUseCase(source, SqlUnitOfWork(session)).by_date_range(
+        datetime(2026, 6, 1, tzinfo=UTC), datetime(2026, 6, 30, tzinfo=UTC), recent_limit=50
     )
 
     assert isinstance(result, Ok)
@@ -573,8 +573,8 @@ def test_dm_sync_since_is_the_previous_sync_start(
     starts = iter([T0, T0 + timedelta(hours=1), T0 + timedelta(hours=2)])
     monkeypatch.setattr("app.application.use_cases.sync._now", lambda: next(starts))
 
-    first = SyncDmsUseCase(source, session).execute()
-    second = SyncDmsUseCase(source, session).execute()
+    first = SyncDmsUseCase(source, SqlUnitOfWork(session)).execute()
+    second = SyncDmsUseCase(source, SqlUnitOfWork(session)).execute()
 
     assert isinstance(first, Ok) and isinstance(second, Ok)
     assert source.calls == [("get_dm_threads", None), ("get_dm_threads", T0)]
@@ -586,10 +586,8 @@ def test_dm_sync_since_is_the_previous_sync_start(
 class CappedSource(CountingSource):
     """An inbox whose incremental reads always hit the thread cap."""
 
-    def get_dm_threads(
-        self, progress: object | None = None, since: datetime | None = None
-    ) -> DmInbox:
-        inbox = super().get_dm_threads(progress, since)
+    def get_dm_threads(self, since: datetime | None = None) -> DmInbox:
+        inbox = super().get_dm_threads(since)
         return DmInbox(threads=inbox.threads, complete=since is None)
 
 
@@ -600,8 +598,8 @@ def test_dm_sync_cut_short_by_the_cap_says_so(
     monkeypatch.setattr("app.application.use_cases.sync._now", lambda: next(starts))
     source = CappedSource()
 
-    first = SyncDmsUseCase(source, session).execute()
-    second = SyncDmsUseCase(source, session).execute()
+    first = SyncDmsUseCase(source, SqlUnitOfWork(session)).execute()
+    second = SyncDmsUseCase(source, SqlUnitOfWork(session)).execute()
 
     assert isinstance(first, Ok) and isinstance(second, Ok)
     assert isinstance(first.value, DmSyncResult) and isinstance(second.value, DmSyncResult)

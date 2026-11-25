@@ -26,6 +26,7 @@ from app.application.use_cases import (
 from app.domain.traffic_light import TrafficLight
 from app.infrastructure.export import render_pdf, render_xlsx
 from app.infrastructure.persistence import models
+from app.infrastructure.persistence.unit_of_work import SqlUnitOfWork
 from app.main import app
 from openpyxl import load_workbook
 from sqlmodel import Session
@@ -56,11 +57,11 @@ def seeded(session: Session) -> Session:
 
 
 def _export(session: Session, **kwargs: Any) -> UserExport:
-    return ExportUsersUseCase(session, tz=AR_TZ).execute(now=AR, **kwargs)
+    return ExportUsersUseCase(SqlUnitOfWork(session), tz=AR_TZ).execute(now=AR, **kwargs)
 
 
 def _names(session: Session, **kwargs: Any) -> list[str]:
-    return [v.username for v in ListUsersUseCase(session).execute(**kwargs)]
+    return [v.username for v in ListUsersUseCase(SqlUnitOfWork(session)).execute(**kwargs)]
 
 
 # -- use case: scope ---------------------------------------------------------
@@ -312,6 +313,25 @@ def test_pdf_structure_accents_links_and_pages() -> None:
     assert _pdf_streams(many).count(b"(P\xe1gina ") == pages
 
 
+def _pdf_fill(hex_color: str) -> bytes:
+    """fpdf2's fill operator for an RRGGBB colour ("1 0.7804 0.8078 rg")."""
+    parts = (int(hex_color[i : i + 2], 16) / 255 for i in (0, 2, 4))
+    return (" ".join(f"{v:.4f}".rstrip("0").rstrip(".") for v in parts) + " rg").encode()
+
+
+@pytest.mark.parametrize("light", list(TrafficLight))
+def test_pdf_status_cell_is_filled_with_its_semaforo_colour(light: TrafficLight) -> None:
+    from dataclasses import replace
+
+    from app.infrastructure.export.columns import STATUS_FILL
+
+    sample = _sample(1)
+    export = replace(sample, rows=(replace(sample.rows[0], status=light),))
+    text = _pdf_streams(render_pdf(export))
+    for other, fill in STATUS_FILL.items():
+        assert (_pdf_fill(fill) in text) is (other is light), other
+
+
 def test_pdf_empty_export() -> None:
     data = render_pdf(_sample(0))
     assert data.startswith(b"%PDF-") and _page_count(data) == 1
@@ -420,14 +440,13 @@ def test_export_never_touches_instagram(
     client_session: Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import requests
-    from app.api import deps
-    from app.infrastructure.instagram import fake_source, shared
+    from app.bootstrap import InstagramAccess
+    from app.infrastructure.instagram import fake_source
 
     def boom(*_: Any, **__: Any) -> Any:
         raise AssertionError("export must not touch Instagram")
 
-    monkeypatch.setattr(shared, "get_shared_source", boom)
-    monkeypatch.setattr(deps, "get_shared_source", boom)
+    monkeypatch.setattr(InstagramAccess, "source", boom)
     monkeypatch.setattr(fake_source.FakeInstagramSource, "__init__", boom)
     monkeypatch.setattr(requests.Session, "request", boom)
 
@@ -449,7 +468,16 @@ def test_export_never_touches_instagram(
 
 @pytest.mark.parametrize(
     "full_name",
-    ["=1+1", "+1+1", "-1+1", "@SUM(A1)", "=cmd|' /C calc'!A0", "a\x00b\x1fc", "x￾y", "x￿y"],
+    [
+        "=1+1",
+        "+1+1",
+        "-1+1",
+        "@SUM(A1)",
+        "=cmd|' /C calc'!A0",
+        "a\x00b\x1fc",
+        "x\ufffey",
+        "x\uffffy",
+    ],
 )
 def test_xlsx_never_stores_formulas_and_always_opens(full_name: str) -> None:
     """S23 safety: hostile names stay plain text and never corrupt the workbook."""

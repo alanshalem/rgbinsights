@@ -11,7 +11,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
-from app.infrastructure.instagram.errors import BudgetExhaustedError
+from app.domain.errors import BudgetExhaustedError
 
 # Now and then a person gets distracted: add a longer pause on top.
 _DISTRACTION_CHANCE = 0.1

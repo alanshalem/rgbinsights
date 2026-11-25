@@ -15,14 +15,15 @@ from datetime import UTC, datetime
 
 from app.domain.entities import (
     Comment,
+    DmInbox,
     DmMessage,
     DmThread,
+    FollowGraph,
     IgUser,
     Post,
     ProfileInfo,
 )
-from app.infrastructure.instagram.base import DmInbox, FollowGraph
-from app.infrastructure.instagram.errors import PostNotFoundError
+from app.domain.errors import PostNotFoundError
 
 _OUR_PK = "0"
 
@@ -57,9 +58,6 @@ class FakeInstagramSource:
 
     def __init__(self) -> None:
         self.sent: list[tuple[str, str]] = []  # (user_pk, text) for tests
-
-    def reset_budget(self) -> None:
-        pass
 
     def send_dm(self, user_pk: str, text: str) -> None:
         self.sent.append((user_pk, text))
@@ -121,9 +119,7 @@ class FakeInstagramSource:
         # Same contract as the real source: from `since` on (inclusive).
         return [c for c in comments if since is None or (c.created_at or since) >= since]
 
-    def get_dm_threads(
-        self, progress: object | None = None, since: datetime | None = None
-    ) -> DmInbox:
+    def get_dm_threads(self, since: datetime | None = None) -> DmInbox:
         threads = [
             # lucia answered us -> GREEN
             DmThread(

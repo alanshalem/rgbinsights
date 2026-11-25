@@ -9,10 +9,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from sqlmodel import Session, col, select
 
-from app.api.deps import session_dep
+from app.api.deps import session_dep, task_out
 from app.api.schemas import ActivityOut, StatusOut, TaskOut
-from app.application.tasks import TaskRegistry, registry
+from app.application.tasks import TaskRegistry
 from app.application.use_cases import KEY_DMS_SYNCED, KEY_RELATIONS_SYNCED
+from app.bootstrap import registry
 from app.infrastructure.persistence import models
 from app.infrastructure.persistence.repositories import AppStateRepository
 
@@ -36,6 +37,12 @@ def streams_stopped() -> bool:
     return _stopping.is_set()
 
 
+def reset_streams() -> None:
+    """Allow streams again (server startup): a stop flag left set by an earlier
+    shutdown in this process would end every new stream at once."""
+    _stopping.clear()
+
+
 @router.get("/status", response_model=StatusOut)
 def status(session: Session = Depends(session_dep)) -> StatusOut:
     """Freshness of the shared data, for the 'actualizado hace Xh' hints."""
@@ -49,7 +56,7 @@ def status(session: Session = Depends(session_dep)) -> StatusOut:
 @router.get("/tasks", response_model=list[TaskOut])
 def list_tasks() -> list[TaskOut]:
     """Polling fallback of /tasks/stream (same snapshots)."""
-    return [_out(t) for t in registry.list()]
+    return [task_out(t) for t in registry.list()]
 
 
 @router.get(
@@ -75,7 +82,7 @@ def get_task(task_id: str) -> TaskOut:
         raise HTTPException(
             404, detail={"code": "not_found", "message": "tarea no encontrada (terminó hace rato?)"}
         )
-    return _out(task)
+    return task_out(task)
 
 
 @router.get("/activity", response_model=list[ActivityOut])
@@ -89,12 +96,8 @@ def list_activity(
     return [ActivityOut.model_validate(r, from_attributes=True) for r in rows]
 
 
-def _out(task: object) -> TaskOut:
-    return TaskOut.model_validate(task, from_attributes=True)
-
-
 def _tasks_event(reg: TaskRegistry) -> str:
-    data = json.dumps([_out(t).model_dump(mode="json") for t in reg.list()])
+    data = json.dumps([task_out(t).model_dump(mode="json") for t in reg.list()])
     return f"event: tasks\ndata: {data}\n\n"
 
 

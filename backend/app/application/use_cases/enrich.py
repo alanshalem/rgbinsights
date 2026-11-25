@@ -5,25 +5,17 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime, timedelta, tzinfo
 
-from sqlmodel import Session
-
 from app.application.dto import EnrichResult
+from app.application.ports import InstagramSource, ProgressFn, UnitOfWork
 from app.application.use_cases._shared import (
     KEY_FOLLOW_GRAPH_FULL,
     KEY_RELATIONS_SYNCED,
-    ProgressFn,
     _now,
     map_instagram_error,
 )
-from app.domain.entities import Friendship, ProfileInfo
+from app.domain.entities import FollowGraph, Friendship, ProfileInfo
+from app.domain.errors import InstagramError
 from app.domain.result import Err, Ok, Result
-from app.infrastructure.instagram.base import FollowGraph, InstagramSource
-from app.infrastructure.instagram.errors import InstagramError
-from app.infrastructure.persistence.repositories import (
-    AppStateRepository,
-    FollowGraphRepository,
-    UserRepository,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -44,12 +36,12 @@ class EnrichProfilesUseCase:
        in batches so a failed run keeps its progress and the next one continues.
     """
 
-    def __init__(self, source: InstagramSource, session: Session) -> None:
+    def __init__(self, source: InstagramSource, uow: UnitOfWork) -> None:
         self._source = source
-        self._session = session
-        self._users = UserRepository(session)
-        self._graph = FollowGraphRepository(session)
-        self._state = AppStateRepository(session)
+        self._uow = uow
+        self._users = uow.users
+        self._graph = uow.follow_graph
+        self._state = uow.app_state
 
     def execute(
         self,
@@ -63,7 +55,6 @@ class EnrichProfilesUseCase:
         tz: tzinfo = UTC,
         full_refresh_days: float = 7.0,
     ) -> Result[EnrichResult]:
-        self._source.reset_budget()
         relations, relations_cached = self._sync_relations(
             pks, progress, force, cache_hours, full_refresh_days
         )
@@ -150,7 +141,7 @@ class EnrichProfilesUseCase:
         }
         self._users.set_friendships(rels)
         self._state.set_dt(KEY_RELATIONS_SYNCED, now)
-        self._session.commit()  # keep the graph even if a profile read fails later
+        self._uow.commit()  # keep the graph even if a profile read fails later
         return len(rels), False
 
     def _save_profiles(self, batch: list[tuple[str, ProfileInfo]]) -> None:
@@ -160,4 +151,4 @@ class EnrichProfilesUseCase:
         now: datetime = _now()
         for pk, profile in batch:
             self._users.set_profile(pk, profile, now)
-        self._session.commit()
+        self._uow.commit()

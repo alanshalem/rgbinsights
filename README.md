@@ -88,7 +88,7 @@ uvicorn app.main:app --reload --port 8000
 
 Cuando veas `Application startup complete`, dejá esa terminal abierta.
 
-> **Modo demo (por defecto):** viene con `USE_FAKE_INSTAGRAM=true`, así que
+> **Modo demo (por defecto):** viene con `IG_SOURCE=fake`, así que
 > funciona con **datos de ejemplo** sin tocar Instagram. Perfecto para probarlo.
 > Para usar Instagram de verdad, ver [Usar Instagram real](#usar-instagram-real).
 
@@ -128,7 +128,7 @@ el login con usuario y contraseña con un *checkpoint*, así que lo más simple 
 
 ### Opción recomendada: pegar el `sessionid` desde la app
 
-1. En `backend/.env`: `USE_FAKE_INSTAGRAM=false` y reiniciá la app.
+1. En `backend/.env`: `IG_SOURCE=instagrapi` y reiniciá la app (un `.env` viejo con `USE_FAKE_INSTAGRAM=false` también sirve).
 2. Tocá el chip **IG** (arriba) → **Pegá tu sesión de Instagram** y seguí los
    pasos en pantalla: abrí instagram.com logueado, `F12` → **Application** →
    **Cookies** → `https://www.instagram.com`, copiá el valor de `sessionid`.
@@ -143,7 +143,7 @@ el login con usuario y contraseña con un *checkpoint*, así que lo más simple 
 Suele frenar con checkpoint; solo si tu cuenta permite login móvil.
 
 1. Editá `backend/.env`:
-   - `USE_FAKE_INSTAGRAM=false`
+   - `IG_SOURCE=instagrapi`
    - `IG_USERNAME=` y `IG_PASSWORD=` con la cuenta.
    - Si la cuenta tiene 2FA, poné el seed TOTP en `IG_2FA_SECRET`.
 2. Levantá la app y tocá chip **IG** → **Reconectar con Instagram**. El login

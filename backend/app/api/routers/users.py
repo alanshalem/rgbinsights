@@ -3,13 +3,18 @@ from __future__ import annotations
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Query, Response
-from sqlmodel import Session
 
-from app.api.deps import session_dep
+from app.api.deps import uow_dep
 from app.api.schemas import StatusCountsOut, UserOut
-from app.application.use_cases import ExportUsersUseCase, ListUsersUseCase
+from app.application.ports import UnitOfWork
+from app.application.use_cases import (
+    DEFAULT_ORDER,
+    ORDER_PATTERN,
+    ExportUsersUseCase,
+    ListUsersUseCase,
+)
 from app.domain.traffic_light import TrafficLight
-from app.infrastructure.config.settings import get_settings
+from app.infrastructure.config.settings import Settings, get_settings
 from app.infrastructure.export import (
     PDF_MEDIA_TYPE,
     XLSX_MEDIA_TYPE,
@@ -26,13 +31,13 @@ def list_users(
     post: str | None = Query(default=None, description="filter to a post media_pk"),
     status: TrafficLight | None = Query(default=None),
     search: str | None = Query(default=None, description="username / full name contains"),
-    order: str = Query(default="status", pattern="^(username|status|fans|followers)$"),
+    order: str = Query(default=DEFAULT_ORDER, pattern=ORDER_PATTERN),
     follows: bool | None = Query(default=None, description="true = solo los que te siguen"),
     limit: int | None = Query(default=None, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
-    session: Session = Depends(session_dep),
+    uow: UnitOfWork = Depends(uow_dep),
 ) -> list[UserOut]:
-    views = ListUsersUseCase(session).execute(
+    views = ListUsersUseCase(uow).execute(
         event=event,
         post=post,
         status=status,
@@ -61,17 +66,18 @@ def export_users(
     post: str | None = Query(default=None, description="filter to a post media_pk"),
     status: TrafficLight | None = Query(default=None),
     search: str | None = Query(default=None, description="username / full name contains"),
-    order: str = Query(default="status", pattern="^(username|status|fans|followers)$"),
+    order: str = Query(default=DEFAULT_ORDER, pattern=ORDER_PATTERN),
     follows: bool | None = Query(default=None, description="true = solo los que te siguen"),
     by_status: bool = Query(
         default=False, description="true = agrupado rojo/amarillo/verde, como el Board"
     ),
-    session: Session = Depends(session_dep),
+    uow: UnitOfWork = Depends(uow_dep),
+    settings: Settings = Depends(get_settings),
 ) -> Response:
     """The on-screen semáforo list as a file: same filters as /users, every row.
 
     Reads only the local DB (never Instagram)."""
-    export = ExportUsersUseCase(session, tz=get_settings().local_tz()).execute(
+    export = ExportUsersUseCase(uow, tz=settings.local_tz()).execute(
         event=event,
         post=post,
         status=status,
@@ -98,9 +104,7 @@ def user_counts(
     post: str | None = Query(default=None),
     search: str | None = Query(default=None),
     follows: bool | None = Query(default=None),
-    session: Session = Depends(session_dep),
+    uow: UnitOfWork = Depends(uow_dep),
 ) -> StatusCountsOut:
-    counts = ListUsersUseCase(session).counts(
-        event=event, post=post, search=search, follows=follows
-    )
+    counts = ListUsersUseCase(uow).counts(event=event, post=post, search=search, follows=follows)
     return StatusCountsOut.model_validate(counts, from_attributes=True)
