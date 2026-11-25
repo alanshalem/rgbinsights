@@ -45,3 +45,5 @@ docs/superpowers/
 # TS build cache
 *.tsbuildinfo
 instagrapi-master/
+# Old Playwright browser profile (holds an Instagram login) - never commit it
+.pw-profile/
